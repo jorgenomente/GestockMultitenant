@@ -1,0 +1,69 @@
+# ========== Dependencias ==========
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# ========== Next.js ==========
+.next/
+.next/cache/
+out/
+build/
+
+# ========== Logs / Debug ==========
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# ========== Cobertura ==========
+coverage/
+
+# ========== Entornos (NO subir secretos) ==========
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Si prefieres patrón global:
+# .env*
+
+# ========== Vercel ==========
+.vercel/
+
+# ========== TypeScript ==========
+*.tsbuildinfo
+# IMPORTANTE: NO ignores next-env.d.ts (se recomienda versionarlo)
+# next-env.d.ts   <- QUITAR esta línea si la tenías
+
+# ========== Prisma / DB locales ==========
+# Archivos SQLite u otras DB locales (si aplican)
+prisma/*.db
+prisma/*-journal
+
+# Si generás código/typos a partir del schema y NO los editas a mano:
+# (De lo contrario, comenta esta línea para versionarlos)
+src/generated/prisma/
+
+# ========== Supabase (si lo usas) ==========
+supabase/.temp/
+supabase/.branches/
+.supabase/
+
+# ========== Turborepo (si lo usas) ==========
+.turbo/
+
+# ========== IDE / SO ==========
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+Icon?
+*.pem
+.vercel
