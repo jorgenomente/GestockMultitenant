@@ -1,19 +1,14 @@
-// src/lib/supabaseClient.ts
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+// lib/supabaseClient.ts
+"use client";
+import { createBrowserClient } from "@supabase/ssr";
 
-let browserClient: SupabaseClient | null = null;
+let _client: ReturnType<typeof createBrowserClient> | null = null;
 
-export function getSupabaseBrowserClient(): SupabaseClient {
-  if (browserClient) return browserClient;
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !key) {
-    // Lanzamos error temprano para no propagar nulls
-    throw new Error("Faltan NEXT_PUBLIC_SUPABASE_URL o NEXT_PUBLIC_SUPABASE_ANON_KEY");
-  }
-
-  browserClient = createClient(url, key);
-  return browserClient;
+export function getSupabaseBrowserClient() {
+  if (_client) return _client;
+  _client = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+  return _client;
 }

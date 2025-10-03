@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import BottomNav from "@/components/BottomNav";
+import Providers from "@/lib/providers"; // 👈 este es el wrapper de React Query (NO providers-data)
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -23,19 +24,20 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="es">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-dvh bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100`}
       >
-        {/* Importante: este padding-bottom evita que el contenido quede oculto tras el BottomNav */}
-        <main className="pb-24">{children}</main>
+        {/* React Query Provider para toda la app */}
+        <Providers>
+          {/* Importante: este padding-bottom evita que el contenido quede oculto tras el BottomNav */}
+          <main className="pb-24">{children}</main>
 
-        {/* Barra de navegación inferior (global: mobile y desktop) */}
-        <BottomNav />
+          {/* Barra de navegación inferior (global: mobile y desktop) */}
+          <BottomNav />
+        </Providers>
       </body>
     </html>
   );
