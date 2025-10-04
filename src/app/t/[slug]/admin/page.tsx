@@ -67,7 +67,7 @@ function slugify(s: string) {
     .replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
 }
 
-/* ======= UI helpers: Combobox y MultiSelect (shadcn + Command) ======= */
+/* ======= UI helpers: Combobox y MultiSelect ======= */
 type Option = { value: string; label: string; hint?: string };
 
 function Combobox({
@@ -165,6 +165,7 @@ function MultiSelect({
     </Popover>
   );
 }
+
 function MemberRow({
   m,
   branchOptions,
@@ -176,7 +177,6 @@ function MemberRow({
 }) {
   const [editing, setEditing] = useState(false);
 
-  // null = todas, [] = ninguna, array = algunas
   const [temp, setTemp] = useState<string[] | null>(
     m.branch_ids === null ? null : (m.branch_ids ?? [])
   );
@@ -278,8 +278,8 @@ export default function AdminPage() {
     queryFn: async () => (await supabase.auth.getUser()).data.user ?? null,
   });
 
-  /* --- Tenant por slug --- */
-  const tenantQ = useQuery<{ id: string; slug: string; name: string }>({
+  /* --- Tenant por slug (usa maybeSingle) --- */
+  const tenantQ = useQuery<{ id: string; slug: string; name: string } | null>({
     queryKey: ["tenant", slug],
     enabled: !!slug,
     queryFn: async () => {
@@ -287,12 +287,14 @@ export default function AdminPage() {
         .from("tenants")
         .select("id, slug, name")
         .eq("slug", slug)
-        .single();
-      if (error) throw error;
-      return data!;
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      return data ?? null; // null => no visible por RLS o no existe
     },
   });
-  const tenantId = tenantQ.data?.id;
+
+  // ⬇️ Derivamos tenantId DESPUÉS de tenantQ
+  const tenantId: string | null = tenantQ.data?.id ?? null;
 
   /* --- Branches --- */
   const branchesQ = useQuery<Branch[]>({
@@ -436,7 +438,14 @@ export default function AdminPage() {
         <h1 className="text-xl font-semibold">Admin · {slug}</h1>
         <p className="text-sm text-neutral-500">
           {tenantQ.isLoading && "Cargando tenant…"}
-          {tenantQ.error && <>Error cargando tenant</>}
+          {tenantQ.isError && (
+            <span className="text-red-600">
+              Error cargando tenant: {(tenantQ.error as Error).message}
+            </span>
+          )}
+          {tenantQ.data === null && !tenantQ.isLoading && !tenantQ.isError && (
+            <span className="text-red-600">Tenant no encontrado o no visible por permisos.</span>
+          )}
           {tenantQ.data && (
             <>Tenant: <span className="font-mono">{tenantQ.data.name}</span>{" "}
               <span className="text-xs text-neutral-400">(id {tenantQ.data.id})</span></>
@@ -515,7 +524,7 @@ export default function AdminPage() {
         </div>
       </section>
 
-      {/* ========= Usuarios (mover arriba) ========= */}
+      {/* ========= Usuarios ========= */}
       <section className="space-y-3 rounded-2xl border p-4">
         <h2 className="font-medium">Usuarios</h2>
 
@@ -581,7 +590,7 @@ export default function AdminPage() {
         </div>
       </section>
 
-      {/* ========= Miembros (abajo) ========= */}
+      {/* ========= Miembros ========= */}
       <section className="space-y-3 rounded-2xl border p-4">
         <h2 className="font-medium">Miembros</h2>
 
@@ -621,7 +630,7 @@ export default function AdminPage() {
                     placeholder="Sucursales (dejar vacío = ninguna)"
                   />
                   <div className="text-[11px] text-neutral-500">
-                    Consejo: si quieres **todas** las sucursales, deja <span className="font-mono">null</span> (usa el botón).
+                    Consejo: si quieres <b>todas</b> las sucursales, deja <span className="font-mono">null</span> (usa el botón).
                   </div>
                   <div className="flex gap-2">
                     <Button type="button" variant="secondary" onClick={() => mf.setValue("branchIds", [])}>
@@ -658,18 +667,17 @@ export default function AdminPage() {
           )}
           {(membershipsQ.data ?? []).length > 0 ? (
             <ul className="divide-y">
-  {(membershipsQ.data ?? []).map((m) => (
-    <MemberRow
-      key={`${m.user_id}-${m.role}`}
-      m={m}
-      branchOptions={branchOptions}
-      onApply={({ userId, role, branchIds }) =>
-        upsertMember.mutate({ userId, role, branchIds })
-      }
-    />
-  ))}
-</ul>
-
+              {(membershipsQ.data ?? []).map((m) => (
+                <MemberRow
+                  key={`${m.user_id}-${m.role}`}
+                  m={m}
+                  branchOptions={branchOptions}
+                  onApply={({ userId, role, branchIds }) =>
+                    upsertMember.mutate({ userId, role, branchIds })
+                  }
+                />
+              ))}
+            </ul>
           ) : (
             !membershipsQ.isLoading && <div className="p-3 text-sm text-neutral-500">No hay miembros aún.</div>
           )}

@@ -69,9 +69,6 @@ function reduceLatestByDate(list: PriceItem[]): PriceItem[] {
   return Array.from(m.values()).sort((x, y) => (y.updatedAt || 0) - (x.updatedAt || 0));
 }
 
-
-
-
 /** ===================== Utils ===================== */
 const STOPWORDS = new Set(["de", "del", "la", "el", "los", "las"]);
 const NBSP_RX = /[\u202F\u00A0]/g;
@@ -117,25 +114,24 @@ function normBarcode(val: unknown): string | undefined {
 function parseUpdatedAt(value: unknown): number {
   if (value == null) return 0;
 
-if (typeof value === "number" && Number.isFinite(value)) {
-  const n = value;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const n = value;
 
-  // 1) Epoch en milisegundos (1970->hoy ~ 1e12 a 2e12)
-  if (n > 1e11) return n;
+    // 1) Epoch en milisegundos (1970->hoy ~ 1e12 a 2e12)
+    if (n > 1e11) return n;
 
-  // 2) Epoch en segundos (10^9..10^10): pasamos a ms
-  if (n > 1e9 && n < 1e11) return n * 1000;
+    // 2) Epoch en segundos (10^9..10^10): pasamos a ms
+    if (n > 1e9 && n < 1e11) return n * 1000;
 
-  // 3) Serial Excel (~20.000..80.000 días desde 1899-12-30)
-  if (n > 20000 && n < 80000) {
-    const t = excelSerialToMs(n);
-    return t < Date.UTC(2005, 0, 1) ? 0 : t;
+    // 3) Serial Excel (~20.000..80.000 días desde 1899-12-30)
+    if (n > 20000 && n < 80000) {
+      const t = excelSerialToMs(n);
+      return t < Date.UTC(2005, 0, 1) ? 0 : t;
+    }
+
+    // Desconocido
+    return 0;
   }
-
-  // Desconocido
-  return 0;
-}
-
 
   if (typeof value !== "string") return 0;
 
@@ -332,53 +328,53 @@ function buildCatalog(rows: Record<string, unknown>[], sourceMode: Catalog["sour
   if (!colMap.price) colMap.price = "precio";
   if (!colMap.updated && keys.length > 0) colMap.updated = keys[keys.length - 1];
 
-    const all: PriceItem[] = [];
-let rowCount = 0;
+  const all: PriceItem[] = [];
+  let rowCount = 0;
 
-for (const r of rows) {
-  rowCount++;
-  const rawName = String(r[colMap.name as string] ?? "").trim();
-  if (!rawName) continue;
+  for (const r of rows) {
+    rowCount++;
+    const rawName = String(r[colMap.name as string] ?? "").trim();
+    if (!rawName) continue;
 
-  const nameKey = normText(rawName);
-  const code = r[colMap.code as string] ? String(r[colMap.code as string]).trim() : undefined;
-  const barcode = colMap.barcode ? normBarcode(r[colMap.barcode]) : undefined;
+    const nameKey = normText(rawName);
+    const code = r[colMap.code as string] ? String(r[colMap.code as string]).trim() : undefined;
+    const barcode = colMap.barcode ? normBarcode(r[colMap.barcode]) : undefined;
 
-  // precio
-  let priceNum = 0;
-  const priceRaw = r[colMap.price as string];
-  if (typeof priceRaw === "number") priceNum = priceRaw;
-  else if (typeof priceRaw === "string") {
-    const clean = priceRaw.replace(/\./g, "").replace(/,/g, ".");
-    const n = Number(clean.replace(/[^\d.]/g, ""));
-    priceNum = Number.isFinite(n) ? n : 0;
+    // precio
+    let priceNum = 0;
+    const priceRaw = r[colMap.price as string];
+    if (typeof priceRaw === "number") priceNum = priceRaw;
+    else if (typeof priceRaw === "string") {
+      const clean = priceRaw.replace(/\./g, "").replace(/,/g, ".");
+      const n = Number(clean.replace(/[^\d.]/g, ""));
+      priceNum = Number.isFinite(n) ? n : 0;
+    }
+
+    // fecha
+    const updRaw = colMap.updated ? r[colMap.updated] : undefined;
+    const updatedAt = parseUpdatedAt(updRaw);
+    const updatedAtLabel =
+      typeof updRaw === "string"
+        ? String(updRaw)
+        : updatedAt
+        ? new Date(updatedAt).toLocaleString("es-AR")
+        : "";
+
+    const next: PriceItem = {
+      id: (barcode || code || nameKey || rawName) as string,
+      name: rawName,
+      code,
+      barcode,
+      price: priceNum,
+      updatedAt: updatedAt || 0,
+      updatedAtLabel,
+    };
+
+    all.push(next);
   }
 
-  // fecha
-  const updRaw = colMap.updated ? r[colMap.updated] : undefined;
-  const updatedAt = parseUpdatedAt(updRaw);
-  const updatedAtLabel =
-    typeof updRaw === "string"
-      ? String(updRaw)
-      : updatedAt
-      ? new Date(updatedAt).toLocaleString("es-AR")
-      : "";
-
-  const next: PriceItem = {
-    id: (barcode || code || nameKey || rawName) as string,
-    name: rawName,
-    code,
-    barcode,
-    price: priceNum,
-    updatedAt: updatedAt || 0,
-    updatedAtLabel,
-  };
-
-  all.push(next);
-}
-
-const items = reduceLatestByDate(all);
-return { items, rowCount, importedAt: Date.now(), sourceMode };
+  const items = reduceLatestByDate(all);
+  return { items, rowCount, importedAt: Date.now(), sourceMode };
 }
 
 /** ===================== Debounce ===================== */
@@ -402,16 +398,17 @@ function safeSaveCache(catalog: Catalog) {
         items: [], // sin items para no superar 5MB
       };
       localStorage.setItem(LS_KEY, JSON.stringify(lite));
-      // (Opcional) también podrías setear un flag en sessionStorage si querés mostrar un aviso suave
     } catch {
       // última chance: no cacheamos nada
     }
   }
 }
-// Forzar fuente temporalmente para debug: "api" | "public" | null (auto)
-const FORCE_SOURCE: "api" | "public" | null = null;
+
+// ✅ Forzar fuente temporalmente para multitenant
+const FORCE_SOURCE: "api" | "public" | null = "api";
+
 /** ===================== Hook de datos con fallbacks ===================== */
-function usePrices() {
+function usePrices(slug?: string) {
   const [items, setItems] = React.useState<PriceItem[]>([]);
   const [count, setCount] = React.useState<number>(0);
   const [importedAt, setImportedAt] = React.useState<number | null>(null);
@@ -438,65 +435,54 @@ function usePrices() {
     } catch {}
   }, []);
 
-  // 2) Intentar API; si falla, fallback a /public/precios.xlsx
+  // 2) Intentar API por tenant; si falla y estamos en multitenant, NO hacemos fallback
   const fetchCatalog = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     setNotice(null);
     try {
-      // A) API
-const res = await fetch("/api/precios", { cache: "no-store" });
-if (!res.ok) throw new Error(`API HTTP ${res.status}`);
-const rawCat: Catalog = await res.json();
+      // ✅ API por tenant
+      const res = await fetch(`/api/t/${slug}/precios`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`API HTTP ${res.status}`);
+      const rawCat: Catalog = await res.json();
 
-const normalized = Array.isArray(rawCat.items)
-  ? rawCat.items.map((x: any) => normalizeFromApi(x))  // tu normalizador
-  : [];
+      const normalized = Array.isArray(rawCat.items)
+        ? rawCat.items.map((x: any) => normalizeFromApi(x))  // tu normalizador
+        : [];
 
-const canonItems = reduceLatestByDate(normalized);
-const canon: Catalog = {
-  ...rawCat,
-  sourceMode: "api",
-  items: canonItems,
-  rowCount: rawCat.rowCount ?? canonItems.length,
-  importedAt: rawCat.importedAt ?? Date.now(),
-};
+      const canonItems = reduceLatestByDate(normalized);
+      const canon: Catalog = {
+        ...rawCat,
+        sourceMode: "api",
+        items: canonItems,
+        rowCount: rawCat.rowCount ?? canonItems.length,
+        importedAt: rawCat.importedAt ?? Date.now(),
+      };
 
-setItems(canon.items);
-setCount(canon.rowCount);
-setImportedAt(canon.importedAt ?? null);
-setSourceMode("api");
-safeSaveCache(canon);
-return;
+      setItems(canon.items);
+      setCount(canon.rowCount);
+      setImportedAt(canon.importedAt ?? null);
+      setSourceMode("api");
+      safeSaveCache(canon);
+      return;
 
     } catch (apiErr: any) {
-      // B) Fallback a /public
-      try {
-        const url = `${PRECIOS_URL}?v=${Date.now()}`;
-        const res2 = await fetch(url, { cache: "no-store" });
-        if (!res2.ok) throw new Error(`PUBLIC HTTP ${res2.status}`);
-        const buf = await res2.arrayBuffer();
-        const rows = await parseWorkbook(buf);
-        const cat = buildCatalog(rows, "public");
-        setItems(cat.items);
-        setCount(cat.rowCount);
-        setImportedAt(cat.importedAt);
-        setSourceMode("public");
-        safeSaveCache(cat);
-        setNotice(`API caída: usando ${PRECIOS_FILENAME} de /public.`);
-      } catch (pubErr: any) {
-        setError(apiErr?.message || pubErr?.message || "No se pudo cargar precios.");
+      // ✅ Multitenant: no caer a /public si forzamos API
+      if (FORCE_SOURCE === "api") {
+        setError(apiErr?.message || "No se pudo cargar precios.");
+      } else {
+        // (Dejamos el fallback vacío a propósito para otros contextos)
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [slug]);
 
   React.useEffect(() => {
     fetchCatalog();
   }, [fetchCatalog]);
 
-  // 3) Subida: si POST falla, parsear local para no cortar flujo
+  // 3) Subida: POST al endpoint del tenant
   const onUpload = React.useCallback(
     async (file: File) => {
       setLoading(true);
@@ -505,7 +491,7 @@ return;
       try {
         const fd = new FormData();
         fd.append("file", file);
-        const up = await fetch("/api/precios", { method: "POST", body: fd });
+        const up = await fetch(`/api/t/${slug}/precios`, { method: "POST", body: fd });
         if (!up.ok) {
           // Mostrar mensaje real si viene en JSON
           let serverMsg = "";
@@ -518,28 +504,12 @@ return;
         setNotice("Catálogo actualizado en la nube.");
         await fetchCatalog(); // refresca desde la API
       } catch (e: any) {
-        // Fallback: parsear local el archivo subido y usarlo en este dispositivo
-        try {
-          const buf = await file.arrayBuffer();
-          const rows = await parseWorkbook(buf);
-          const cat = buildCatalog(rows, "local-upload");
-          setItems(cat.items);
-          setCount(cat.rowCount);
-          setImportedAt(cat.importedAt);
-          setSourceMode("local-upload");
-          safeSaveCache(cat);
-          setNotice(
-            (e?.message ? `Servidor: ${e.message}. ` : "") +
-              "Usando el archivo subido de forma local (solo en este dispositivo)."
-          );
-        } catch (e2: any) {
-          setError(e2?.message ?? "Error actualizando precios.");
-        }
+        setError(e?.message ?? "Error actualizando precios.");
       } finally {
         setLoading(false);
       }
     },
-    [fetchCatalog]
+    [fetchCatalog, slug]
   );
 
   return { items, count, importedAt, sourceMode, loading, error, notice, onUpload };
@@ -571,8 +541,9 @@ function Highlight({ text, q }: { text: string; q: string }) {
   );
 }
 
-export default function PriceSearch() {
-  const { items, count, importedAt, sourceMode, loading, error, notice, onUpload } = usePrices();
+/** ✅ ÚNICO cambio de firma: recibe slug */
+export default function PriceSearch({ slug }: { slug: string }) {
+  const { items, count, importedAt, sourceMode, loading, error, notice, onUpload } = usePrices(slug);
   const [q, setQ] = React.useState("");
   const qDebounced = useDebounced(q, 180);
   const LIMIT = 10;

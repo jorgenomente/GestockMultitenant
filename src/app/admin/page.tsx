@@ -1,4 +1,4 @@
-// app/admin/page.tsx  (SERVER COMPONENT)
+// src/app/admin/page.tsx  (SERVER COMPONENT)
 import { redirect } from "next/navigation";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 
@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function AdminRedirect() {
-  const supabase = await getSupabaseServerClient();
+  const supabase = getSupabaseServerClient();
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login?next=/admin");

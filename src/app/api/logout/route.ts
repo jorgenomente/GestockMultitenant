@@ -1,12 +1,13 @@
+// src/app/api/logout/route.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { getSupabaseRouteClient } from "@/lib/supabaseServer";
 
+/**
+ * POST /api/logout
+ * Hace signOut y limpia cookies (requiere helper con set/remove).
+ */
 export async function POST() {
-  const supabase = await getSupabaseServerClient();
+  const supabase = await getSupabaseRouteClient();
   await supabase.auth.signOut();
   return NextResponse.json({ ok: true });
-}
-async function signOut() {
-  await fetch("/api/logout", { method: "POST" });
-  window.location.href = "/login";
 }
