@@ -1,15 +1,19 @@
-// app/login/page.tsx
+// src/app/login/page.tsx
 "use client";
-import { useState } from "react";
+
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
-export default function LoginPage() {
+export const dynamic = "force-dynamic"; // evita prerender estático problemático en /login
+
+function LoginForm() {
   const router = useRouter();
-  const search = useSearchParams();
+  const search = useSearchParams(); // <-- ahora vive dentro de Suspense
   const next = search.get("next") || "/admin";
 
   const supabase = getSupabaseBrowserClient();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -19,13 +23,14 @@ export default function LoginPage() {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
+
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setError(error.message);
       setSubmitting(false);
       return;
     }
-    // Importantísimo: replace, no push (evita loop/back a login)
+    // Importante: replace para no volver al login en el back
     router.replace(next);
   }
 
@@ -62,5 +67,13 @@ export default function LoginPage() {
         </button>
       </form>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Cargando…</div>}>
+      <LoginForm />
+    </Suspense>
   );
 }

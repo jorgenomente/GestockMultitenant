@@ -3,9 +3,12 @@ import { notFound, redirect } from "next/navigation";
 import { getSupabaseUserServerClient } from "@/lib/supabaseServer";
 import PriceSearch from "@/components/PriceSearch";
 
-type Props = { params: { slug: string } };
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-export default async function TenantPriceSearchPage({ params }: Props) {
+type PageProps = { params: { slug: string } };
+
+export default async function TenantPriceSearchPage({ params }: PageProps) {
   const supabase = await getSupabaseUserServerClient();
 
   // 1) Validar tenant por slug
@@ -13,11 +16,17 @@ export default async function TenantPriceSearchPage({ params }: Props) {
     .from("tenants")
     .select("id, slug")
     .eq("slug", params.slug)
-    .single();
+    .maybeSingle();
 
-  if (tenantErr || !tenant) notFound();
+  if (tenantErr) {
+    // Si hay error de DB, muestra 404 para no filtrar detalles
+    notFound();
+  }
+  if (!tenant) {
+    notFound();
+  }
 
-  // 2) Usuario autenticado → si NO, redirigir a /login con next
+  // 2) Usuario autenticado → si NO, redirigir a /login con ?next
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     const next = `/t/${params.slug}/prices`;
@@ -25,15 +34,21 @@ export default async function TenantPriceSearchPage({ params }: Props) {
   }
 
   // 3) Verificar membresía al tenant
-  const { data: memb, error: membErr } = await supabase
+  const { data: membership, error: membErr } = await supabase
     .from("memberships")
     .select("user_id")
-    .eq("user_id", user.id)
     .eq("tenant_id", tenant.id)
-    .limit(1);
+    .eq("user_id", user.id)
+    .maybeSingle();
 
-  if (membErr || !memb || memb.length === 0) notFound();
+  if (membErr) {
+    notFound();
+  }
+  if (!membership) {
+    // Usuario logueado pero sin acceso a este tenant
+    notFound();
+  }
 
-  // 4) Render del buscador
+  // 4) Render
   return <PriceSearch slug={params.slug} />;
 }
