@@ -1,9 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { createClient } from "@supabase/supabase-js";
 
-const EMAIL_SUFFIX = "tn"; // debe coincidir con tu login
+export const dynamic = "force-dynamic";
+
+const EMAIL_SUFFIX = "tn"; // debe coincidir con tu login: username@tn
 
 function getServiceDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -12,8 +14,6 @@ function getServiceDb() {
   return createClient(url, key);
 }
 
-type Params = { params: { slug: string } };
-
 const CreateUserSchema = z.object({
   username: z.string().min(2),
   password: z.string().min(4),
@@ -21,17 +21,28 @@ const CreateUserSchema = z.object({
   branch_id: z.string().uuid().optional(),
 });
 
-export async function GET(_req: Request, { params }: Params) {
-  const admin = getSupabaseAdminClient();
-  const { data, error } = await admin.auth.admin.listUsers({ page: 1, perPage: 100 });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+type Ctx = { params: Promise<{ slug: string }> };
 
-  const users = (data?.users ?? []).filter(u => u.email?.endsWith(`@${EMAIL_SUFFIX}`));
-  return NextResponse.json({ users });
+/** GET /api/t/[slug]/users — lista usuarios (filtro simple por sufijo) */
+export async function GET(_req: NextRequest, { params }: Ctx) {
+  try {
+    const { slug } = await params; // disponible para futuros filtros por tenant
+    const admin = getSupabaseAdminClient();
+
+    const { data, error } = await admin.auth.admin.listUsers({ page: 1, perPage: 100 });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    const users = (data?.users ?? []).filter((u) => u.email?.endsWith(`@${EMAIL_SUFFIX}`));
+    return NextResponse.json({ users });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Error inesperado" }, { status: 500 });
+  }
 }
 
-export async function POST(req: Request, { params }: Params) {
+/** POST /api/t/[slug]/users — crea usuario y (opcional) su membership */
+export async function POST(req: NextRequest, { params }: Ctx) {
   try {
+    const { slug } = await params;
     const admin = getSupabaseAdminClient();
     const db = getServiceDb();
 
@@ -59,22 +70,40 @@ export async function POST(req: Request, { params }: Params) {
     if (role && branch_id) {
       // tenant
       const { data: tenant, error: tErr } = await db
-        .from("tenants").select("id").eq("slug", params.slug).maybeSingle();
-      if (tErr) return NextResponse.json({ user: created.user, membership_error: tErr.message }, { status: 207 });
-      if (!tenant) return NextResponse.json({ user: created.user, membership_error: "Tenant no encontrado" }, { status: 207 });
+        .from("tenants")
+        .select("id")
+        .eq("slug", slug)
+        .single();
+      if (tErr) {
+        return NextResponse.json({ user: created.user, membership_error: tErr.message }, { status: 207 });
+      }
+      if (!tenant) {
+        return NextResponse.json({ user: created.user, membership_error: "Tenant no encontrado" }, { status: 207 });
+      }
 
       // branch pertenece al tenant
       const { data: branch, error: bErr } = await db
-        .from("branches").select("id, tenant_id").eq("id", branch_id).maybeSingle();
-      if (bErr) return NextResponse.json({ user: created.user, membership_error: bErr.message }, { status: 207 });
+        .from("branches")
+        .select("id, tenant_id")
+        .eq("id", branch_id)
+        .single();
+      if (bErr) {
+        return NextResponse.json({ user: created.user, membership_error: bErr.message }, { status: 207 });
+      }
       if (!branch || branch.tenant_id !== tenant.id) {
-        return NextResponse.json({ user: created.user, membership_error: "Branch no pertenece al tenant" }, { status: 207 });
+        return NextResponse.json(
+          { user: created.user, membership_error: "Branch no pertenece al tenant" },
+          { status: 207 }
+        );
       }
 
-      // upsert rol por tenant (si usás memberships por tenant)
+      // upsert rol por tenant (si tu modelo usa memberships por tenant)
       const { error: upErr } = await db
         .from("memberships")
-        .upsert({ user_id: created.user.id, tenant_id: tenant.id, role }, { onConflict: "user_id,tenant_id" });
+        .upsert(
+          { user_id: created.user.id, tenant_id: tenant.id, role },
+          { onConflict: "user_id,tenant_id" }
+        );
       if (upErr) {
         return NextResponse.json({ user: created.user, membership_error: upErr.message }, { status: 207 });
       }
@@ -88,7 +117,7 @@ export async function POST(req: Request, { params }: Params) {
       }
     }
 
-    return NextResponse.json({ user: created.user });
+    return NextResponse.json({ user: created.user }, { status: 201 });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Unexpected server error" }, { status: 500 });
   }

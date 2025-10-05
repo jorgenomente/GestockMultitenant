@@ -2,40 +2,35 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./src/*"
-      ]
+      "@/*": ["./src/*"]
     },
     "moduleResolution": "bundler",
-    "strict": true,
+    "module": "esnext",
+    "target": "ES2022",
     "jsx": "preserve",
-    "target": "ES2017",
-    "lib": [
-      "dom",
-      "dom.iterable",
-      "esnext"
-    ],
+    "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
-    "allowJs": true,
-    "module": "esnext"
+    "plugins": [{ "name": "next" }],
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true
   },
   "include": [
     "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "next.config.*",
+    "postcss.config.*",
+    "tailwind.config.*",
     ".next/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "scripts/**/*",
+    "prisma/**/*"
   ]
 }

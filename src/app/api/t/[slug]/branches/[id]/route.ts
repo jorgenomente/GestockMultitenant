@@ -1,6 +1,9 @@
 // src/app/api/t/[slug]/branches/[id]/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+
+export const dynamic = "force-dynamic"; // evita cache
+export const runtime = "nodejs";        // Service Role no debe correr en Edge
 
 function getServiceDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -11,21 +14,23 @@ function getServiceDb() {
   return createClient(url, key);
 }
 
-type Params = { params: { slug: string; id: string } };
+type Ctx = { params: Promise<{ slug: string; id: string }> };
 
-export async function DELETE(_req: Request, { params }: Params) {
+export async function DELETE(_req: NextRequest, { params }: Ctx) {
   try {
-    // 0) sanity logs (se ven en terminal del dev server)
-    console.log("[DELETE] /api/t/[slug]/branches/[id]", params);
+    const { slug, id } = await params;
+
+    // logs útiles en dev
+    console.log("[DELETE] /api/t/[slug]/branches/[id]", { slug, id });
 
     const db = getServiceDb();
 
-    // 1) tenant por slug
+    // 1) validar tenant por slug
     const { data: tenant, error: tErr } = await db
       .from("tenants")
       .select("id")
-      .eq("slug", params.slug)
-      .maybeSingle();
+      .eq("slug", slug)
+      .single();
 
     if (tErr) {
       console.error("Tenant error:", tErr);
@@ -35,11 +40,11 @@ export async function DELETE(_req: Request, { params }: Params) {
       return NextResponse.json({ error: "Tenant no encontrado" }, { status: 404 });
     }
 
-    // 2) borrar branch de ese tenant
+    // 2) borrar branch perteneciente a ese tenant
     const { error: delErr } = await db
       .from("branches")
       .delete()
-      .eq("id", params.id)
+      .eq("id", id)
       .eq("tenant_id", tenant.id);
 
     if (delErr) {
@@ -50,7 +55,6 @@ export async function DELETE(_req: Request, { params }: Params) {
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     console.error("Route crash:", e);
-    // Siempre devolver JSON, nunca HTML
     return NextResponse.json(
       { error: e?.message ?? "Unexpected server error" },
       { status: 500 }
@@ -58,13 +62,5 @@ export async function DELETE(_req: Request, { params }: Params) {
   }
 }
 
-// (Opcional) Manejo 405 para otros métodos: ayuda a detectar hits incorrectos
-export function GET() {
-  return NextResponse.json({ error: "Method Not Allowed" }, { status: 405 });
-}
-export function POST() {
-  return NextResponse.json({ error: "Method Not Allowed" }, { status: 405 });
-}
-export function PUT() {
-  return NextResponse.json({ error: "Method Not Allowed" }, { status: 405 });
-}
+// No exportamos GET/POST/PUT “dummy” para evitar incompatibilidades de tipos.
+// Next responderá 405 automáticamente para otros métodos.

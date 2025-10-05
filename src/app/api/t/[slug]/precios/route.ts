@@ -1,9 +1,12 @@
 // src/app/api/t/[slug]/precios/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import {
   getSupabaseUserServerClient,
   getSupabaseServiceRoleClient,
 } from "@/lib/supabaseServer";
+
+export const runtime = "nodejs";        // Service Role -> Node, no Edge
+export const dynamic = "force-dynamic"; // evita cache en endpoints con DB
 
 /** ===================== Helpers parsing/normalización ===================== */
 const STOPWORDS = new Set(["de", "del", "la", "el", "los", "las"]);
@@ -198,12 +201,16 @@ async function assertMember(userClient: any, tenantId: string) {
 }
 
 /** ===================== GET ===================== */
-export async function GET(_req: Request, { params }: { params: { slug: string } }) {
+type Ctx = { params: Promise<{ slug: string }> };
+
+export async function GET(_req: NextRequest, { params }: Ctx) {
   try {
+    const { slug } = await params;
+
     const userClient = await getSupabaseUserServerClient();
     const service = getSupabaseServiceRoleClient();
 
-    const tenant = await getTenantBySlug(userClient, params.slug);
+    const tenant = await getTenantBySlug(userClient, slug);
     await assertMember(userClient, tenant.id);
 
     const path = `${tenant.id}/prices.json`;
@@ -230,12 +237,14 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
 }
 
 /** ===================== POST (subir XLSX/CSV) ===================== */
-export async function POST(req: Request, { params }: { params: { slug: string } }) {
+export async function POST(req: NextRequest, { params }: Ctx) {
   try {
+    const { slug } = await params;
+
     const userClient = await getSupabaseUserServerClient();
     const service = getSupabaseServiceRoleClient();
 
-    const tenant = await getTenantBySlug(userClient, params.slug);
+    const tenant = await getTenantBySlug(userClient, slug);
     const { role } = await assertMember(userClient, tenant.id);
     if (role === "staff") throw new Error("Solo owner/admin pueden actualizar el catálogo.");
 

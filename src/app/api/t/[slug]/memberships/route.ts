@@ -1,13 +1,17 @@
-import { NextResponse } from "next/server";
+// src/app/api/t/[slug]/memberships/route.ts
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseRouteClient } from "@/lib/supabaseServer";
 import { supabaseAdmin, hasSupabaseAdmin } from "@/lib/supabaseAdmin";
+
+export const runtime = "nodejs";        // Service Role -> Node, no Edge
+export const dynamic = "force-dynamic"; // evita cache en endpoints con DB
 
 type Role = "owner" | "admin" | "staff";
 
 type UpsertBody = {
   userId: string;
   role: Role;
-  // IMPORTANTE: null = TODAS; [] = NINGUNA; array = algunas
+  // Semántica: null = TODAS; [] = NINGUNA; array = algunas
   branchIds?: string[] | null;
 };
 
@@ -22,25 +26,27 @@ type MembershipRow = {
 /* ========================= GET =========================
    Lista de memberships del tenant (solo owner/admin)
 =========================================================*/
-export async function GET(
-  _req: Request,
-  { params }: { params: { slug: string } }
-) {
+type Ctx = { params: Promise<{ slug: string }> };
+
+export async function GET(_req: NextRequest, { params }: Ctx) {
   if (!hasSupabaseAdmin || !supabaseAdmin) {
     return NextResponse.json({ error: "Service Role no configurado" }, { status: 500 });
   }
   const admin = supabaseAdmin!;
+  const { slug } = await params;
 
   // Usuario actual (cliente con RLS)
   const route = await getSupabaseRouteClient();
-  const { data: { user } } = await route.auth.getUser();
+  const {
+    data: { user },
+  } = await route.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Tenant por slug (RLS sobre tenants habilitada)
   const { data: tenant, error: tErr } = await route
     .from("tenants")
     .select("id, slug")
-    .eq("slug", params.slug)
+    .eq("slug", slug)
     .single();
   if (tErr || !tenant) {
     return NextResponse.json({ error: "Tenant no encontrado" }, { status: 404 });
@@ -68,7 +74,7 @@ export async function GET(
 
   const members = rows ?? [];
 
-  // Emails (Auth Admin) — resuelve por id; paralelo
+  // Emails (Auth Admin) — resolver por id en paralelo
   const userIds = Array.from(new Set(members.map((m) => m.user_id)));
   const emailById = new Map<string, string | null>();
   await Promise.all(
@@ -129,17 +135,17 @@ export async function GET(
    - branchIds === []    -> guarda [] (ninguna)
    - branchIds === [..]  -> guarda esas
 =========================================================*/
-export async function POST(
-  req: Request,
-  { params }: { params: { slug: string } }
-) {
+export async function POST(req: NextRequest, { params }: Ctx) {
   if (!hasSupabaseAdmin || !supabaseAdmin) {
     return NextResponse.json({ error: "Service Role no configurado" }, { status: 500 });
   }
   const admin = supabaseAdmin!;
+  const { slug } = await params;
 
   const route = await getSupabaseRouteClient();
-  const { data: { user } } = await route.auth.getUser();
+  const {
+    data: { user },
+  } = await route.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Body
@@ -157,7 +163,7 @@ export async function POST(
   const { data: tenant, error: tErr } = await route
     .from("tenants")
     .select("id, slug")
-    .eq("slug", params.slug)
+    .eq("slug", slug)
     .single();
   if (tErr || !tenant) return NextResponse.json({ error: "Tenant no encontrado" }, { status: 404 });
 
@@ -173,9 +179,9 @@ export async function POST(
   }
 
   // Normalizar branchIds según presencia en el body
-  // - Si viene `null` explícito => NULL
-  // - Si viene array => array
-  // - Si viene undefined => interpretamos como [] (tu formulario siempre envía algo)
+  // - null explícito => NULL
+  // - array => array
+  // - undefined => []
   const hasBranchIdsProp = Object.prototype.hasOwnProperty.call(body, "branchIds");
   const normalizedBranchIds: string[] | null =
     hasBranchIdsProp ? (body.branchIds === null ? null : (body.branchIds ?? [])) : [];

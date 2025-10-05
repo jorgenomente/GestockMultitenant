@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import React from "react";
 import * as XLSX from "xlsx";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
-
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 /* UI */
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -53,6 +53,27 @@ type ArchivedItem = {
   confirmed: boolean;
   freezer?: boolean;
   archivedAt: number;
+};
+
+type ExpRow = {
+  id: string;
+  name: string;
+  exp_date: string;
+  qty: number;
+  confirmed: boolean;
+  freezer?: boolean | null;
+  updated_at?: string | null;
+};
+
+type ExpArchiveRow = {
+  id: string;
+  source_id?: string | null;
+  name: string;
+  exp_date: string;
+  qty: number;
+  confirmed: boolean;
+  freezer?: boolean | null;
+  archived_at: string | null;
 };
 
 type Draft = (
@@ -395,28 +416,52 @@ export default function VencimientosPage() {
     })();
 
     const ch = supabase
-      .channel("expirations-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "expirations" }, (payload) => {
-        setSupabaseStatus("online");
-        const r: any = payload.eventType === "DELETE" ? payload.old : payload.new;
-        if (payload.eventType === "INSERT") {
-          setItemsLocal((prev) => {
-            if (prev.some((x) => x.id === r.id)) return prev;
-            return mergeByIdPreferNewer(prev, [{
-              id: r.id, name: r.name, expDate: r.exp_date, qty: r.qty,
-              confirmed: !!r.confirmed, freezer: !!r.freezer, updatedAt: epoch(r.updated_at),
-            }]);
-          });
-        } else if (payload.eventType === "UPDATE") {
-          setItemsLocal((prev) => prev.map((x) =>
-            x.id === r.id ? { id: r.id, name: r.name, expDate: r.exp_date, qty: r.qty,
-              confirmed: !!r.confirmed, freezer: !!r.freezer, updatedAt: epoch(r.updated_at) } : x));
-          clearDraft(r.id);
-        } else if (payload.eventType === "DELETE") {
-          setItemsLocal((prev) => prev.filter((x) => x.id !== r.id));
-          clearDraft(r.id);
-        }
-      }).subscribe();
+  .channel("expirations-realtime")
+  .on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "expirations" },
+    (payload: RealtimePostgresChangesPayload<ExpRow>) => {
+      setSupabaseStatus("online");
+      const r = (payload.eventType === "DELETE" ? payload.old : payload.new) as ExpRow;
+
+      if (payload.eventType === "INSERT") {
+        setItemsLocal((prev) => {
+          if (prev.some((x) => x.id === r.id)) return prev;
+          return mergeByIdPreferNewer(prev, [{
+            id: r.id,
+            name: r.name,
+            expDate: r.exp_date,
+            qty: r.qty,
+            confirmed: !!r.confirmed,
+            freezer: !!r.freezer,
+            updatedAt: epoch(r.updated_at ?? new Date()),
+          }]);
+        });
+      } else if (payload.eventType === "UPDATE") {
+        setItemsLocal((prev) =>
+          prev.map((x) =>
+            x.id === r.id
+              ? {
+                  id: r.id,
+                  name: r.name,
+                  expDate: r.exp_date,
+                  qty: r.qty,
+                  confirmed: !!r.confirmed,
+                  freezer: !!r.freezer,
+                  updatedAt: epoch(r.updated_at ?? new Date()),
+                }
+              : x
+          )
+        );
+        clearDraft(r.id);
+      } else if (payload.eventType === "DELETE") {
+        setItemsLocal((prev) => prev.filter((x) => x.id !== r.id));
+        clearDraft(r.id);
+      }
+    }
+  )
+  .subscribe();
+
 
     return () => { supabase.removeChannel(ch); };
   }, []);
@@ -441,18 +486,40 @@ export default function VencimientosPage() {
         setArchives(Array.from(map.values()).sort((a,b)=>b.archivedAt-a.archivedAt));
       }
     })();
+    
     const ch = supabase
-      .channel("expirations-archive-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "expirations_archive" }, (payload) => {
-        const r: any = payload.eventType === "DELETE" ? payload.old : payload.new;
-        if (payload.eventType === "INSERT") {
-          setArchives((prev) => (prev.some((x) => x.id === r.id) ? prev :
-            [{ id: r.id, sourceId: r.source_id ?? null, name: r.name, expDate: r.exp_date, qty: r.qty,
-               confirmed: !!r.confirmed, freezer: !!r.freezer, archivedAt: epoch(r.archived_at) }, ...prev]));
-        } else if (payload.eventType === "DELETE") {
-          setArchives((prev) => prev.filter((x) => x.id !== r.id));
-        }
-      }).subscribe();
+  .channel("expirations-archive-realtime")
+  .on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "expirations_archive" },
+    (payload: RealtimePostgresChangesPayload<ExpArchiveRow>) => {
+      const r = (payload.eventType === "DELETE" ? payload.old : payload.new) as ExpArchiveRow;
+
+      if (payload.eventType === "INSERT") {
+        setArchives((prev) =>
+          prev.some((x) => x.id === r.id)
+            ? prev
+            : [
+                {
+                  id: r.id,
+                  sourceId: r.source_id ?? null,
+                  name: r.name,
+                  expDate: r.exp_date,
+                  qty: r.qty,
+                  confirmed: !!r.confirmed,
+                  freezer: !!r.freezer,
+                  archivedAt: epoch(r.archived_at ?? new Date()),
+                },
+                ...prev,
+              ]
+        );
+      } else if (payload.eventType === "DELETE") {
+        setArchives((prev) => prev.filter((x) => x.id !== r.id));
+      }
+    }
+  )
+  .subscribe();
+
     return () => { supabase.removeChannel(ch); };
   }, []);
 

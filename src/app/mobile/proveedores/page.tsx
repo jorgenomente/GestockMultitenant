@@ -4,6 +4,7 @@ import React from "react";
 import { v4 as uuid } from "uuid";
 import { z } from "zod";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 
 /* UI */
 import { Input } from "@/components/ui/input";
@@ -259,26 +260,35 @@ React.useEffect(() => {
   const ch = supabase
     .channel(`week-summaries-${selectedWeek.id}`)
     .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: WEEK_SUM_TABLE, filter: `week_id=eq.${selectedWeek.id}` },
-      (payload: any) => {
-        setWeekSummaries(prev => {
-          const next = { ...prev };
-          const row = payload.new ?? payload.old;
+  "postgres_changes",
+  { event: "*", schema: "public", table: WEEK_SUM_TABLE, filter: `week_id=eq.${selectedWeek.id}` },
+  (payload: RealtimePostgresChangesPayload<WeekSummaryRow>) => {
+    setWeekSummaries((prev) => {
+      const next = { ...prev };
 
-          if (payload.eventType === 'DELETE' && row?.provider_id) {
-            delete next[row.provider_id];
-          } else if ((payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') && row?.provider_id) {
-            next[row.provider_id] = {
-              total: row.total ?? 0,
-              items: row.items ?? 0,
-              updated_at: row.updated_at ?? null,
-            };
-          }
-          return next;
-        });
+      // 🔒 Tipamos explícitamente el "row"
+      const row = (payload.new as WeekSummaryRow | null) ?? (payload.old as WeekSummaryRow | null);
+
+      if (payload.eventType === "DELETE") {
+        if (row?.provider_id) delete next[row.provider_id];
+        return next;
       }
-    )
+
+      if ((payload.eventType === "INSERT" || payload.eventType === "UPDATE") && row?.provider_id) {
+        next[row.provider_id] = {
+          total: row.total ?? 0,
+          items: row.items ?? 0,
+          updated_at: row.updated_at ?? null,
+        };
+        return next;
+      }
+
+      return prev;
+    });
+  }
+)
+
+
     .subscribe();
 
   return () => { supabase.removeChannel(ch); };
@@ -465,37 +475,51 @@ React.useEffect(() => {
     const channel = supabase
       .channel("providers-realtime-public")
       .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: TABLE },
-        (payload) => {
-          const { eventType, new: newRow, old: oldRow } = payload as any;
-          setProviders((prev) => {
-            if (eventType === "DELETE") {
-              const next = prev.filter((p) => p.id !== oldRow.id).sort(byName);
-              saveCache(next);
-              return next;
-            }
-            if (eventType === "INSERT") {
-              const withoutTmp = prev.filter((p) => !p.id.startsWith(PENDING_PREFIX));
-              const exists = withoutTmp.some((p) => p.id === newRow.id);
-              const incoming = { ...newRow, payment_method: normalizePayment(newRow.payment_method) } as Provider;
-              const next = exists
-                ? withoutTmp.map((p) => (p.id === incoming.id ? incoming : p))
-                : [...withoutTmp, incoming];
-              const sorted = next.sort(byName);
-              saveCache(sorted);
-              return sorted;
-            }
-            if (eventType === "UPDATE") {
-              const incoming = { ...newRow, payment_method: normalizePayment(newRow.payment_method) } as Provider;
-              const next = prev.map((p) => (p.id === incoming.id ? incoming : p)).sort(byName);
-              saveCache(next);
-              return next;
-            }
-            return prev;
-          });
-        }
-      )
+  "postgres_changes",
+  { event: "*", schema: "public", table: TABLE },
+  (payload: RealtimePostgresChangesPayload<Provider>) => {
+    const { eventType, new: newRow, old: oldRow } = payload;
+
+    setProviders((prev) => {
+      if (eventType === "DELETE") {
+        if (!oldRow) return prev;
+        const next = prev.filter((p) => p.id !== oldRow.id).sort(byName);
+        saveCache(next);
+        return next;
+      }
+
+      if (eventType === "INSERT") {
+        if (!newRow) return prev;
+        const withoutTmp = prev.filter((p) => !p.id.startsWith(PENDING_PREFIX));
+        const exists = withoutTmp.some((p) => p.id === newRow.id);
+        const incoming: Provider = {
+          ...(newRow as Provider),
+          payment_method: normalizePayment((newRow as Provider).payment_method),
+        };
+        const next = exists
+          ? withoutTmp.map((p) => (p.id === incoming.id ? incoming : p))
+          : [...withoutTmp, incoming];
+        const sorted = next.sort(byName);
+        saveCache(sorted);
+        return sorted;
+      }
+
+      if (eventType === "UPDATE") {
+        if (!newRow) return prev;
+        const incoming: Provider = {
+          ...(newRow as Provider),
+          payment_method: normalizePayment((newRow as Provider).payment_method),
+        };
+        const next = prev.map((p) => (p.id === incoming.id ? incoming : p)).sort(byName);
+        saveCache(next);
+        return next;
+      }
+
+      return prev;
+    });
+  }
+)
+
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
@@ -506,26 +530,34 @@ React.useEffect(() => {
     const channel = supabase
       .channel("order-summaries-realtime")
       .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: ORDER_SUM_TABLE },
-        (payload) => {
-          const { eventType, new: newRow, old: oldRow } = payload as any;
-          setSummaries((prev) => {
-            const next = { ...prev };
-            if (eventType === "DELETE" && oldRow?.provider_id) {
-              delete next[oldRow.provider_id];
-              return next;
-            }
-            if ((eventType === "INSERT" || eventType === "UPDATE") && newRow?.provider_id) {
-              next[newRow.provider_id] = {
-                provider_id: newRow.provider_id, total: newRow.total, items: newRow.items, updated_at: newRow.updated_at,
-              };
-              return next;
-            }
-            return prev;
-          });
-        }
-      )
+  "postgres_changes",
+  { event: "*", schema: "public", table: ORDER_SUM_TABLE },
+  (payload: RealtimePostgresChangesPayload<OrderSummary>) => {
+    const { eventType, new: newRow, old: oldRow } = payload;
+
+    setSummaries((prev) => {
+      const next = { ...prev };
+
+      if (eventType === "DELETE") {
+        if (oldRow?.provider_id) delete next[oldRow.provider_id];
+        return next;
+      }
+
+      if ((eventType === "INSERT" || eventType === "UPDATE") && newRow?.provider_id) {
+        next[newRow.provider_id] = {
+          provider_id: newRow.provider_id,
+          total: newRow.total ?? 0,
+          items: newRow.items ?? 0,
+          updated_at: newRow.updated_at ?? null,
+        };
+        return next;
+      }
+
+      return prev;
+    });
+  }
+)
+
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };

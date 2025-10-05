@@ -1,12 +1,19 @@
-// server/prisma.ts
-import { PrismaClient } from "@prisma/client";
+// prisma/schema.prisma
 
-const globalForPrisma = global as unknown as { prisma?: PrismaClient };
+generator client {
+  provider = "prisma-client-js"
+}
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
-  });
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Si más adelante usas múltiples esquemas de Postgres:
+  // schemas = ["public"]
+}
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+/*
+  🔹 De momento no declaramos modelos.
+  🔹 Esto es suficiente para que `prisma generate` funcione.
+  🔹 Cuando quieras mapear tablas existentes de Supabase o crear nuevas,
+     agrega aquí tus `model`, `enum`, etc., y corre `prisma migrate` o `db push`.
+*/

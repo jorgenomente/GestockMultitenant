@@ -1,43 +1,27 @@
-// src/app/api/t/[slug]/branches/[id]/route.ts
+// src/app/api/admin/branches/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
+export const dynamic = "force-dynamic";
+
 /**
- * DELETE /api/t/[slug]/branches/[id]
- * Elimina una sucursal por id verificando que pertenezca al tenant del slug.
+ * DELETE /api/admin/branches/[id]
+ * Elimina una sucursal por id (uso administrativo).
  * Requiere SUPABASE_SERVICE_ROLE_KEY en el entorno del servidor.
  */
 export async function DELETE(
   _req: NextRequest,
-  ctx: { params: Promise<{ slug: string; id: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { slug, id } = await ctx.params;
-
-    if (!slug || !id) {
-      return NextResponse.json({ error: "Faltan parámetros" }, { status: 400 });
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json({ error: "Falta id" }, { status: 400 });
     }
 
     const db = getSupabaseAdminClient();
 
-    // 1) Validar tenant por slug
-    const { data: tenant, error: tErr } = await db
-      .from("tenants")
-      .select("id")
-      .eq("slug", slug)
-      .single();
-
-    if (tErr || !tenant) {
-      return NextResponse.json({ error: "Tenant no encontrado" }, { status: 404 });
-    }
-
-    // 2) Borrar branch solo si pertenece a ese tenant
-    const { error } = await db
-      .from("branches")
-      .delete()
-      .eq("id", id)
-      .eq("tenant_id", tenant.id);
-
+    const { error } = await db.from("branches").delete().eq("id", id);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
