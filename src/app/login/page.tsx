@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic"; // evita prerender estático problemáti
 
 function LoginForm() {
   const router = useRouter();
-  const search = useSearchParams(); // <-- ahora vive dentro de Suspense
-  const next = search.get("next") || "/admin";
+  const search = useSearchParams(); // debe vivir dentro de <Suspense>
+  const _next = search.get("next") || "/"; // lo ignoramos a propósito
 
   const supabase = getSupabaseBrowserClient();
 
@@ -30,8 +30,9 @@ function LoginForm() {
       setSubmitting(false);
       return;
     }
-    // Importante: replace para no volver al login en el back
-    router.replace(next);
+
+    // SIEMPRE vamos al home. Allí /src/app/page.tsx redirige a /t/{tenant}/prices
+    router.replace("/");
   }
 
   return (
@@ -56,7 +57,11 @@ function LoginForm() {
           autoComplete="current-password"
           required
         />
-        {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
+        {error && (
+          <p className="text-sm text-red-600" role="alert">
+            {error}
+          </p>
+        )}
         <button
           type="submit"
           disabled={submitting}

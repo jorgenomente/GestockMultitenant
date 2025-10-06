@@ -1,34 +1,55 @@
 // src/app/page.tsx
 import { redirect } from "next/navigation";
-import { getSupabaseUserServerClient } from "@/lib/supabaseServer";
+import {
+  getSupabaseUserServerClient,
+  getSupabaseServiceRoleClient,
+} from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function Home() {
-  const supabase = await getSupabaseUserServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const supa = await getSupabaseUserServerClient();
 
-  const fallback = process.env.NEXT_PUBLIC_DEFAULT_TENANT_SLUG || "demo";
-
-  // No logueado → a login con retorno a precios
+  // 1) Autenticación
+  const { data: { user } } = await supa.auth.getUser();
   if (!user) {
-    redirect(`/login?next=/t/${fallback}/prices`);
+    // Importante: que el login vuelva al Home para decidir tenant
+    redirect("/login?next=/");
   }
 
-  // Logueado → buscar 1 membresía válida
-  const { data: membership } = await supabase
+  // 2) Intento A: leer membership con el cliente del usuario (RLS)
+  const { data: memUser } = await supa
     .from("memberships")
-    .select("tenant_id, role")
-    .in("role", ["owner", "admin", "staff"])
+    .select("tenant_id")
+    .eq("user_id", user.id)
     .limit(1)
     .maybeSingle();
 
-  if (membership?.tenant_id) {
-    const { data: tenant } = await supabase
+  let tenantId = memUser?.tenant_id as string | undefined;
+
+  // 3) Intento B (fallback): Service Role (bypass RLS) si no hubo datos
+  if (!tenantId) {
+    try {
+      const admin = getSupabaseServiceRoleClient();
+      const { data: memAdmin } = await admin
+        .from("memberships")
+        .select("tenant_id")
+        .eq("user_id", user.id)
+        .limit(1)
+        .maybeSingle();
+      tenantId = memAdmin?.tenant_id as string | undefined;
+    } catch {
+      // ignorar errores silenciosamente; usamos fallback abajo
+    }
+  }
+
+  // 4) Resolver slug y redirigir a precios
+  if (tenantId) {
+    const { data: tenant } = await supa
       .from("tenants")
       .select("slug")
-      .eq("id", membership.tenant_id)
+      .eq("id", tenantId)
       .single();
 
     if (tenant?.slug) {
@@ -36,6 +57,7 @@ export default async function Home() {
     }
   }
 
-  // Fallback si no tiene memberships
-  redirect(`/t/${fallback}/prices`);
+  // 5) Último recurso: slug por defecto
+  const fallbackSlug = process.env.NEXT_PUBLIC_DEFAULT_TENANT_SLUG || "demo";
+  redirect(`/t/${fallbackSlug}/prices`);
 }

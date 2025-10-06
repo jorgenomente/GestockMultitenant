@@ -45,13 +45,13 @@ export default function BottomNav() {
 
   const NAV_ITEMS: NavItem[] = [
     { label: "Precios", href: (s: string) => `/t/${s}/prices`, icon: Tag, testId: "nav-precios" },
-    { label: "Vencimientos", href: "/mobile/vencimientos", icon: CalendarClock, testId: "nav-venc" },
-    { label: "Pedidos", href: "/mobile/proveedores", icon: Truck },
-    { label: "Clientes", href: "/mobile/clients", icon: Users },
-    { label: "Presupuesto", href: "/mobile/presupuesto", icon: LineChart },
-    { label: "Etiquetas", href: "/mobile/etiquetas", icon: BadgePercent },
-    { label: "Estadísticas", href: "/mobile/orders", icon: BarChart },
-    { label: "Stock", href: "/mobile/stock", icon: Boxes },
+    { label: "Vencimientos", href: (s: string) => `/t/${s}/vencimientos`, icon: CalendarClock, testId: "nav-venc" },
+    { label: "Pedidos", href: (s: string) => `/t/${s}/proveedores`, icon: Truck },
+    { label: "Clientes", href: (s: string) => `/t/${s}/clients`, icon: Users },
+    { label: "Presupuesto", href: (s: string) => `/t/${s}/presupuesto`, icon: LineChart },
+    { label: "Etiquetas", href: (s: string) => `/t/${s}/etiquetas`, icon: BadgePercent },
+    { label: "Estadísticas", href: (s: string) => `/t/${s}/orders`, icon: BarChart },
+    { label: "Stock", href: (s: string) => `/t/${s}/stock`, icon: Boxes },
     { label: "Salir", icon: LogOut, onClick: logout }, // botón logout
   ];
 

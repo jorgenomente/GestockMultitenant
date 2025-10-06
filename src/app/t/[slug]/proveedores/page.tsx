@@ -30,7 +30,7 @@ import {
   Banknote, Landmark, ChevronDown, History as HistoryIcon
 } from "lucide-react";
 
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 
 /* ====== NUEVO: tipos por semana ====== */
@@ -207,7 +207,9 @@ function toMondayYMD(ymd: string) {
 /* =================== UI =================== */
 export default function ProvidersPage() {
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
-  const router = useRouter(); // <-- agregar
+  const router = useRouter();
+  const params = useParams<{ slug?: string }>();
+  const slug = (params?.slug ?? "").toString();
   const [providers, setProviders] = React.useState<Provider[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [query, setQuery] = React.useState("");
@@ -1105,18 +1107,19 @@ React.useEffect(() => {
                       {/* Acciones */}
                       <div className="mt-3 grid grid-cols-2 gap-2">
                         <Button
-  variant="outline"
-  size="sm"
-  className="h-8 text-xs rounded-lg"
-  aria-label={`Ver pedido de ${p.name}`}
-  onClick={() =>
-    router.push(
-      `/mobile/proveedores/${p.id}/pedido?name=${encodeURIComponent(p.name)}&week=${selectedWeek?.id ?? ""}`
-    )
-  }
->
-  Ver Pedido
-</Button>
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs rounded-lg"
+                          aria-label={`Ver pedido de ${p.name}`}
+                          disabled={!slug}
+                          onClick={() => {
+                            if (!slug) return;
+                            const target = `/t/${slug}/proveedores/${p.id}/pedido?name=${encodeURIComponent(p.name)}&week=${selectedWeek?.id ?? ""}`;
+                            router.push(target);
+                          }}
+                        >
+                          Ver Pedido
+                        </Button>
 
 
                         {(() => {
