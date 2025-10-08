@@ -3,6 +3,7 @@
 import React from "react";
 import { usePathname } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 
 export default function UserBranchIndicator() {
   const pathname = usePathname();
@@ -20,7 +21,7 @@ export default function UserBranchIndicator() {
       }
     })();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
       setEmail(session?.user?.email ?? "");
     });
 

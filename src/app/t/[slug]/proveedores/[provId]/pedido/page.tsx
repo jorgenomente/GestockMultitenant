@@ -806,8 +806,8 @@ React.useEffect(() => {
           branch_id: shouldPatchBranch ? branchId : base.branch_id ?? null,
         })
         .eq('id', base.id)
-        .catch((e) => {
-          console.warn('order context patch failed', e);
+        .catch((err: unknown) => {
+          console.warn('order context patch failed', err);
         });
     }
 
@@ -906,8 +906,8 @@ React.useEffect(() => {
           .from(resolvedItemsTable)
           .update(patchPayload)
           .in('id', pendingPatchIds)
-          .catch((e) => {
-            console.warn('item context patch failed', e);
+          .catch((err: unknown) => {
+            console.warn('item context patch failed', err);
           });
       }
     }
