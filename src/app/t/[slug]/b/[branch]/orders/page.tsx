@@ -3,16 +3,17 @@ import { getSupabaseServer } from "@/lib/authz";
 
 export default async function OrdersPage({
   params,
-}: { params: { slug: string; branch: string } }) {
+}: { params: Promise<{ slug: string; branch: string }> }) {
+  const { slug, branch: branchSlug } = await params;
   const supabase = getSupabaseServer();
 
   // Opcional: podrías obtener tenantId/branchId antes (o usar un RPC)
   const { data: tenant } = await supabase
-    .from("tenants").select("id").eq("slug", params.slug).single();
-  const { data: branch } = await supabase
+    .from("tenants").select("id").eq("slug", slug).single();
+  const { data: branchRecord } = await supabase
     .from("branches")
     .select("id")
-    .eq("slug", params.branch)
+    .eq("slug", branchSlug)
     .eq("tenant_id", tenant?.id)
     .single();
 
@@ -21,14 +22,14 @@ export default async function OrdersPage({
     .from("orders")
     .select("id, created_at, total")
     .eq("tenant_id", tenant!.id)
-    .eq("branch_id", branch!.id)
+    .eq("branch_id", branchRecord!.id)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
 
   return (
     <main className="p-4 space-y-2">
-      <h1 className="text-lg font-semibold">Órdenes · {params.branch}</h1>
+      <h1 className="text-lg font-semibold">Órdenes · {branchSlug}</h1>
       <ul className="rounded border divide-y">
         {(orders ?? []).map(o => (
           <li key={o.id} className="px-3 py-2 flex items-center justify-between">

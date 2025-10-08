@@ -10,7 +10,9 @@ export const dynamic = "force-dynamic"; // evita prerender estático problemáti
 function LoginForm() {
   const router = useRouter();
   const search = useSearchParams(); // debe vivir dentro de <Suspense>
-  const _next = search.get("next") || "/"; // lo ignoramos a propósito
+  const rawNext = search.get("next");
+  const next = rawNext && rawNext.startsWith("/") ? rawNext : "/";
+  const safeNext = next.startsWith("/login") ? "/" : next;
 
   const supabase = getSupabaseBrowserClient();
 
@@ -31,8 +33,7 @@ function LoginForm() {
       return;
     }
 
-    // SIEMPRE vamos al home. Allí /src/app/page.tsx redirige a /t/{tenant}/prices
-    router.replace("/");
+    router.replace(safeNext);
   }
 
   return (

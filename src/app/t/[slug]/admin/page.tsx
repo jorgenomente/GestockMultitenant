@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
@@ -180,6 +180,18 @@ function MemberRow({
   const [temp, setTemp] = useState<string[] | null>(
     m.branch_ids === null ? null : (m.branch_ids ?? [])
   );
+  const [role, setRole] = useState<MembershipRow["role"]>(m.role);
+
+  // Sync local state when membership updates from server
+  useEffect(() => {
+    setTemp(m.branch_ids === null ? null : (m.branch_ids ?? []));
+    setRole(m.role);
+  }, [m.branch_ids, m.role]);
+
+  const resetState = () => {
+    setTemp(m.branch_ids === null ? null : (m.branch_ids ?? []));
+    setRole(m.role);
+  };
 
   const title = m.email ?? `${m.user_id.slice(0, 8)}…`;
   const viewBranches =
@@ -190,7 +202,12 @@ function MemberRow({
       : ["(sin sucursales)"];
 
   const apply = () => {
-    onApply({ userId: m.user_id, role: m.role, branchIds: temp });
+    onApply({ userId: m.user_id, role, branchIds: temp });
+    setEditing(false);
+  };
+
+  const close = () => {
+    resetState();
     setEditing(false);
   };
 
@@ -216,7 +233,7 @@ function MemberRow({
                 <Button size="sm" onClick={apply}>
                   Aplicar
                 </Button>
-                <Button size="sm" variant="secondary" onClick={() => setEditing(false)}>
+                <Button size="sm" variant="secondary" onClick={close}>
                   Cancelar
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setTemp([])}>
@@ -240,9 +257,21 @@ function MemberRow({
           )}
         </div>
 
-        <span className="text-xs rounded-full bg-gray-100 px-2 py-0.5 shrink-0">
-          {m.role}
-        </span>
+        {!editing ? (
+          <span className="text-xs rounded-full bg-gray-100 px-2 py-0.5 shrink-0">
+            {m.role}
+          </span>
+        ) : (
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as MembershipRow["role"])}
+            className="text-xs border rounded px-2 py-1"
+          >
+            <option value="owner">owner</option>
+            <option value="admin">admin</option>
+            <option value="staff">staff</option>
+          </select>
+        )}
       </div>
 
       <div className="text-[11px] text-neutral-500 flex items-center justify-between">
@@ -257,8 +286,14 @@ function MemberRow({
             copiar id
           </button>
         </div>
-        <Button size="sm" variant="secondary" onClick={() => setEditing((v) => !v)}>
-          {editing ? "Cerrar" : "Editar sucursales"}
+        <Button size="sm" variant="secondary" onClick={() => {
+          if (editing) {
+            close();
+          } else {
+            setEditing(true);
+          }
+        }}>
+          {editing ? "Cerrar" : "Editar acceso"}
         </Button>
       </div>
     </li>
@@ -283,13 +318,13 @@ export default function AdminPage() {
     queryKey: ["tenant", slug],
     enabled: !!slug,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("tenants")
-        .select("id, slug, name")
-        .eq("slug", slug)
-        .maybeSingle();
-      if (error) throw new Error(error.message);
-      return data ?? null; // null => no visible por RLS o no existe
+      const res = await fetch(`/api/t/${slug}/tenant`, { cache: "no-store" });
+      const txt = await res.text();
+      let json: any = null;
+      try { json = JSON.parse(txt); } catch {}
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+      return json as { id: string; slug: string; name: string };
     },
   });
 
@@ -298,16 +333,17 @@ export default function AdminPage() {
 
   /* --- Branches --- */
   const branchesQ = useQuery<Branch[]>({
-    queryKey: ["branches", tenantId],
-    enabled: !!tenantId,
+    queryKey: ["branches", slug],
+    enabled: !!slug && !!tenantId,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("branches")
-        .select("id, name, slug")
-        .eq("tenant_id", tenantId)
-        .order("name", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as Branch[];
+      const res = await fetch(`/api/t/${slug}/branches`, { cache: "no-store" });
+      const txt = await res.text();
+      let json: any = null;
+      try { json = JSON.parse(txt); } catch {}
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+      const branches = (json?.branches ?? []) as Branch[];
+      return branches;
     },
   });
 
@@ -370,7 +406,7 @@ export default function AdminPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 400)}`);
       return res.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["branches", tenantId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["branches", slug] }),
     onError: (err) => alert(err instanceof Error ? err.message : String(err)),
   });
 
@@ -380,7 +416,7 @@ export default function AdminPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 400)}`);
       return res.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["branches", tenantId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["branches", slug] }),
     onError: (err) => alert(`No se pudo borrar: ${err instanceof Error ? err.message : String(err)}`),
   });
 

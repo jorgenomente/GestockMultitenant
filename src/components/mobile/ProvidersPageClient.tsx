@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 
 /* =================== Props =================== */
-type Props = { slug: string; branch: string };
+type Props = { slug: string; branch: string; tenantId: string; branchId: string };
 
 /* =================== Tipos y tablas (NIVEL MÓDULO) =================== */
 type DayIdx = 0|1|2|3|4|5|6;
@@ -194,7 +194,7 @@ function toMondayYMD(ymd: string) {
 }
 
 /* =================== COMPONENTE =================== */
-export default function ProvidersPageClient({ slug, branch }: Props) {
+export default function ProvidersPageClient({ slug, branch, tenantId, branchId }: Props) {
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
   const router = useRouter();
 
@@ -203,7 +203,7 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
   const [query, setQuery] = React.useState("");
   const [tab, setTab] = React.useState<ViewTab>("TODOS");
 
-  const [summaries, setSummaries] = React.useState<Record<string, OrderSummary>>({});
+  const [, setSummaries] = React.useState<Record<string, OrderSummary>>({});
 
   const [weeks, setWeeks] = React.useState<WeekRow[]>([]);
   const [selectedWeek, setSelectedWeek] = React.useState<WeekRow | null>(null);
@@ -214,7 +214,7 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
   const [weekSummaries, setWeekSummaries] =
     React.useState<Record<string, { total: number|null; items: number|null; updated_at: string|null }>>({});
 
-  const statusFor = (provId: string): Status => (weekStates[provId] ?? "PENDIENTE");
+  const statusFor = React.useCallback((provId: string): Status => (weekStates[provId] ?? "PENDIENTE"), [weekStates]);
 
   const [createOpen, setCreateOpen] = React.useState(false);
   const [name, setName] = React.useState("");
@@ -272,7 +272,7 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
       .subscribe();
 
     return () => { supabase.removeChannel(ch); };
-  }, [selectedWeek, supabase]);
+  }, [selectedWeek, supabase, tenantId, branchId]);
 
   /* ===== Carga inicial ===== */
   React.useEffect(() => {
@@ -306,6 +306,8 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
       const { data: wkData, error: wkErr } = await supabase
         .from(WEEKS_TABLE)
         .select("*")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId)
         .order("week_start", { ascending: false });
       if (wkErr) console.error("fetch weeks error:", wkErr);
       const allWeeks = (wkData as WeekRow[] | null) ?? [];
@@ -315,7 +317,7 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
         const ws = toYMDLocal(startOfWeekMondayLocal(new Date()));
         const { data: created, error: cErr } = await supabase
           .from(WEEKS_TABLE)
-          .insert([{ week_start: ws, label: null }])
+          .insert([{ week_start: ws, label: null, tenant_id: tenantId, branch_id: branchId }])
           .select("*")
           .single();
         if (!cErr && created) {
@@ -348,7 +350,7 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
       setLoading(false);
     })();
     return () => { mounted = false; };
-  }, [supabase]);
+  }, [supabase, tenantId, branchId]);
 
   /* ===== Datos derivados por semana ===== */
   React.useEffect(() => {
@@ -359,7 +361,9 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
       const { data: wps, error } = await supabase
         .from(WEEK_PROVIDERS_TABLE)
         .select("*")
-        .eq("week_id", selectedWeek.id);
+        .eq("week_id", selectedWeek.id)
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId);
 
       if (error) {
         console.error("fetch week providers error:", error);
@@ -373,6 +377,8 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
       const { data: lastRows, error: lastErr } = await supabase
         .from(WEEK_PROVIDERS_TABLE)
         .select("provider_id, added_at")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId)
         .order("added_at", { ascending: false });
 
       if (lastErr) {
@@ -386,7 +392,7 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
         setLastAddedByProvider(m);
       }
     })();
-  }, [selectedWeek, supabase]);
+  }, [selectedWeek, supabase, tenantId, branchId]);
 
   /* ===== Estado y resúmenes por semana ===== */
   React.useEffect(() => {
@@ -402,7 +408,9 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
       const { data: stRows, error: stErr } = await supabase
         .from(WEEK_STATES_TABLE)
         .select("provider_id,status")
-        .eq("week_id", selectedWeek.id);
+        .eq("week_id", selectedWeek.id)
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId);
 
       if (!cancelled) {
         if (stErr) {
@@ -421,7 +429,9 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
       const { data: sumRows, error: sumErr } = await supabase
         .from(WEEK_SUM_TABLE)
         .select("provider_id,total,items,updated_at")
-        .eq("week_id", selectedWeek.id);
+        .eq("week_id", selectedWeek.id)
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId);
 
       if (!cancelled) {
         if (sumErr) {
@@ -439,7 +449,7 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
     })();
 
     return () => { cancelled = true; };
-  }, [selectedWeek, supabase]);
+  }, [selectedWeek, supabase, tenantId, branchId]);
 
   /* ===== Realtime (providers) ===== */
   React.useEffect(() => {
@@ -544,7 +554,7 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
         )
       : base;
     return byQ.sort(byName);
-  }, [visibleProviders, tab, query]);
+  }, [visibleProviders, tab, query, statusFor]);
 
   const groupedByDay = React.useMemo(() => {
     const map = new Map<number, Provider[]>();
@@ -585,13 +595,20 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
 
   async function addProvider() {
     const parsed = providerSchema.safeParse({
-      name, freq, order_day: orderDay, receive_day: receiveDay, responsible, status,
+      name,
+      freq,
+      order_day: orderDay,
+      receive_day: receiveDay,
+      responsible,
+      status,
       payment_method: paymentMethod,
     });
     if (!parsed.success) {
       alert(parsed.error.issues.map((i) => i.message).join("\n"));
       return;
     }
+
+    const activeWeek = selectedWeek;
 
     const temp: Provider = {
       id: `${PENDING_PREFIX}${uuid()}`,
@@ -604,11 +621,23 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
       payment_method: paymentMethod,
     };
 
+    const optimisticAddedAt = new Date().toISOString();
     const optimistic = [...providers, temp].sort(byName);
+
     setProviders(optimistic);
     saveCache(optimistic);
     setCreateOpen(false);
     resetCreateForm();
+
+    if (activeWeek) {
+      setWeekProviders((prev) => {
+        if (prev.has(temp.id)) return prev;
+        const next = new Set(prev);
+        next.add(temp.id);
+        return next;
+      });
+      setLastAddedByProvider((prev) => ({ ...prev, [temp.id]: optimisticAddedAt }));
+    }
 
     const { data, error } = await supabase
       .from(TABLE)
@@ -620,28 +649,107 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
         responsible: temp.responsible,
         status: temp.status,
         payment_method: temp.payment_method,
+        tenant_id: tenantId,
+        branch_id: branchId,
       }])
       .select("*")
       .single();
 
     if (error) {
       console.error("Insert error:", error);
-      alert("No se pudo guardar en la nube. Reintentá.\n" + (error.message ?? ""));
-      const reverted = providers.filter((p) => p.id !== temp.id).sort(byName);
-      setProviders(reverted);
-      saveCache(reverted);
+      const code = (error as { code?: string; message?: string })?.code;
+      const duplicate = code === "23505";
+      const alertMsg = duplicate
+        ? "Ya existe un proveedor con ese nombre. Cambiá el nombre o reutilizá el existente."
+        : "No se pudo guardar en la nube. Reintentá.\n" + (error.message ?? "");
+      alert(alertMsg);
+
+      setProviders((prev) => {
+        const reverted = prev.filter((p) => p.id !== temp.id).sort(byName);
+        saveCache(reverted);
+        return reverted;
+      });
+
+      if (activeWeek) {
+        setWeekProviders((prev) => {
+          if (!prev.has(temp.id)) return prev;
+          const next = new Set(prev);
+          next.delete(temp.id);
+          return next;
+        });
+        setLastAddedByProvider((prev) => {
+          if (!prev[temp.id]) return prev;
+          const next = { ...prev };
+          delete next[temp.id];
+          return next;
+        });
+      }
       return;
     }
 
-    const real = { ...(data as Provider), payment_method: normalizePayment((data as any).payment_method) };
-    const reconciled = providers
-      .filter((p) => p.id !== temp.id)
-      .concat(real)
-      .sort(byName);
+    const inserted = data as Provider;
+    const real: Provider = { ...inserted, payment_method: normalizePayment(inserted.payment_method) };
 
-    setProviders(reconciled);
-    saveCache(reconciled);
+    setProviders((prev) => {
+      const withoutTemp = prev.filter((p) => p.id !== temp.id);
+      const withoutDup = withoutTemp.filter((p) => p.id !== real.id);
+      const merged = [...withoutDup, real].sort(byName);
+      saveCache(merged);
+      return merged;
+    });
+
+    if (activeWeek) {
+      const addedAt = new Date().toISOString();
+      setWeekProviders((prev) => {
+        const next = new Set(prev);
+        next.delete(temp.id);
+        next.add(real.id);
+        return next;
+      });
+      setLastAddedByProvider((prev) => {
+        const next = { ...prev };
+        delete next[temp.id];
+        next[real.id] = addedAt;
+        return next;
+      });
+
+      const { error: linkError } = await supabase
+        .from(WEEK_PROVIDERS_TABLE)
+        .upsert(
+          [
+            {
+              week_id: activeWeek.id,
+              provider_id: real.id,
+              tenant_id: tenantId,
+              branch_id: branchId,
+            },
+          ],
+          { onConflict: "week_id,provider_id" },
+        );
+
+      if (linkError) {
+        if (linkError.code === "23505") {
+          return;
+        }
+        console.error("Link provider to week error:", linkError);
+        alert(
+          'El proveedor se creó pero no se pudo sumar a la semana actual. Podés agregarlo manualmente desde "Agregar".\n' +
+            (linkError.message ?? ""),
+        );
+        setWeekProviders((prev) => {
+          const next = new Set(prev);
+          next.delete(real.id);
+          return next;
+        });
+        setLastAddedByProvider((prev) => {
+          const next = { ...prev };
+          delete next[real.id];
+          return next;
+        });
+      }
+    }
   }
+
 
   async function removeProvider(id: string) {
     if (id.startsWith(PENDING_PREFIX)) {
@@ -746,6 +854,8 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
         provider_id: p.id,
         status: next,
         updated_at: new Date().toISOString(),
+        tenant_id: tenantId,
+        branch_id: branchId,
       }, { onConflict: "week_id,provider_id" });
 
     if (error) {
@@ -761,7 +871,7 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
 
     const { data: created, error } = await supabase
       .from(WEEKS_TABLE)
-      .insert([{ week_start: weekStart }])
+      .insert([{ week_start: weekStart, tenant_id: tenantId, branch_id: branchId }])
       .select("*")
       .single();
 
@@ -787,8 +897,18 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
 
     const { error } = await supabase
       .from(WEEK_PROVIDERS_TABLE)
-      .insert([{ week_id: selectedWeek.id, provider_id: providerId }]);
+      .upsert([
+        {
+          week_id: selectedWeek.id,
+          provider_id: providerId,
+          tenant_id: tenantId,
+          branch_id: branchId,
+        },
+      ], { onConflict: 'week_id,provider_id' });
     if (error) {
+      if (error.code === '23505') {
+        return;
+      }
       alert("No se pudo agregar el proveedor a la semana.\n" + (error.message ?? ""));
       return;
     }
@@ -1053,9 +1173,9 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
                           aria-label={`Ver pedido de ${p.name}`}
                           onClick={() =>
                             router.push(
-                              `/t/${slug}/b/${branch}/providers/${p.id}/pedido?name=${
+                              `/t/${slug}/proveedores/${p.id}/pedido?name=${
                                 encodeURIComponent(p.name)
-                              }&week=${selectedWeek?.id ?? ""}`
+                              }&week=${selectedWeek?.id ?? ""}&branch=${branch}&branchId=${branchId}&tenantId=${tenantId}`
                             )
                           }
                         >
@@ -1143,8 +1263,8 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
           </AlertDialogHeader>
 
           <div className="mt-2">
-            <label className="mb-1 block text-sm">Fecha (lunes de la semana)</label>
-            <Input type="date" value={newWeekDate} onChange={(e) => setNewWeekDate(e.target.value)} />
+            <label htmlFor="new-week-date" className="mb-1 block text-sm">Fecha (lunes de la semana)</label>
+            <Input id="new-week-date" type="date" value={newWeekDate} onChange={(e) => setNewWeekDate(e.target.value)} />
           </div>
 
           <AlertDialogFooter className="mt-3">
@@ -1172,12 +1292,12 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
 
           <div className="grid gap-3">
             <div className="grid gap-1.5">
-              <label className="text-sm">Nombre</label>
-              <Input placeholder="Ej: Ankas del Sur" value={name} onChange={(e) => setName(e.target.value)} />
+              <label htmlFor="create-name" className="text-sm">Nombre</label>
+              <Input id="create-name" placeholder="Ej: Ankas del Sur" value={name} onChange={(e) => setName(e.target.value)} />
             </div>
 
-            <div className="grid gap-1.5">
-              <label className="text-sm">Frecuencia</label>
+            <div className="grid gap-1.5 text-sm">
+              <span>Frecuencia</span>
               <Select value={freq} onValueChange={(v) => setFreq(v as Freq)}>
                 <SelectTrigger><SelectValue placeholder="Elige frecuencia" /></SelectTrigger>
                 <SelectContent>
@@ -1188,8 +1308,8 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
               </Select>
             </div>
 
-            <div className="grid gap-1.5">
-              <label className="text-sm">Día que se pide</label>
+            <div className="grid gap-1.5 text-sm">
+              <span>Día que se pide</span>
               <Select value={String(orderDay)} onValueChange={(v) => setOrderDay(Number(v) as DayIdx)}>
                 <SelectTrigger><SelectValue placeholder="Selecciona un día" /></SelectTrigger>
                 <SelectContent>
@@ -1198,8 +1318,8 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
               </Select>
             </div>
 
-            <div className="grid gap-1.5">
-              <label className="text-sm">Día que se recibe</label>
+            <div className="grid gap-1.5 text-sm">
+              <span>Día que se recibe</span>
               <Select value={String(receiveDay)} onValueChange={(v) => setReceiveDay(Number(v) as DayIdx)}>
                 <SelectTrigger><SelectValue placeholder="Selecciona un día" /></SelectTrigger>
                 <SelectContent>
@@ -1209,12 +1329,12 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
             </div>
 
             <div className="grid gap-1.5">
-              <label className="text-sm">Responsable</label>
-              <Input placeholder="Ej: Jorge / Mariana" value={responsible} onChange={(e) => setResponsible(e.target.value)} />
+              <label htmlFor="create-responsible" className="text-sm">Responsable</label>
+              <Input id="create-responsible" placeholder="Ej: Jorge / Mariana" value={responsible} onChange={(e) => setResponsible(e.target.value)} />
             </div>
 
-            <div className="grid gap-1.5">
-              <label className="text-sm">Método de pago</label>
+            <div className="grid gap-1.5 text-sm">
+              <span>Método de pago</span>
               <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}>
                 <SelectTrigger><SelectValue placeholder="Selecciona método" /></SelectTrigger>
                 <SelectContent>
@@ -1224,8 +1344,8 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
               </Select>
             </div>
 
-            <div className="grid gap-1.5">
-              <label className="text-sm">Estado inicial</label>
+            <div className="grid gap-1.5 text-sm">
+              <span>Estado inicial</span>
               <Select value={status} onValueChange={(v) => setStatus(v as Status)}>
                 <SelectTrigger><SelectValue placeholder="Selecciona estado" /></SelectTrigger>
                 <SelectContent>
@@ -1254,12 +1374,12 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
           {editing && (
             <div className="grid gap-3">
               <div className="grid gap-1.5">
-                <label className="text-sm">Nombre</label>
-                <Input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
+                <label htmlFor="edit-name" className="text-sm">Nombre</label>
+                <Input id="edit-name" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
               </div>
 
-              <div className="grid gap-1.5">
-                <label className="text-sm">Frecuencia</label>
+              <div className="grid gap-1.5 text-sm">
+                <span>Frecuencia</span>
                 <Select value={editing.freq} onValueChange={(v) => setEditing({ ...editing, freq: v as Freq })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1270,8 +1390,8 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
                 </Select>
               </div>
 
-              <div className="grid gap-1.5">
-                <label className="text-sm">Día que se pide</label>
+              <div className="grid gap-1.5 text-sm">
+                <span>Día que se pide</span>
                 <Select value={String(normalizeDay(editing.order_day))}
                         onValueChange={(v) => setEditing({ ...editing, order_day: Number(v) as DayIdx })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1281,8 +1401,8 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
                 </Select>
               </div>
 
-              <div className="grid gap-1.5">
-                <label className="text-sm">Día que se recibe</label>
+              <div className="grid gap-1.5 text-sm">
+                <span>Día que se recibe</span>
                 <Select value={String(normalizeDay(editing.receive_day))}
                         onValueChange={(v) => setEditing({ ...editing, receive_day: Number(v) as DayIdx })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1293,12 +1413,12 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
               </div>
 
               <div className="grid gap-1.5">
-                <label className="text-sm">Responsable</label>
-                <Input value={editing.responsible} onChange={(e) => setEditing({ ...editing, responsible: e.target.value })} />
+                <label htmlFor="edit-responsible" className="text-sm">Responsable</label>
+                <Input id="edit-responsible" value={editing.responsible} onChange={(e) => setEditing({ ...editing, responsible: e.target.value })} />
               </div>
 
-              <div className="grid gap-1.5">
-                <label className="text-sm">Método de pago</label>
+              <div className="grid gap-1.5 text-sm">
+                <span>Método de pago</span>
                 <Select value={normalizePayment(editing.payment_method)}
                         onValueChange={(v) => setEditing({ ...editing, payment_method: v as PaymentMethod })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1309,8 +1429,8 @@ export default function ProvidersPageClient({ slug, branch }: Props) {
                 </Select>
               </div>
 
-              <div className="grid gap-1.5">
-                <label className="text-sm">Estado</label>
+              <div className="grid gap-1.5 text-sm">
+                <span>Estado</span>
                 <Select value={editing.status} onValueChange={(v) => setEditing({ ...editing, status: v as Status })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>

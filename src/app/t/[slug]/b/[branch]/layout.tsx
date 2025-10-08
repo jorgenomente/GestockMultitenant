@@ -1,10 +1,13 @@
 // src/app/t/[slug]/b/[branch]/layout.tsx
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/authz";
 import { paths } from "@/lib/paths";
 import type { ReactNode } from "react";
 
 type BranchRow = { id: string; name: string; slug: string };
+type MembershipRow = { branch_ids: string[] | null };
+type TenantRow = { id: string };
 
 type LayoutProps = {
   children: ReactNode;
@@ -13,18 +16,76 @@ type LayoutProps = {
 
 export default async function TenantLayout({ children, params }: LayoutProps) {
   // En este proyecto, params es Promise; incluye slug y branch para este path
-  const { slug /*, branch */ } = await params;
+  const { slug, branch: branchSlug } = await params;
 
   const supabase = getSupabaseServer();
 
-  const { data: branches, error } = await supabase.rpc(
-    "branches_for_current_user",
-    { p_tenant_slug: slug }
-  );
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  if (error) throw error;
+  if (!user) {
+    const next = paths.branch(slug, branchSlug);
+    redirect(`/login?next=${encodeURIComponent(next)}`);
+  }
 
-  const list = (branches ?? []) as BranchRow[];
+  const { data: tenantRow, error: tenantError } = await supabase
+    .from("tenants")
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle<TenantRow>();
+
+  if (tenantError) throw tenantError;
+
+  const tenantId = tenantRow?.id;
+  if (!tenantId) {
+    redirect("/missing-membership");
+  }
+
+  const { data: membershipRow, error: membershipError } = await supabase
+    .from("memberships")
+    .select("branch_ids")
+    .eq("user_id", user.id)
+    .eq("tenant_id", tenantId)
+    .maybeSingle<MembershipRow>();
+
+  if (membershipError) throw membershipError;
+
+  let list: BranchRow[] = [];
+
+  const branchIds = membershipRow?.branch_ids;
+
+  if (branchIds === null) {
+    const { data, error } = await supabase
+      .from("branches")
+      .select("id, name, slug")
+      .eq("tenant_id", tenantId)
+      .order("name", { ascending: true });
+    if (error) throw error;
+    list = (data ?? []) as BranchRow[];
+  } else if (Array.isArray(branchIds) && branchIds.length > 0) {
+    const { data, error } = await supabase
+      .from("branches")
+      .select("id, name, slug")
+      .eq("tenant_id", tenantId)
+      .in("id", branchIds);
+    if (error) throw error;
+    const byId = new Map((data ?? []).map((b) => [b.id, b] as const));
+    list = branchIds
+      .map((id) => byId.get(id))
+      .filter((b): b is BranchRow => Boolean(b));
+  } else {
+    list = [];
+  }
+
+  if (list.length === 0) {
+    redirect("/missing-membership");
+  }
+
+  if (!list.some((b) => b.slug === branchSlug)) {
+    const fallback = list[0];
+    redirect(paths.dashboard(slug, fallback.slug));
+  }
 
   return (
     <div className="min-h-dvh">

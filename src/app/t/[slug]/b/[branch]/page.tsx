@@ -6,15 +6,16 @@ import { paths } from "@/lib/paths";
 export default async function BranchDashboard({
   params,
 }: {
-  params: { slug: string; branch: string };
+  params: Promise<{ slug: string; branch: string }>;
 }) {
+  const { slug, branch: branchSlug } = await params;
   const supabase = getSupabaseServer();
 
   // 1) Tenant por slug (simple)
   const { data: tenant, error: tErr } = await supabase
     .from("tenants")
     .select("id, slug, name")
-    .eq("slug", params.slug)
+    .eq("slug", slug)
     .single();
   if (tErr || !tenant) {
     return (
@@ -29,7 +30,7 @@ export default async function BranchDashboard({
     .from("branches")
     .select("id, name, slug, tenant_id")
     .eq("tenant_id", tenant.id)
-    .eq("slug", params.branch)
+    .eq("slug", branchSlug)
     .single();
   if (bErr || !branch) {
     return (

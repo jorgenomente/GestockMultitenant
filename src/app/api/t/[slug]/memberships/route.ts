@@ -42,13 +42,13 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   } = await route.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // Tenant por slug (RLS sobre tenants habilitada)
-  const { data: tenant, error: tErr } = await route
+  const { data: tenant, error: tErr } = await admin
     .from("tenants")
     .select("id, slug")
     .eq("slug", slug)
-    .single();
-  if (tErr || !tenant) {
+    .maybeSingle();
+  if (tErr) return NextResponse.json({ error: tErr.message }, { status: 400 });
+  if (!tenant) {
     return NextResponse.json({ error: "Tenant no encontrado" }, { status: 404 });
   }
 
@@ -159,13 +159,13 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: "userId y role son requeridos" }, { status: 400 });
   }
 
-  // Tenant
-  const { data: tenant, error: tErr } = await route
+  const { data: tenant, error: tErr } = await admin
     .from("tenants")
     .select("id, slug")
     .eq("slug", slug)
-    .single();
-  if (tErr || !tenant) return NextResponse.json({ error: "Tenant no encontrado" }, { status: 404 });
+    .maybeSingle();
+  if (tErr) return NextResponse.json({ error: tErr.message }, { status: 400 });
+  if (!tenant) return NextResponse.json({ error: "Tenant no encontrado" }, { status: 404 });
 
   // Permisos del actor
   const { data: me } = await admin

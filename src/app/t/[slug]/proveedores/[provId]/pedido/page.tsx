@@ -480,16 +480,19 @@ async function loadSalesFromURL(url: string): Promise<SalesRow[]> {
 async function getActiveSalesURL(supabase: ReturnType<typeof getSupabaseBrowserClient>): Promise<SalesPersistMeta> {
   const { data, error } = await supabase
     .from(TABLE_SETTINGS)
-    .select("value")
-    .eq("key", "sales_url")
+    .select('value')
+    .eq('key', 'sales_url')
     .maybeSingle();
 
   if (error) {
-    console.error("getActiveSalesURL error", error);
+    if (error.message && !['PGRST302', '42P01'].includes(error.code ?? '')) {
+      console.warn('getActiveSalesURL warning', error);
+    }
+    return { url: VENTAS_URL, tenant_id: null, branch_id: null };
   }
   const meta = (data?.value as SalesPersistMeta | undefined);
   if (meta?.url) return meta;
-  return { url: VENTAS_URL };
+  return { url: VENTAS_URL, tenant_id: null, branch_id: null };
 }
 
 function computeStats(sales: SalesRow[], product: string, now = Date.now()): Stats {
@@ -529,11 +532,23 @@ export default function ProviderOrderPage() {
   const params = useParams<{ provId: string }>();
   const provId = String(params?.provId || "");
   const search = useSearchParams();
-  const providerName = search.get("name") || "Proveedor";
-  const selectedWeekId = search.get("week"); // puede ser null si entraste sin semana
+  const selectedWeekId = search.get("week");
+  const branchSlug = search.get("branch");
+  const branchIdQuery = search.get("branchId");
+  const tenantIdQuery = search.get("tenantId");
 
+  const [providerNameOverride, setProviderNameOverride] = React.useState<string | null>(null);
+  const providerName = search.get("name") || providerNameOverride || "Proveedor";
 
-    const [order, setOrder]   = React.useState<OrderRow | null>(null);
+  const [context, setContext] = React.useState<{ tenantId: string | null; branchId: string | null }>({
+    tenantId: tenantIdQuery,
+    branchId: branchIdQuery,
+  });
+
+  const tenantId = context.tenantId || undefined;
+  const branchId = context.branchId || undefined;
+
+  const [order, setOrder]   = React.useState<OrderRow | null>(null);
   const [items, setItems]   = React.useState<ItemRow[]>([]);
   const [sales, setSales]   = React.useState<SalesRow[]>([]);
   const [margin, setMargin] = React.useState<number>(48);
@@ -559,6 +574,40 @@ const bottomNavHeightPx = 76; // ajustá 72–84px según mida tu BottomNav real
 const rootStyle: React.CSSProperties = {
   ["--bottom-nav-h" as any]: `${bottomNavHeightPx}px`,
 };
+
+  React.useEffect(() => {
+    if (tenantIdQuery && tenantIdQuery !== context.tenantId) {
+      setContext((prev) => ({ tenantId: tenantIdQuery, branchId: prev.branchId }));
+    }
+    if (branchIdQuery && branchIdQuery !== context.branchId) {
+      setContext((prev) => ({ tenantId: prev.tenantId, branchId: branchIdQuery }));
+    }
+  }, [tenantIdQuery, branchIdQuery, context.tenantId, context.branchId]);
+
+  React.useEffect(() => {
+    if (!provId) return;
+    if (context.tenantId && context.branchId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("providers")
+        .select("name, tenant_id, branch_id")
+        .eq("id", provId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        console.error("load provider meta error", error);
+        return;
+      }
+      if (!data) return;
+      if (data.name && !providerNameOverride) setProviderNameOverride(data.name);
+      setContext((prev) => ({
+        tenantId: prev.tenantId ?? data.tenant_id ?? null,
+        branchId: prev.branchId ?? data.branch_id ?? null,
+      }));
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, provId, context.tenantId, context.branchId, providerNameOverride]);
 
 
 
@@ -592,36 +641,63 @@ const rootStyle: React.CSSProperties = {
 
   // crear/obtener pedido PENDIENTE + cargar ítems
   React.useEffect(() => {
+    if (!provId || !tenantId || !branchId) return;
     let mounted = true;
     (async () => {
       const { data: list, error } = await supabase
-        .from(TABLE_ORDERS).select("*").eq("provider_id", provId)
-        .order("created_at", { ascending: false }).limit(1);
+        .from(TABLE_ORDERS)
+        .select('*')
+        .eq('provider_id', provId)
+        .eq('tenant_id', tenantId)
+        .eq('branch_id', branchId)
+        .order('created_at', { ascending: false })
+        .limit(1);
       if (!mounted) return;
-      if (error) { console.error("load orders error", error); return; }
+      if (error) { console.error('load orders error', error); return; }
 
       let base = (list?.[0] as OrderRow | undefined) ?? null;
-      if (!base || base.status !== "PENDIENTE") {
+      if (!base || base.status !== 'PENDIENTE') {
+        const payload: Record<string, any> = {
+          provider_id: provId,
+          status: 'PENDIENTE',
+          notes: `${providerName} - ${isoToday()}`,
+          total: 0,
+          tenant_id: tenantId,
+          branch_id: branchId,
+        };
         const { data, error: insErr } = await supabase
           .from(TABLE_ORDERS)
-          .insert([{ provider_id: provId, status: "PENDIENTE", notes: `${providerName} - ${isoToday()}`, total: 0 }])
-          .select("*").single();
-        if (insErr) { console.error("create order error", insErr); return; }
+          .insert([payload])
+          .select('*')
+          .single();
+        if (insErr) { console.error('create order error', insErr); return; }
         base = data as OrderRow;
       }
+
+      if (base?.tenant_id && base?.branch_id) {
+        setContext((prev) => ({
+          tenantId: prev.tenantId ?? base!.tenant_id ?? null,
+          branchId: prev.branchId ?? base!.branch_id ?? null,
+        }));
+      }
+
       setOrder(base);
 
       const { data: rows, error: itemsErr } = await supabase
-        .from(TABLE_ITEMS).select("*").eq("order_id", base.id).order("id", { ascending: true });
-      if (itemsErr) { console.error("load items error", itemsErr); return; }
+        .from(TABLE_ITEMS)
+        .select('*')
+        .eq('order_id', base!.id)
+        .eq('tenant_id', tenantId)
+        .eq('branch_id', branchId)
+        .order('id', { ascending: true });
+      if (itemsErr) { console.error('load items error', itemsErr); return; }
       setItems((rows as ItemRow[]) ?? []);
-      // Cargar estado de UI multi-dispositivo
       if (base?.id) {
         void loadUIState(base.id);
       }
     })();
     return () => { mounted = false; };
-  }, [supabase, provId, providerName]);
+  }, [supabase, provId, providerName, tenantId, branchId]);
 
   // Realtime (escucha cambios en items)
   React.useEffect(() => {
@@ -731,27 +807,25 @@ async function recomputeOrderTotal(newItems?: ItemRow[]) {
 
   const updated_at = new Date().toISOString();
 
-  // 1) actualizar el total del pedido
-  await supabase.from(TABLE_ORDERS).update({ total }).eq("id", order.id);
+  await supabase.from(TABLE_ORDERS).update({ total }).eq('id', order.id);
 
-  // 2a) resumen GLOBAL (si lo seguís usando en otras vistas)
   await supabase
     .from(TABLE_ORDER_SUMMARIES)
     .upsert(
       { provider_id: order.provider_id, total, items: qty, updated_at },
-      { onConflict: "provider_id" }
+      { onConflict: 'provider_id' }
     );
 
-  // 2b) resumen de la SEMANA ACTUAL (clave compuesta)
   if (selectedWeekId) {
     await supabase
       .from(TABLE_ORDER_SUMMARIES_WEEK)
       .upsert(
         { week_id: selectedWeekId, provider_id: order.provider_id, total, items: qty, updated_at },
-        { onConflict: "week_id,provider_id" }
+        { onConflict: 'week_id,provider_id' }
       );
   }
 }
+
 
 
     /* ===== UI state en Supabase (multi-dispositivo) ===== */
@@ -773,34 +847,33 @@ async function recomputeOrderTotal(newItems?: ItemRow[]) {
 async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
   if (!provId) return;
 
-  const total = typeof totalArg === "number"
+  const total = typeof totalArg === 'number'
     ? totalArg
     : items.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
 
-  const itemsCount = typeof itemsArg === "number"
+  const itemsCount = typeof itemsArg === 'number'
     ? itemsArg
     : items.reduce((a, it) => a + (it.qty || 0), 0);
 
   const updated_at = new Date().toISOString();
 
-  // GLOBAL (opcional si lo usás en otro lado)
   await supabase
     .from(TABLE_ORDER_SUMMARIES)
     .upsert(
       { provider_id: provId, total, items: itemsCount, updated_at },
-      { onConflict: "provider_id" }
+      { onConflict: 'provider_id' }
     );
 
-  // SEMANAL (lo que ve la lista al elegir una semana)
   if (selectedWeekId) {
     await supabase
       .from(TABLE_ORDER_SUMMARIES_WEEK)
       .upsert(
         { week_id: selectedWeekId, provider_id: provId, total, items: itemsCount, updated_at },
-        { onConflict: "week_id,provider_id" }
+        { onConflict: 'week_id,provider_id' }
       );
   }
 }
+
 
 
   async function saveUIState(orderId: string, patch: {

@@ -16,26 +16,24 @@ import {
 } from "lucide-react";
 import React from "react";
 import clsx from "clsx";
+import { useBranch } from "@/components/branch/BranchProvider";
 import { useLogout } from "@/lib/useLogout";
 
 type NavItem = {
   label: string;
-  href?: string | ((slug: string) => string); // fija o dinámica
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   testId?: string;
-  onClick?: () => void; // para acciones (logout)
+  onClick?: () => void;
+  buildHref?: (ctx: { slug: string; branchSlug: string | null }) => string | null;
+  requiresBranch?: boolean;
 };
-
-// Type guard para href función
-function isHrefFn(h: NavItem["href"]): h is (slug: string) => string {
-  return typeof h === "function";
-}
 
 export default function BottomNav() {
   // 1) Hooks SIEMPRE primero (evita “change in order of Hooks”)
   const pathname = usePathname();
   const params = useParams<{ slug?: string }>();
   const slug = (params?.slug ?? "").toString();
+  const { currentBranch, loading: branchLoading } = useBranch();
   const { logout } = useLogout();
 
   // 2) Montado cliente para evitar hydration mismatch visual
@@ -43,16 +41,66 @@ export default function BottomNav() {
   React.useEffect(() => setMounted(true), []);
   if (!mounted) return null;
 
+  const branchSlug = currentBranch?.slug ?? null;
+
   const NAV_ITEMS: NavItem[] = [
-    { label: "Precios", href: (s: string) => `/t/${s}/prices`, icon: Tag, testId: "nav-precios" },
-    { label: "Vencimientos", href: (s: string) => `/t/${s}/vencimientos`, icon: CalendarClock, testId: "nav-venc" },
-    { label: "Pedidos", href: (s: string) => `/t/${s}/proveedores`, icon: Truck },
-    { label: "Clientes", href: (s: string) => `/t/${s}/clients`, icon: Users },
-    { label: "Presupuesto", href: (s: string) => `/t/${s}/presupuesto`, icon: LineChart },
-    { label: "Etiquetas", href: (s: string) => `/t/${s}/etiquetas`, icon: BadgePercent },
-    { label: "Estadísticas", href: (s: string) => `/t/${s}/orders`, icon: BarChart },
-    { label: "Stock", href: (s: string) => `/t/${s}/stock`, icon: Boxes },
-    { label: "Salir", icon: LogOut, onClick: logout }, // botón logout
+    {
+      label: "Precios",
+      icon: Tag,
+      testId: "nav-precios",
+      buildHref: ({ slug: tenantSlug }) => (tenantSlug ? `/t/${tenantSlug}/prices` : null),
+    },
+    {
+      label: "Vencimientos",
+      icon: CalendarClock,
+      testId: "nav-venc",
+      requiresBranch: true,
+      buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
+        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/vencimientos` : null,
+    },
+    {
+      label: "Pedidos",
+      icon: Truck,
+      requiresBranch: true,
+      buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
+        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/proveedores` : null,
+    },
+    {
+      label: "Clientes",
+      icon: Users,
+      requiresBranch: true,
+      buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
+        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/clients` : null,
+    },
+    {
+      label: "Presupuesto",
+      icon: LineChart,
+      requiresBranch: true,
+      buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
+        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/presupuesto` : null,
+    },
+    {
+      label: "Etiquetas",
+      icon: BadgePercent,
+      requiresBranch: true,
+      buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
+        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/etiquetas` : null,
+    },
+    {
+      label: "Estadísticas",
+      icon: BarChart,
+      requiresBranch: true,
+      buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
+        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/orders` : null,
+    },
+    {
+      label: "Stock",
+      icon: Boxes,
+      requiresBranch: true,
+      buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
+        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/stock` : null,
+    },
+    { label: "Salir", icon: LogOut, onClick: logout },
   ];
 
   return (
@@ -78,12 +126,9 @@ export default function BottomNav() {
           style={{ WebkitOverflowScrolling: "touch" }}
         >
           {NAV_ITEMS.map((item) => {
-            // Resolver href como string | null
             let resolvedHref: string | null = null;
-            if (item.href) {
-              resolvedHref = isHrefFn(item.href)
-                ? (slug ? item.href(slug) : null)
-                : item.href;
+            if (item.buildHref) {
+              resolvedHref = item.buildHref({ slug, branchSlug });
             }
 
             const isActive =
@@ -91,6 +136,14 @@ export default function BottomNav() {
               (pathname === resolvedHref || pathname.startsWith(resolvedHref + "/"));
 
             const Icon = item.icon;
+            const needsBranch = item.requiresBranch ?? false;
+            const isDisabled =
+              !item.onClick && (!resolvedHref || (needsBranch && (branchLoading || !branchSlug)));
+            const disabledTitle = !slug
+              ? "Seleccioná un tenant para ver esta sección"
+              : needsBranch
+              ? "Seleccioná una sucursal para ver esta sección"
+              : "Sección no disponible";
 
             return (
               <li
@@ -114,7 +167,7 @@ export default function BottomNav() {
                       {item.label}
                     </span>
                   </button>
-                ) : resolvedHref ? (
+                ) : !isDisabled && resolvedHref ? (
                   // Link normal
                   <Link
                     href={resolvedHref}
@@ -149,7 +202,7 @@ export default function BottomNav() {
                   <div
                     aria-disabled="true"
                     className="group mx-auto flex w-full flex-col items-center justify-center rounded-2xl px-3 py-2 md:px-4 md:py-3 text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
-                    title="Seleccioná un tenant para ver esta sección"
+                    title={disabledTitle}
                   >
                     <Icon className="h-6 w-6 opacity-60" />
                     <span className="mt-1 text-[11px] md:text-[12px] font-medium">

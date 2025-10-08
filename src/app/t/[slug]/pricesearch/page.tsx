@@ -6,16 +6,17 @@ import { getSupabaseUserServerClient } from "@/lib/supabaseServer";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type PageProps = { params: { slug: string } };
+type PageProps = { params: Promise<{ slug: string }> };
 
 export default async function TenantPriceSearchPage({ params }: PageProps) {
+  const { slug } = await params;
   const supabase = await getSupabaseUserServerClient();
 
   // 1) Validar tenant por slug
   const { data: tenant, error: tenantErr } = await supabase
     .from("tenants")
     .select("id, slug")
-    .eq("slug", params.slug)
+    .eq("slug", slug)
     .maybeSingle();
 
   if (tenantErr) {
@@ -32,7 +33,7 @@ export default async function TenantPriceSearchPage({ params }: PageProps) {
   } = await supabase.auth.getUser();
   if (userErr) throw userErr;
   if (!user) {
-    const next = `/t/${params.slug}/pricesearch`;
+    const next = `/t/${slug}/pricesearch`;
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
 
@@ -52,5 +53,5 @@ export default async function TenantPriceSearchPage({ params }: PageProps) {
   }
 
   // 4) Render: PriceSearch necesita slug
-  return <PriceSearch slug={params.slug} />;
+  return <PriceSearch slug={slug} />;
 }

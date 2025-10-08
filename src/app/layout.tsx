@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Providers from "@/lib/providers";
+import UserBranchIndicator from "@/components/UserBranchIndicator";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"], display: "swap" });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"], display: "swap" });
@@ -17,8 +18,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="es">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-dvh bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100`}>
         <Providers>
-          {/* sin padding por BottomNav global */}
-          <main>{children}</main>
+          <div className="min-h-dvh">
+            <UserBranchIndicator />
+            {/* sin padding por BottomNav global */}
+            <main>{children}</main>
+          </div>
         </Providers>
       </body>
     </html>

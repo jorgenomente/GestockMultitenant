@@ -1,7 +1,7 @@
 // src/app/api/t/[slug]/branches/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient } from "@supabase/supabase-js";
+import { authorizeTenant } from "@/app/api/t/[slug]/_utils/tenantAuth";
 
 export const dynamic = "force-dynamic"; // evita cache accidental
 export const runtime = "nodejs";        // Service Role no debe correr en Edge
@@ -11,19 +11,16 @@ const BodySchema = z.object({
   slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
 });
 
-function getServiceDb() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  if (!url || !key) throw new Error("Faltan env: NEXT_PUBLIC_SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY");
-  return createClient(url, key);
-}
-
 type Ctx = { params: Promise<{ slug: string }> };
 
 export async function POST(req: NextRequest, { params }: Ctx) {
   try {
     const { slug } = await params;
-    const db = getServiceDb();
+
+    const auth = await authorizeTenant(slug);
+    if (!auth.ok) return auth.response;
+
+    const { admin: db, tenant } = auth;
 
     // 1) validar body
     const json = await req.json().catch(() => ({}));
@@ -33,16 +30,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     }
     const { name, slug: branchSlug } = parsed.data;
 
-    // 2) obtener tenant por slug de la URL
-    const { data: tenant, error: tErr } = await db
-      .from("tenants")
-      .select("id")
-      .eq("slug", slug)
-      .maybeSingle();
-    if (tErr) return NextResponse.json({ error: tErr.message }, { status: 500 });
-    if (!tenant) return NextResponse.json({ error: "Tenant no encontrado" }, { status: 404 });
-
-    // 3) chequear duplicado (opcional pero con mejor mensaje)
+    // 2) chequear duplicado (opcional pero con mejor mensaje)
     const { data: exists, error: eErr } = await db
       .from("branches")
       .select("id")
@@ -57,7 +45,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       );
     }
 
-    // 4) insertar
+    // 3) insertar
     const { data: inserted, error: iErr } = await db
       .from("branches")
       .insert({ name, slug: branchSlug, tenant_id: tenant.id })
@@ -76,15 +64,10 @@ export async function POST(req: NextRequest, { params }: Ctx) {
 export async function GET(_req: NextRequest, { params }: Ctx) {
   try {
     const { slug } = await params;
-    const db = getServiceDb();
+    const auth = await authorizeTenant(slug);
+    if (!auth.ok) return auth.response;
 
-    const { data: tenant, error: tErr } = await db
-      .from("tenants")
-      .select("id")
-      .eq("slug", slug)
-      .maybeSingle();
-    if (tErr) return NextResponse.json({ error: tErr.message }, { status: 500 });
-    if (!tenant) return NextResponse.json({ error: "Tenant no encontrado" }, { status: 404 });
+    const { admin: db, tenant } = auth;
 
     const { data, error } = await db
       .from("branches")

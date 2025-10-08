@@ -5,21 +5,22 @@ import ProvidersPageClient from "@/components/mobile/ProvidersPageClient";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Params = { params: { slug: string; branch: string } };
+type Params = { params: Promise<{ slug: string; branch: string }> };
 
 export default async function BranchProvidersPage({ params }: Params) {
+  const { slug, branch: branchSlug } = await params;
   const supa = await getSupabaseUserServerClient();
 
   const { data: { user } } = await supa.auth.getUser();
   if (!user) {
-    redirect(`/login?next=/t/${params.slug}/b/${params.branch}/providers`);
+    redirect(`/login?next=/t/${slug}/b/${branchSlug}/providers`);
   }
 
   // Tenant por slug
   const { data: tenant } = await supa
     .from("tenants")
     .select("id, slug")
-    .eq("slug", params.slug)
+    .eq("slug", slug)
     .single();
   if (!tenant) notFound();
 
@@ -27,7 +28,7 @@ export default async function BranchProvidersPage({ params }: Params) {
   const { data: branch } = await supa
     .from("branches")
     .select("id, tenant_id, slug")
-    .eq("slug", params.branch)
+    .eq("slug", branchSlug)
     .single();
   if (!branch || branch.tenant_id !== tenant.id) notFound();
 
@@ -47,5 +48,12 @@ export default async function BranchProvidersPage({ params }: Params) {
   if (!allowed) notFound();
 
   // OK -> render del cliente
-  return <ProvidersPageClient slug={params.slug} branch={params.branch} />;
+  return (
+    <ProvidersPageClient
+      slug={slug}
+      branch={branchSlug}
+      tenantId={tenant.id}
+      branchId={branch.id}
+    />
+  );
 }

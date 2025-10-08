@@ -1,54 +1,146 @@
 // src/app/t/[slug]/prices/page.tsx
 import { notFound, redirect } from "next/navigation";
-import { getSupabaseUserServerClient } from "@/lib/supabaseServer";
+import {
+  getSupabaseUserServerClient,
+  getSupabaseServiceRoleClient,
+} from "@/lib/supabaseServer";
 import PriceSearch from "@/components/PriceSearch";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type PageProps = { params: { slug: string } };
+type PageProps = { params: Promise<{ slug: string }> };
+type Role = "owner" | "admin" | "staff";
+type MembershipRow = { tenant_id: string; user_id: string; role: Role };
+type MembershipQueryRow = {
+  tenant_id: string;
+  user_id: string;
+  role: Role;
+  tenants?: { id?: string; slug?: string | null } | null;
+};
+
+type TenantInfo = { id: string; slug: string };
+
+const parseMembership = (row: MembershipQueryRow | null | undefined) => {
+  if (!row) return null;
+  const role = (row.role ?? "staff") as Role;
+  const tenantId = row.tenant_id;
+  const tenantObj = row.tenants ?? null;
+  const tenantSlug = tenantObj?.slug ?? null;
+  const tenant: TenantInfo | null = tenantSlug
+    ? {
+      id: tenantObj?.id ?? tenantId,
+      slug: tenantSlug,
+    }
+    : null;
+
+  return {
+    membership: { tenant_id: tenantId, user_id: row.user_id, role },
+    tenant,
+  } satisfies { membership: MembershipRow; tenant: TenantInfo | null };
+};
 
 export default async function TenantPriceSearchPage({ params }: PageProps) {
+  const { slug } = await params;
   const supabase = await getSupabaseUserServerClient();
 
-  // 1) Validar tenant por slug
-  const { data: tenant, error: tenantErr } = await supabase
-    .from("tenants")
-    .select("id, slug")
-    .eq("slug", params.slug)
-    .maybeSingle();
-
-  if (tenantErr) {
-    // Si hay error de DB, muestra 404 para no filtrar detalles
-    notFound();
-  }
-  if (!tenant) {
-    notFound();
-  }
-
-  // 2) Usuario autenticado → si NO, redirigir a /login con ?next
+  // 1) Usuario autenticado → si NO, redirigir a /login con ?next
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
-    const next = `/t/${params.slug}/prices`;
+    const next = `/t/${slug}/prices`;
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
 
-  // 3) Verificar membresía al tenant
-  const { data: membership, error: membErr } = await supabase
+  let adminClient: ReturnType<typeof getSupabaseServiceRoleClient> | undefined;
+
+  const ensureAdminClient = () => {
+    adminClient ??= getSupabaseServiceRoleClient();
+    return adminClient;
+  };
+
+  // 2) Intento A: membership + tenant por slug con cliente del usuario
+  const { data: membershipRow } = await supabase
     .from("memberships")
-    .select("user_id")
-    .eq("tenant_id", tenant.id)
+    .select("tenant_id, user_id, role, tenants!inner(id, slug)")
     .eq("user_id", user.id)
-    .maybeSingle();
+    .eq("tenants.slug", slug)
+    .maybeSingle<MembershipQueryRow>();
 
-  if (membErr) {
-    notFound();
-  }
-  if (!membership) {
-    // Usuario logueado pero sin acceso a este tenant
-    notFound();
+  let parsed = parseMembership(membershipRow);
+  let membership = parsed?.membership ?? null;
+  let tenant = parsed?.tenant ?? null;
+
+  // 3) Intento B: Service Role (bypass RLS) si no hubo datos
+  if (!tenant) {
+    try {
+      const admin = ensureAdminClient();
+      const { data: serviceRow } = await admin
+        .from("memberships")
+        .select("tenant_id, user_id, role, tenants!inner(id, slug)")
+        .eq("user_id", user.id)
+        .eq("tenants.slug", slug)
+        .maybeSingle<MembershipQueryRow>();
+      parsed = parseMembership(serviceRow ?? null);
+      membership = parsed?.membership ?? membership;
+      tenant = parsed?.tenant ?? tenant;
+    } catch {
+      // ignorar y caer a fallback por slug
+    }
   }
 
-  // 4) Render
-  return <PriceSearch slug={params.slug} />;
+  // 4) Si aún no tenemos tenant, verificar existencia y opcionalmente crear membresía por slug por defecto
+  if (!tenant) {
+    const admin = ensureAdminClient();
+    const { data: tenantRow, error: tenantErr } = await admin
+      .from("tenants")
+      .select("id, slug")
+      .eq("slug", slug)
+      .maybeSingle<TenantInfo>();
+
+    if (tenantErr || !tenantRow) {
+      notFound();
+    }
+
+    tenant = tenantRow;
+
+    const fallbackSlug =
+      process.env.NEXT_PUBLIC_DEFAULT_TENANT_SLUG ||
+      process.env.DEFAULT_TENANT_SLUG ||
+      "";
+
+    if (!membership && fallbackSlug && slug === fallbackSlug) {
+      try {
+        const upsert = await admin
+          .from("memberships")
+          .upsert(
+            {
+              tenant_id: tenant.id,
+              user_id: user.id,
+              role: "staff",
+              branch_ids: [],
+            },
+            { onConflict: "tenant_id,user_id" }
+          )
+          .select("tenant_id")
+          .maybeSingle();
+
+        if (upsert?.data?.tenant_id) {
+          membership = {
+            tenant_id: upsert.data.tenant_id,
+            user_id: user.id,
+            role: "staff",
+          } satisfies MembershipRow;
+        }
+      } catch {
+        // Ignorar; caerá en redirect a missing-membership
+      }
+    }
+
+    if (!membership) {
+      redirect("/missing-membership");
+    }
+  }
+
+  // 5) Render
+  return <PriceSearch slug={slug} />;
 }
