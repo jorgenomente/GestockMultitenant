@@ -5,7 +5,7 @@ export default async function OrdersPage({
   params,
 }: { params: Promise<{ slug: string; branch: string }> }) {
   const { slug, branch: branchSlug } = await params;
-  const supabase = getSupabaseServer();
+  const supabase = await getSupabaseServer();
 
   // Opcional: podrías obtener tenantId/branchId antes (o usar un RPC)
   const { data: tenant } = await supabase

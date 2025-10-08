@@ -18,7 +18,7 @@ export default async function TenantLayout({ children, params }: LayoutProps) {
   // En este proyecto, params es Promise; incluye slug y branch para este path
   const { slug, branch: branchSlug } = await params;
 
-  const supabase = getSupabaseServer();
+  const supabase = await getSupabaseServer();
 
   const {
     data: { user },

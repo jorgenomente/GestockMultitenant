@@ -9,7 +9,7 @@ export default async function BranchDashboard({
   params: Promise<{ slug: string; branch: string }>;
 }) {
   const { slug, branch: branchSlug } = await params;
-  const supabase = getSupabaseServer();
+  const supabase = await getSupabaseServer();
 
   // 1) Tenant por slug (simple)
   const { data: tenant, error: tErr } = await supabase

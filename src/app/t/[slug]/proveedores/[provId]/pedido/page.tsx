@@ -31,11 +31,24 @@ import {
 
 /* =================== Config =================== */
 const VENTAS_URL = "/ventas.xlsx";
-const TABLE_ORDERS = "orders";
-const TABLE_ITEMS  = "order_items";
 const TABLE_SNAPSHOTS = "order_snapshots";
 const TABLE_ORDER_SUMMARIES = "order_summaries";
 const TABLE_ORDER_SUMMARIES_WEEK = "order_summaries_week";
+
+const ORDERS_TABLE_ENV = process.env.NEXT_PUBLIC_PROVIDER_ORDERS_TABLE?.trim();
+const ITEMS_TABLE_ENV = process.env.NEXT_PUBLIC_PROVIDER_ORDER_ITEMS_TABLE?.trim();
+const ORDER_TABLE_CANDIDATES = [
+  ...(ORDERS_TABLE_ENV ? [ORDERS_TABLE_ENV] : []),
+  "orders",
+  "provider_orders",
+  "branch_orders",
+];
+const ITEM_TABLE_CANDIDATES = [
+  ...(ITEMS_TABLE_ENV ? [ITEMS_TABLE_ENV] : []),
+  "order_items",
+  "provider_order_items",
+  "branch_order_items",
+];
 
 
 
@@ -233,6 +246,7 @@ type Status = "PENDIENTE" | "CONFIRMADO" | "RECIBIDO";
 type OrderRow = {
   id: string; provider_id: string; status: Status; notes: string | null;
   total: number | null; created_at?: string; updated_at?: string;
+  tenant_id?: string | null; branch_id?: string | null;
 };
 type ItemRow = {
   id: string;
@@ -245,6 +259,8 @@ type ItemRow = {
   subtotal?: number;
   price_updated_at?: string | null;
   pack_size?: number | null;
+  tenant_id?: string | null;
+  branch_id?: string | null;
 
   /* NUEVO: stock multi-dispositivo */
   stock_qty?: number | null;
@@ -406,7 +422,13 @@ const auto = useDragAutoscroll({
 
 
 /** NUEVO: tipos para settings de la app */
-type SalesPersistMeta = { url: string; filename?: string; uploaded_at?: string };
+type SalesPersistMeta = {
+  url: string;
+  filename?: string;
+  uploaded_at?: string;
+  tenant_id?: string | null;
+  branch_id?: string | null;
+};
 
 /** ==== Format helpers (mostrar fechas “date-only” guardadas en UTC) ==== */
 const formatUTCDate = (t: number) =>
@@ -533,20 +555,22 @@ export default function ProviderOrderPage() {
   const provId = String(params?.provId || "");
   const search = useSearchParams();
   const selectedWeekId = search.get("week");
-  const branchSlug = search.get("branch");
-  const branchIdQuery = search.get("branchId");
-  const tenantIdQuery = search.get("tenantId");
+  const tenantIdFromQuery = search.get("tenantId");
+  const branchIdFromQuery = search.get("branchId");
 
   const [providerNameOverride, setProviderNameOverride] = React.useState<string | null>(null);
   const providerName = search.get("name") || providerNameOverride || "Proveedor";
 
-  const [context, setContext] = React.useState<{ tenantId: string | null; branchId: string | null }>({
-    tenantId: tenantIdQuery,
-    branchId: branchIdQuery,
+  const [contextIds, setContextIds] = React.useState<{ tenantId: string | null; branchId: string | null }>({
+    tenantId: tenantIdFromQuery,
+    branchId: branchIdFromQuery,
   });
 
-  const tenantId = context.tenantId || undefined;
-  const branchId = context.branchId || undefined;
+  const tenantId = contextIds.tenantId || undefined;
+  const branchId = contextIds.branchId || undefined;
+
+  const [ordersTable, setOrdersTable] = React.useState<string>(ORDER_TABLE_CANDIDATES[0]);
+  const [itemsTable, setItemsTable] = React.useState<string>(ITEM_TABLE_CANDIDATES[0]);
 
   const [order, setOrder]   = React.useState<OrderRow | null>(null);
   const [items, setItems]   = React.useState<ItemRow[]>([]);
@@ -576,17 +600,17 @@ const rootStyle: React.CSSProperties = {
 };
 
   React.useEffect(() => {
-    if (tenantIdQuery && tenantIdQuery !== context.tenantId) {
-      setContext((prev) => ({ tenantId: tenantIdQuery, branchId: prev.branchId }));
+    if (tenantIdFromQuery && tenantIdFromQuery !== contextIds.tenantId) {
+      setContextIds((prev) => ({ tenantId: tenantIdFromQuery, branchId: prev.branchId }));
     }
-    if (branchIdQuery && branchIdQuery !== context.branchId) {
-      setContext((prev) => ({ tenantId: prev.tenantId, branchId: branchIdQuery }));
+    if (branchIdFromQuery && branchIdFromQuery !== contextIds.branchId) {
+      setContextIds((prev) => ({ tenantId: prev.tenantId, branchId: branchIdFromQuery }));
     }
-  }, [tenantIdQuery, branchIdQuery, context.tenantId, context.branchId]);
+  }, [tenantIdFromQuery, branchIdFromQuery, contextIds.tenantId, contextIds.branchId]);
 
   React.useEffect(() => {
     if (!provId) return;
-    if (context.tenantId && context.branchId) return;
+    if (contextIds.tenantId && contextIds.branchId) return;
     let cancelled = false;
     (async () => {
       const { data, error } = await supabase
@@ -601,13 +625,13 @@ const rootStyle: React.CSSProperties = {
       }
       if (!data) return;
       if (data.name && !providerNameOverride) setProviderNameOverride(data.name);
-      setContext((prev) => ({
+      setContextIds((prev) => ({
         tenantId: prev.tenantId ?? data.tenant_id ?? null,
         branchId: prev.branchId ?? data.branch_id ?? null,
       }));
     })();
     return () => { cancelled = true; };
-  }, [supabase, provId, context.tenantId, context.branchId, providerNameOverride]);
+  }, [supabase, provId, contextIds.tenantId, contextIds.branchId, providerNameOverride]);
 
 
 
@@ -640,71 +664,268 @@ const rootStyle: React.CSSProperties = {
   }, [supabase]);
 
   // crear/obtener pedido PENDIENTE + cargar ítems
-  React.useEffect(() => {
-    if (!provId || !tenantId || !branchId) return;
-    let mounted = true;
-    (async () => {
-      const { data: list, error } = await supabase
-        .from(TABLE_ORDERS)
-        .select('*')
-        .eq('provider_id', provId)
-        .eq('tenant_id', tenantId)
-        .eq('branch_id', branchId)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      if (!mounted) return;
-      if (error) { console.error('load orders error', error); return; }
 
-      let base = (list?.[0] as OrderRow | undefined) ?? null;
-      if (!base || base.status !== 'PENDIENTE') {
-        const payload: Record<string, any> = {
-          provider_id: provId,
-          status: 'PENDIENTE',
-          notes: `${providerName} - ${isoToday()}`,
-          total: 0,
-          tenant_id: tenantId,
-          branch_id: branchId,
-        };
-        const { data, error: insErr } = await supabase
-          .from(TABLE_ORDERS)
-          .insert([payload])
+React.useEffect(() => {
+  if (!provId) return;
+  let mounted = true;
+  (async () => {
+    let base: OrderRow | null = null;
+    let ordersError: any = null;
+    const orderCandidates = [ordersTable, ...ORDER_TABLE_CANDIDATES.filter((t) => t !== ordersTable)];
+
+    const variantKeys = new Set<string>();
+    const orderVariants: Array<{ useTenant: boolean; useBranch: boolean }> = [];
+    const addVariant = (useTenant: boolean, useBranch: boolean) => {
+      const key = `${useTenant ? 't' : 'no'}:${useBranch ? 'b' : 'no'}`;
+      if (variantKeys.has(key)) return;
+      variantKeys.add(key);
+      orderVariants.push({ useTenant, useBranch });
+    };
+
+    addVariant(!!tenantId, !!branchId);
+    if (branchId) addVariant(!!tenantId, false);
+    if (tenantId) addVariant(false, false);
+    addVariant(false, false);
+
+    let resolvedOrderTable = ordersTable;
+    for (const table of orderCandidates) {
+      let skipTable = false;
+      for (const variant of orderVariants) {
+        let query = supabase
+          .from(table)
           .select('*')
-          .single();
-        if (insErr) { console.error('create order error', insErr); return; }
-        base = data as OrderRow;
-      }
+          .eq('provider_id', provId)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (variant.useTenant && tenantId) query = query.eq('tenant_id', tenantId);
+        if (variant.useBranch && branchId) query = query.eq('branch_id', branchId);
 
-      if (base?.tenant_id && base?.branch_id) {
-        setContext((prev) => ({
-          tenantId: prev.tenantId ?? base!.tenant_id ?? null,
-          branchId: prev.branchId ?? base!.branch_id ?? null,
-        }));
+        let { data, error } = await query;
+        if (error?.code === '42703') {
+          const fallback = await supabase
+            .from(table)
+            .select('*')
+            .eq('provider_id', provId)
+            .order('created_at', { ascending: false })
+            .limit(1);
+          data = fallback.data;
+          error = fallback.error;
+        }
+        if (error && (error.code === '42P01' || error.message?.includes('Could not find the table'))) {
+          skipTable = true;
+          break;
+        }
+        if (error) {
+          ordersError = error;
+          break;
+        }
+        if (data && data.length) {
+          base = data[0] as OrderRow;
+          if (table !== ordersTable) setOrdersTable(table);
+          resolvedOrderTable = table;
+          break;
+        }
       }
-
-      setOrder(base);
-
-      const { data: rows, error: itemsErr } = await supabase
-        .from(TABLE_ITEMS)
-        .select('*')
-        .eq('order_id', base!.id)
-        .eq('tenant_id', tenantId)
-        .eq('branch_id', branchId)
-        .order('id', { ascending: true });
-      if (itemsErr) { console.error('load items error', itemsErr); return; }
-      setItems((rows as ItemRow[]) ?? []);
-      if (base?.id) {
-        void loadUIState(base.id);
+      if (skipTable) {
+        skipTable = false;
+        continue;
       }
-    })();
-    return () => { mounted = false; };
-  }, [supabase, provId, providerName, tenantId, branchId]);
+      if (base || ordersError) break;
+    }
+
+    if (!base && !ordersError) {
+      const creationPayloadBase: Record<string, any> = {
+        provider_id: provId,
+        status: 'PENDIENTE' as Status,
+        notes: `${providerName} - ${isoToday()}`,
+        total: 0,
+      };
+
+      for (const table of orderCandidates) {
+        let skipTableInsert = false;
+        for (const variant of orderVariants) {
+          const payload = { ...creationPayloadBase } as Record<string, any>;
+          if (variant.useTenant && tenantId) payload.tenant_id = tenantId;
+          if (variant.useBranch && branchId) payload.branch_id = branchId;
+
+          let { data, error } = await supabase
+            .from(table)
+            .insert([payload])
+            .select('*')
+            .single();
+
+          if (error?.code === '42703') {
+            const fallbackPayload = { ...payload };
+            delete fallbackPayload.tenant_id;
+            delete fallbackPayload.branch_id;
+            const fallback = await supabase
+              .from(table)
+              .insert([fallbackPayload])
+              .select('*')
+              .single();
+            data = fallback.data;
+            error = fallback.error;
+          }
+
+          if (error && (error.code === '42P01' || error.message?.includes('Could not find the table'))) {
+            skipTableInsert = true;
+            break;
+          }
+          if (error) {
+            ordersError = error;
+            break;
+          }
+          if (data) {
+            base = data as OrderRow;
+            if (table !== ordersTable) setOrdersTable(table);
+            resolvedOrderTable = table;
+            break;
+          }
+        }
+        if (base || ordersError) break;
+        if (skipTableInsert) continue;
+      }
+    }
+
+    if (!mounted) return;
+    if (!base) {
+      if (ordersError) console.error('load orders error', ordersError?.message ?? ordersError);
+      return;
+    }
+
+    const shouldPatchTenant = !base.tenant_id && tenantId;
+    const shouldPatchBranch = !base.branch_id && branchId;
+    if (shouldPatchTenant) base = { ...base, tenant_id: tenantId };
+    if (shouldPatchBranch) base = { ...base, branch_id: branchId };
+
+    if (shouldPatchTenant || shouldPatchBranch) {
+      void supabase
+        .from(resolvedOrderTable)
+        .update({
+          tenant_id: shouldPatchTenant ? tenantId : base.tenant_id ?? null,
+          branch_id: shouldPatchBranch ? branchId : base.branch_id ?? null,
+        })
+        .eq('id', base.id)
+        .catch((e) => {
+          console.warn('order context patch failed', e);
+        });
+    }
+
+    if (base.tenant_id || base.branch_id) {
+      setContextIds((prev) => ({
+        tenantId: prev.tenantId ?? base!.tenant_id ?? null,
+        branchId: prev.branchId ?? base!.branch_id ?? null,
+      }));
+    }
+
+    setOrder(base);
+
+    const itemCandidates = [itemsTable, ...ITEM_TABLE_CANDIDATES.filter((t) => t !== itemsTable)];
+    let rows: ItemRow[] | null = null;
+    let itemsError: any = null;
+
+    const itemVariants: Array<{ useTenant: boolean; useBranch: boolean }> = [];
+    const itemVariantKeys = new Set<string>();
+    const pushItemVariant = (useTenant: boolean, useBranch: boolean) => {
+      const key = `${useTenant ? 't' : 'no'}:${useBranch ? 'b' : 'no'}`;
+      if (itemVariantKeys.has(key)) return;
+      itemVariantKeys.add(key);
+      itemVariants.push({ useTenant, useBranch });
+    };
+    pushItemVariant(!!tenantId, !!branchId);
+    if (branchId) pushItemVariant(!!tenantId, false);
+    if (tenantId) pushItemVariant(false, false);
+    pushItemVariant(false, false);
+
+    rows = null;
+    let resolvedItemsTable = itemsTable;
+    for (const table of itemCandidates) {
+      let skipTable = false;
+      for (let i = 0; i < itemVariants.length; i += 1) {
+        const variant = itemVariants[i];
+        const isLastVariant = i === itemVariants.length - 1;
+        let query = supabase
+          .from(table)
+          .select('*')
+          .eq('order_id', base.id)
+          .order('id', { ascending: true });
+        if (variant.useTenant && tenantId) query = query.eq('tenant_id', tenantId);
+        if (variant.useBranch && branchId) query = query.eq('branch_id', branchId);
+
+        let { data, error } = await query;
+        if (error?.code === '42703') {
+          const fallbackItems = await supabase
+            .from(table)
+            .select('*')
+            .eq('order_id', base.id)
+            .order('id', { ascending: true });
+          data = fallbackItems.data;
+          error = fallbackItems.error;
+        }
+        if (error && (error.code === '42P01' || error.message?.includes('Could not find the table'))) {
+          skipTable = true;
+          break;
+        }
+        if (error) {
+          itemsError = error;
+          break;
+        }
+        const list = (data as ItemRow[]) ?? [];
+        if (list.length || isLastVariant) {
+          rows = list;
+          if (table !== itemsTable) setItemsTable(table);
+          resolvedItemsTable = table;
+          break;
+        }
+      }
+      if (skipTable) {
+        skipTable = false;
+        continue;
+      }
+      if (rows != null || itemsError) break;
+    }
+
+    if (!mounted) return;
+    if (rows == null) {
+      if (itemsError) console.error('load items error', itemsError?.message ?? itemsError);
+      rows = [];
+    }
+    setItems(rows);
+    if (rows.length && (shouldPatchTenant || shouldPatchBranch)) {
+      const pendingPatchIds = rows
+        .filter((r) =>
+          (shouldPatchTenant && !r.tenant_id) ||
+          (shouldPatchBranch && !r.branch_id)
+        )
+        .map((r) => r.id);
+      if (pendingPatchIds.length) {
+        const patchPayload: Partial<Pick<ItemRow, 'tenant_id' | 'branch_id'>> = {};
+        if (shouldPatchTenant) patchPayload.tenant_id = tenantId ?? null;
+        if (shouldPatchBranch) patchPayload.branch_id = branchId ?? null;
+        void supabase
+          .from(resolvedItemsTable)
+          .update(patchPayload)
+          .in('id', pendingPatchIds)
+          .catch((e) => {
+            console.warn('item context patch failed', e);
+          });
+      }
+    }
+    if (base.id) {
+      void loadUIState(base.id);
+    }
+  })();
+  return () => { mounted = false; };
+}, [supabase, provId, providerName, tenantId, branchId, ordersTable, itemsTable]);
+
+
 
   // Realtime (escucha cambios en items)
   React.useEffect(() => {
     if (!order) return;
     const chItems = supabase.channel(`order-items-${order.id}`).on(
       "postgres_changes",
-      { event: "*", schema: "public", table: TABLE_ITEMS, filter: `order_id=eq.${order.id}` },
+      { event: "*", schema: "public", table: itemsTable, filter: `order_id=eq.${order.id}` },
       (payload: any) => {
         const { eventType, new: n, old: o } = payload;
         setItems((prev) => {
@@ -719,7 +940,7 @@ const rootStyle: React.CSSProperties = {
       }
     ).subscribe();
     return () => { supabase.removeChannel(chItems); };
-  }, [supabase, order]);
+  }, [supabase, order, itemsTable]);
 
   /* ===== Helpers ===== */
   const productNames = React.useMemo(() => {
@@ -807,7 +1028,7 @@ async function recomputeOrderTotal(newItems?: ItemRow[]) {
 
   const updated_at = new Date().toISOString();
 
-  await supabase.from(TABLE_ORDERS).update({ total }).eq('id', order.id);
+  await supabase.from(ordersTable).update({ total }).eq('id', order.id);
 
   await supabase
     .from(TABLE_ORDER_SUMMARIES)
@@ -954,14 +1175,46 @@ function setAllChecked(val: boolean) {
 }
 
   /* ===== CRUD (optimista) ===== */
-  async function createGroup(groupName: string) {
-    if (!order) return;
-    const { data, error } = await supabase.from(TABLE_ITEMS).insert([{
-      order_id: order.id, product_name: GROUP_PLACEHOLDER, qty: 0, unit_price: 0, group_name: groupName || null,
-    }]).select("*").single();
-    if (error) { console.error(error); alert("No se pudo crear el grupo."); return; }
+
+async function createGroup(groupName: string) {
+  if (!order) return;
+  const tenantForInsert = order?.tenant_id ?? tenantId ?? tenantIdFromQuery ?? null;
+  const branchForInsert = order?.branch_id ?? branchId ?? branchIdFromQuery ?? null;
+
+  const candidates = [itemsTable, ...ITEM_TABLE_CANDIDATES.filter((t) => t !== itemsTable)];
+  for (const table of candidates) {
+    const basePayload: Record<string, any> = {
+      order_id: order.id,
+      product_name: GROUP_PLACEHOLDER,
+      qty: 0,
+      unit_price: 0,
+      group_name: groupName || null,
+    };
+    if (tenantForInsert) basePayload.tenant_id = tenantForInsert;
+    if (branchForInsert) basePayload.branch_id = branchForInsert;
+
+    let { data, error } = await supabase.from(table).insert([basePayload]).select('*').single();
+    if (error?.code === '42703') {
+      const fallbackPayload = { ...basePayload } as Record<string, any>;
+      delete fallbackPayload.tenant_id;
+      delete fallbackPayload.branch_id;
+      const fallback = await supabase.from(table).insert([fallbackPayload]).select('*').single();
+      data = fallback.data;
+      error = fallback.error;
+    }
+    if (error?.code === '42P01') {
+      continue;
+    }
+    if (error) {
+      console.error('createGroup error', error);
+      continue;
+    }
+    if (table !== itemsTable) setItemsTable(table);
     setItems((prev) => [...prev, data as ItemRow]);
+    return;
   }
+  alert('No se pudo crear el grupo.');
+}
 
   // Estado de trabajo del vaciado
 const [zeroing, setZeroing] = React.useState(false);
@@ -1026,7 +1279,7 @@ async function applySuggested(mode: "week" | "2w" | "30d"): Promise<boolean> {
     const slice = patch.slice(i, i + CHUNK);
     const results = await Promise.all(
       slice.map((p) =>
-        supabase.from(TABLE_ITEMS).update({ qty: p.qty }).eq("id", p.id)
+        supabase.from(itemsTable).update({ qty: p.qty }).eq("id", p.id)
       )
     );
     const err = results.find((r: any) => r.error);
@@ -1068,7 +1321,7 @@ async function zeroAllQuantities() {
   try {
     // Un solo UPDATE en DB para todas las filas del pedido (excluyendo placeholders de grupo)
     const { error } = await supabase
-      .from(TABLE_ITEMS)
+      .from(itemsTable)
       .update({ qty: 0 })
       .eq("order_id", order.id)
       .neq("product_name", GROUP_PLACEHOLDER);
@@ -1111,7 +1364,7 @@ async function snapshotPreviousQuantities() {
       const results = await Promise.all(
         slice.map(p =>
           supabase
-            .from(TABLE_ITEMS)
+            .from(itemsTable)
             .update({ previous_qty: p.previous_qty, previous_qty_updated_at: p.previous_qty_updated_at })
             .eq("id", p.id)
         )
@@ -1129,49 +1382,109 @@ async function snapshotPreviousQuantities() {
 
 
 
-  async function addItem(product: string, groupName: string) {
-    if (!order) return;
-    const st = computeStats(sales, product, latestDateForProduct(sales, product));
-    const unit = estCost(st, margin);
-    const { data, error } = await supabase.from(TABLE_ITEMS).insert([{
-      order_id: order.id, product_name: product, qty: st?.avg4w ?? 0, unit_price: unit || 0, group_name: groupName || null,
-    }]).select("*").single();
-    if (error) { console.error(error); alert("No se pudo agregar el producto."); return; }
+
+async function addItem(product: string, groupName: string) {
+  if (!order) return;
+  const tenantForInsert = order?.tenant_id ?? tenantId ?? tenantIdFromQuery ?? null;
+  const branchForInsert = order?.branch_id ?? branchId ?? branchIdFromQuery ?? null;
+  const st = computeStats(sales, product, latestDateForProduct(sales, product));
+  const unit = estCost(st, margin);
+
+  const candidates = [itemsTable, ...ITEM_TABLE_CANDIDATES.filter((t) => t !== itemsTable)];
+  for (const table of candidates) {
+    const basePayload: Record<string, any> = {
+      order_id: order.id,
+      product_name: product,
+      qty: st?.avg4w ?? 0,
+      unit_price: unit || 0,
+      group_name: groupName || null,
+    };
+    if (tenantForInsert) basePayload.tenant_id = tenantForInsert;
+    if (branchForInsert) basePayload.branch_id = branchForInsert;
+
+    let { data, error } = await supabase.from(table).insert([basePayload]).select('*').single();
+    if (error?.code === '42703') {
+      const fallbackPayload = { ...basePayload } as Record<string, any>;
+      delete fallbackPayload.tenant_id;
+      delete fallbackPayload.branch_id;
+      const fallback = await supabase.from(table).insert([fallbackPayload]).select('*').single();
+      data = fallback.data;
+      error = fallback.error;
+    }
+    if (error?.code === '42P01') continue;
+    if (error) {
+      console.error('addItem error', error);
+      continue;
+    }
+    if (table !== itemsTable) setItemsTable(table);
     setItems((prev) => [...prev, data as ItemRow]);
     await recomputeOrderTotal();
+    return;
   }
+  alert('No se pudo agregar el producto.');
+}
 
-  async function bulkAddItems(names: string[], groupName: string) {
-    if (!order || !names.length) return;
-    const rows = names.map((name) => {
-      const st = computeStats(sales, name, latestDateForProduct(sales, name));
-      return {
-        order_id: order.id,
-        product_name: name,
-        qty: st?.avg4w ?? 0,
-        unit_price: estCost(st, margin) || 0,
-        group_name: groupName || null,
-      };
-    });
-    const { data, error } = await supabase.from(TABLE_ITEMS).insert(rows).select("*");
-    if (error) { console.error(error); alert("No se pudieron agregar los productos."); return; }
+
+
+async function bulkAddItems(names: string[], groupName: string) {
+  if (!order || !names.length) return;
+  const tenantForInsert = order?.tenant_id ?? tenantId ?? tenantIdFromQuery ?? null;
+  const branchForInsert = order?.branch_id ?? branchId ?? branchIdFromQuery ?? null;
+
+  const rows = names.map((name) => {
+    const st = computeStats(sales, name, latestDateForProduct(sales, name));
+    const payload: Record<string, any> = {
+      order_id: order.id,
+      product_name: name,
+      qty: st?.avg4w ?? 0,
+      unit_price: estCost(st, margin) || 0,
+      group_name: groupName || null,
+    };
+    if (tenantForInsert) payload.tenant_id = tenantForInsert;
+    if (branchForInsert) payload.branch_id = branchForInsert;
+    return payload;
+  });
+
+  const candidates = [itemsTable, ...ITEM_TABLE_CANDIDATES.filter((t) => t !== itemsTable)];
+  for (const table of candidates) {
+    let { data, error } = await supabase.from(table).insert(rows).select('*');
+    if (error?.code === '42703') {
+      const fallbackRows = rows.map((row) => {
+        const copy = { ...row } as Record<string, any>;
+        delete copy.tenant_id;
+        delete copy.branch_id;
+        return copy;
+      });
+      const fallback = await supabase.from(table).insert(fallbackRows).select('*');
+      data = fallback.data;
+      error = fallback.error;
+    }
+    if (error?.code === '42P01') continue;
+    if (error) {
+      console.error('bulkAddItems error', error);
+      continue;
+    }
+    if (table !== itemsTable) setItemsTable(table);
     setItems((prev) => [...prev, ...((data as ItemRow[]) ?? [])]);
     await recomputeOrderTotal();
+    return;
   }
+  alert('No se pudieron agregar los productos.');
+}
 
   async function bulkRemoveByNames(names: string[], groupName: string) {
     if (!order || !names.length) return;
     const toRemove = items.filter((r) => (r.group_name || null) === (groupName || null) && names.includes(r.product_name));
     if (!toRemove.length) return;
     const ids = toRemove.map((r) => r.id);
-    const { error } = await supabase.from(TABLE_ITEMS).delete().in("id", ids);
+    const { error } = await supabase.from(itemsTable).delete().in("id", ids);
     if (error) { console.error(error); alert("No se pudieron quitar productos."); return; }
     setItems((prev) => prev.filter((r) => !ids.includes(r.id)));
     await recomputeOrderTotal();
   }
 
   async function removeItem(id: string) {
-    const { error } = await supabase.from(TABLE_ITEMS).delete().eq("id", id);
+    const { error } = await supabase.from(itemsTable).delete().eq("id", id);
     if (error) { console.error(error); alert("No se pudo quitar el producto."); return; }
     setItems((prev) => prev.filter((r) => r.id !== id));
     await recomputeOrderTotal();
@@ -1182,7 +1495,7 @@ async function snapshotPreviousQuantities() {
   const payload = { stock_qty: stock, stock_updated_at: nowIso };
 
   const { error } = await supabase
-    .from(TABLE_ITEMS)
+    .from(itemsTable)
     .update(payload)
     .eq("id", id);
 
@@ -1203,7 +1516,7 @@ async function snapshotPreviousQuantities() {
   const nowIso = new Date().toISOString();
 
   const { error } = await supabase
-    .from(TABLE_ITEMS)
+    .from(itemsTable)
     .update({ unit_price: safe, price_updated_at: nowIso }) // 👈 guarda sello de tiempo
     .eq("id", id);
 
@@ -1225,7 +1538,7 @@ async function snapshotPreviousQuantities() {
 async function updatePackSize(id: string, pack: number | null) {
   const value = pack && pack > 1 ? Math.round(pack) : null;
   const { error } = await supabase
-    .from(TABLE_ITEMS)
+    .from(itemsTable)
     .update({ pack_size: value })
     .eq("id", id);
 
@@ -1240,7 +1553,7 @@ async function updatePackSize(id: string, pack: number | null) {
 
 
   async function updateQty(id: string, qty: number) {
-    const { error } = await supabase.from(TABLE_ITEMS).update({ qty }).eq("id", id);
+    const { error } = await supabase.from(itemsTable).update({ qty }).eq("id", id);
     if (error) { console.error(error); alert("No se pudo actualizar la cantidad."); return; }
     setItems((prev) => prev.map((r) => (r.id === id ? { ...r, qty } : r)));
     await recomputeOrderTotal();
@@ -1248,7 +1561,7 @@ async function updatePackSize(id: string, pack: number | null) {
   async function updateDisplayName(id: string, label: string) {
   const clean = (label || "").trim();
   const { error } = await supabase
-    .from(TABLE_ITEMS)
+    .from(itemsTable)
     .update({ display_name: clean || null })
     .eq("id", id);
 
@@ -1269,7 +1582,7 @@ async function updatePackSize(id: string, pack: number | null) {
   const newKey = newName || null;
 
   const { error } = await supabase
-    .from(TABLE_ITEMS)
+    .from(itemsTable)
     .update({ group_name: newKey })
     .eq("order_id", order?.id)
     .eq("group_name", oldKey);
@@ -1299,7 +1612,7 @@ async function updatePackSize(id: string, pack: number | null) {
       .filter((r) => r.group_name === gKey || (gKey === null && (r.group_name === null || r.group_name === undefined)))
       .map((r) => r.id);
     const { error } = await supabase
-      .from(TABLE_ITEMS)
+      .from(itemsTable)
       .delete()
       .eq("order_id", order?.id)
       .eq("group_name", gKey);
@@ -1586,10 +1899,10 @@ async function handleExport() {
         })
         .filter(Boolean) as SnapshotPayload["items"];
 
-      const { error: delErr } = await supabase.from(TABLE_ITEMS).delete().eq("order_id", order.id);
+      const { error: delErr } = await supabase.from(itemsTable).delete().eq("order_id", order.id);
       if (delErr) throw delErr;
       const { data: inserted, error: insErr } = await supabase
-        .from(TABLE_ITEMS)
+        .from(itemsTable)
         .insert(parsed.map((r) => ({ order_id: order.id, ...r })))
         
         .select("*");
@@ -1725,11 +2038,11 @@ async function handleExport() {
   async function openSnapshot(snap: SnapshotRow) {
     if (!order) return;
     const itemsPayload = (snap.snapshot?.items ?? []) as SnapshotPayload["items"];
-    const { error: delErr } = await supabase.from(TABLE_ITEMS).delete().eq("order_id", order.id);
+    const { error: delErr } = await supabase.from(itemsTable).delete().eq("order_id", order.id);
     if (delErr) { console.error(delErr); alert("No se pudo abrir la versión (borrado previo)."); return; }
     
 const { data: inserted, error: insErr } = await supabase
-  .from(TABLE_ITEMS)
+  .from(itemsTable)
   .insert(itemsPayload.map((r) => ({
     order_id: order.id,
     product_name: r.product_name,
@@ -3113,4 +3426,3 @@ function GroupCreator({ onCreate }: { onCreate: (name: string) => void }) {
     </form>
   );
 }
-

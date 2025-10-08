@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 import React from "react";
 import * as XLSX from "xlsx";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { useBranch } from "@/components/branch/BranchProvider";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 /* UI */
 import { Input } from "@/components/ui/input";
@@ -25,13 +26,12 @@ import {
 
 /* =================== Config =================== */
 const PRECIOS_URL = "/precios.xlsx";
-const LS_KEY = "gestock:vencimientos:v5";
-const OLD_LS_KEYS = ["gestock:vencimientos:v4", "gestock:vencimientos:v3"];
-const LS_COMPACT_KEY = "gestock:vencimientos:compact:v1";
-const LS_ARCHIVE_KEY = "gestock:vencimientos:archive:v1";
+const LS_KEY_BASE = "gestock:vencimientos:v5";
+const LS_COMPACT_KEY_BASE = "gestock:vencimientos:compact:v1";
+const LS_ARCHIVE_KEY_BASE = "gestock:vencimientos:archive:v1";
 
 /* ===== NEW: Outbox ===== */
-const LS_OUTBOX_KEY = "gestock:vencimientos:outbox:v1";
+const LS_OUTBOX_KEY_BASE = "gestock:vencimientos:outbox:v1";
 
 /* =================== Tipos =================== */
 type ExpItem = {
@@ -89,6 +89,8 @@ type OutboxEntry = {
   item?: ExpItem;
   id?: string;
   ts: number;
+  tenantId?: string | null;
+  branchId?: string | null;
 };
 
 /* =================== Utils =================== */
@@ -203,7 +205,26 @@ function downloadArchivesXLSX(rows: ArchivedItem[]) {
 
 /* =================== Page =================== */
 export default function VencimientosPage() {
+  const { tenantId, currentBranch } = useBranch();
+  const branchId = currentBranch?.id ?? null;
   const supabaseRef = React.useRef(getSupabaseBrowserClient());
+
+  const storageSuffix = React.useMemo(() => (
+    tenantId && branchId ? `:${tenantId}:${branchId}` : null
+  ), [tenantId, branchId]);
+
+  const lsKey = React.useMemo(() => (
+    storageSuffix ? `${LS_KEY_BASE}${storageSuffix}` : null
+  ), [storageSuffix]);
+  const lsArchiveKey = React.useMemo(() => (
+    storageSuffix ? `${LS_ARCHIVE_KEY_BASE}${storageSuffix}` : null
+  ), [storageSuffix]);
+  const lsOutboxKey = React.useMemo(() => (
+    storageSuffix ? `${LS_OUTBOX_KEY_BASE}${storageSuffix}` : null
+  ), [storageSuffix]);
+  const lsCompactKey = React.useMemo(() => (
+    storageSuffix ? `${LS_COMPACT_KEY_BASE}${storageSuffix}` : null
+  ), [storageSuffix]);
 
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -214,10 +235,26 @@ export default function VencimientosPage() {
   const [hasFreezerCol, setHasFreezerCol] = React.useState<boolean>(true);
   const [hasArchiveFreezerCol, setHasArchiveFreezerCol] = React.useState<boolean>(true);
 
-  const [compact, setCompact] = React.useState<boolean>(() => {
-    try { return JSON.parse(localStorage.getItem(LS_COMPACT_KEY) || "true"); } catch { return true; }
-  });
-  React.useEffect(() => { try { localStorage.setItem(LS_COMPACT_KEY, JSON.stringify(compact)); } catch {} }, [compact]);
+  const [compact, setCompact] = React.useState<boolean>(true);
+  React.useEffect(() => {
+    if (!lsCompactKey) return;
+    try {
+      const raw = localStorage.getItem(lsCompactKey);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === "boolean") setCompact(parsed);
+        else setCompact(true);
+      } else {
+        setCompact(true);
+      }
+    } catch {
+      setCompact(true);
+    }
+  }, [lsCompactKey]);
+  React.useEffect(() => {
+    if (!lsCompactKey) return;
+    try { localStorage.setItem(lsCompactKey, JSON.stringify(compact)); } catch {}
+  }, [compact, lsCompactKey]);
 
   // Buscador global
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -249,47 +286,74 @@ export default function VencimientosPage() {
   const [newFreezer, setNewFreezer] = React.useState<boolean>(false);
 
   const [items, setItems] = React.useState<ExpItem[]>([]);
-  const [archives, setArchives] = React.useState<ArchivedItem[]>(() => {
-    try { return JSON.parse(localStorage.getItem(LS_ARCHIVE_KEY) || "[]"); } catch { return []; }
-  });
+  const [archives, setArchives] = React.useState<ArchivedItem[]>([]);
   const [showArchivePanel, setShowArchivePanel] = React.useState(false);
   const [archiveErr, setArchiveErr] = React.useState<string | null>(null);
   const [archiveQuery, setArchiveQuery] = React.useState("");
 
-  React.useEffect(() => { try { localStorage.setItem(LS_ARCHIVE_KEY, JSON.stringify(archives)); } catch {} }, [archives]);
+  React.useEffect(() => {
+    if (!lsArchiveKey) { setArchives([]); return; }
+    try {
+      const raw = localStorage.getItem(lsArchiveKey);
+      setArchives(raw ? JSON.parse(raw) as ArchivedItem[] : []);
+    } catch {
+      setArchives([]);
+    }
+  }, [lsArchiveKey]);
+
+  React.useEffect(() => {
+    if (!lsArchiveKey) return;
+    try { localStorage.setItem(lsArchiveKey, JSON.stringify(archives)); } catch {}
+  }, [archives, lsArchiveKey]);
 
   /* ===== Helpers persistentes dentro del componente ===== */
   function setItemsLocal(updater: (prev: ExpItem[]) => ExpItem[]) {
     setItems((prev) => {
       const next = updater(prev);
-      try { localStorage.setItem(LS_KEY, JSON.stringify(next)); } catch {}
+      if (lsKey) {
+        try { localStorage.setItem(lsKey, JSON.stringify(next)); } catch {}
+      }
       return next;
     });
   }
   function readOutbox(): OutboxEntry[] {
-    try { return JSON.parse(localStorage.getItem(LS_OUTBOX_KEY) || "[]"); } catch { return []; }
+    if (!lsOutboxKey) return [];
+    try { return JSON.parse(localStorage.getItem(lsOutboxKey) || "[]"); } catch { return []; }
   }
   function writeOutbox(entries: OutboxEntry[]) {
-    try { localStorage.setItem(LS_OUTBOX_KEY, JSON.stringify(entries)); } catch {}
+    if (!lsOutboxKey) return;
+    try { localStorage.setItem(lsOutboxKey, JSON.stringify(entries)); } catch {}
   }
   function pushOutbox(entry: OutboxEntry) {
+    if (!lsOutboxKey) return;
+    const enriched: OutboxEntry = {
+      ...entry,
+      tenantId: entry.tenantId ?? tenantId ?? null,
+      branchId: entry.branchId ?? branchId ?? null,
+    };
     const cur = readOutbox();
-    cur.push(entry);
+    cur.push(enriched);
     writeOutbox(cur);
   }
   function adoptLocalTmpAsOutbox(localItems: ExpItem[]) {
+    if (!lsOutboxKey) return;
+    if (!tenantId || !branchId) return;
     const queue = readOutbox();
     const hasTmp = localItems.filter((it) => it.id.startsWith("tmp_"));
     let changed = false;
     for (const it of hasTmp) {
       const already = queue.some((e) => e.op === "insert" && e.item?.id === it.id);
-      if (!already) { queue.push({ op: "insert", item: it, ts: Date.now() }); changed = true; }
+      if (!already) {
+        queue.push({ op: "insert", item: it, ts: Date.now(), tenantId, branchId });
+        changed = true;
+      }
     }
     if (changed) writeOutbox(queue);
   }
   async function syncOutbox() {
     const supabase = supabaseRef.current;
     if (!supabase || supabaseStatus !== "online") return;
+    if (!lsOutboxKey) return;
     let queue = readOutbox();
     if (queue.length === 0) return;
 
@@ -298,12 +362,20 @@ export default function VencimientosPage() {
 
     for (const e of queue) {
       try {
+        const entryTenantId = e.tenantId ?? tenantId;
+        const entryBranchId = e.branchId ?? branchId;
+        if ((e.op === "insert" || e.op === "delete" || e.op === "update") && (!entryTenantId || !entryBranchId)) {
+          next.push(e);
+          continue;
+        }
         if (e.op === "insert" && e.item) {
           const payload: any = {
             name: e.item.name,
             exp_date: e.item.expDate,
             qty: e.item.qty,
             confirmed: !!e.item.confirmed,
+            tenant_id: entryTenantId,
+            branch_id: entryBranchId,
           };
           if (e.item.freezer !== undefined) payload.freezer = !!e.item.freezer;
 
@@ -334,10 +406,20 @@ export default function VencimientosPage() {
             confirmed: e.item.confirmed,
           };
           if (e.item.freezer !== undefined) upd.freezer = e.item.freezer;
-          const { error } = await supabase.from("expirations").update(upd).eq("id", e.item.id);
+          const { error } = await supabase
+            .from("expirations")
+            .update(upd)
+            .eq("id", e.item.id)
+            .eq("tenant_id", entryTenantId)
+            .eq("branch_id", entryBranchId);
           if (error) throw error;
         } else if (e.op === "delete" && e.id) {
-          const { error } = await supabase.from("expirations").delete().eq("id", e.id);
+          const { error } = await supabase
+            .from("expirations")
+            .delete()
+            .eq("id", e.id)
+            .eq("tenant_id", entryTenantId)
+            .eq("branch_id", entryBranchId);
           if (error) throw error;
         }
         // éxito → no se re-agrega
@@ -350,23 +432,27 @@ export default function VencimientosPage() {
 
   /* ---------- Carga local + migración ---------- */
   React.useEffect(() => {
+    if (!lsKey) {
+      setItems([]);
+      return;
+    }
     try {
-      const raw = localStorage.getItem(LS_KEY);
-      const current = raw ? (JSON.parse(raw) as ExpItem[]) : [];
-      if (current.length === 0) {
-        for (const k of OLD_LS_KEYS) {
-          const oldRaw = localStorage.getItem(k);
-          if (oldRaw) {
-            const oldItems = JSON.parse(oldRaw) as ExpItem[];
-            if (oldItems.length > 0) { localStorage.setItem(LS_KEY, JSON.stringify(oldItems)); setItems(oldItems); break; }
-          }
-        }
+      const raw = localStorage.getItem(lsKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as ExpItem[];
+        setItems(parsed.map((it) => ({ freezer: false, ...it })));
       } else {
-        setItems(current.map((it) => ({ freezer: false, ...it })));
+        setItems([]);
       }
-    } catch {}
-  }, []);
-  React.useEffect(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(items)); } catch {} }, [items]);
+    } catch {
+      setItems([]);
+    }
+  }, [lsKey]);
+
+  React.useEffect(() => {
+    if (!lsKey) return;
+    try { localStorage.setItem(lsKey, JSON.stringify(items)); } catch {}
+  }, [items, lsKey]);
 
   /* ---------- Precios.xlsx (autocomplete) ---------- */
   React.useEffect(() => {
@@ -393,11 +479,17 @@ export default function VencimientosPage() {
   /* ---------- Supabase: expirations ---------- */
   React.useEffect(() => {
     const supabase = supabaseRef.current;
-    if (!supabase) { setLoading(false); setSupabaseStatus("offline"); return; }
+    if (!supabase || !tenantId || !currentBranch?.id) { setLoading(false); setSupabaseStatus("offline"); return; }
+    const branchIdValue = currentBranch.id;
 
     (async () => {
       setLoading(true);
-      const { data, error } = await supabase.from("expirations").select("*").order("updated_at", { ascending: false });
+      const { data, error } = await supabase
+        .from("expirations")
+        .select("*")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchIdValue)
+        .order("updated_at", { ascending: false });
       if (error) { setError(error.message); setSupabaseStatus("offline"); setLoading(false); return; }
 
       setHasFreezerCol(!!data?.[0] && Object.prototype.hasOwnProperty.call(data[0], "freezer"));
@@ -406,20 +498,23 @@ export default function VencimientosPage() {
         confirmed: !!r.confirmed, freezer: !!r.freezer, updatedAt: epoch(r.updated_at),
       })) as ExpItem[];
 
-      setItemsLocal((prev) => mergeByIdPreferNewer(prev, remote));
+      setItemsLocal((prev) => {
+        const merged = mergeByIdPreferNewer(prev, remote);
+        adoptLocalTmpAsOutbox(merged);
+        return merged;
+      });
       setSupabaseStatus("online");
       setLoading(false);
 
       // Adoptar tmp_* antiguos a la cola y sincronizar
-      adoptLocalTmpAsOutbox(items);
       await syncOutbox();
     })();
 
     const ch = supabase
-  .channel("expirations-realtime")
+  .channel(`expirations-${tenantId}-${branchIdValue}`)
   .on(
     "postgres_changes",
-    { event: "*", schema: "public", table: "expirations" },
+    { event: "*", schema: "public", table: "expirations", filter: `tenant_id=eq.${tenantId},branch_id=eq.${branchIdValue}` },
     (payload: RealtimePostgresChangesPayload<ExpRow>) => {
       setSupabaseStatus("online");
       const r = (payload.eventType === "DELETE" ? payload.old : payload.new) as ExpRow;
@@ -464,16 +559,22 @@ export default function VencimientosPage() {
 
 
     return () => { supabase.removeChannel(ch); };
-  }, []);
+  }, [tenantId, currentBranch?.id]);
 
   // Reintentar Outbox al volver online
-  React.useEffect(() => { if (supabaseStatus === "online") syncOutbox(); }, [supabaseStatus]);
+  React.useEffect(() => { if (supabaseStatus === "online") syncOutbox(); }, [supabaseStatus, tenantId, branchId]);
 
   /* ---------- Supabase: expirations_archive ---------- */
   React.useEffect(() => {
-    const supabase = supabaseRef.current; if (!supabase) return;
+    const supabase = supabaseRef.current; if (!supabase || !tenantId || !currentBranch?.id) return;
+    const branchIdValue = currentBranch.id;
     (async () => {
-      const { data, error } = await supabase.from("expirations_archive").select("*").order("archived_at", { ascending: false });
+      const { data, error } = await supabase
+        .from("expirations_archive")
+        .select("*")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchIdValue)
+        .order("archived_at", { ascending: false });
       if (error) { setArchiveErr(error.message); return; }
       setHasArchiveFreezerCol(!!data?.[0] && Object.prototype.hasOwnProperty.call(data[0], "freezer"));
       const remote = (data ?? []).map((r: any) => ({
@@ -488,10 +589,10 @@ export default function VencimientosPage() {
     })();
     
     const ch = supabase
-  .channel("expirations-archive-realtime")
+  .channel(`expirations-archive-${tenantId}-${branchIdValue}`)
   .on(
     "postgres_changes",
-    { event: "*", schema: "public", table: "expirations_archive" },
+    { event: "*", schema: "public", table: "expirations_archive", filter: `tenant_id=eq.${tenantId},branch_id=eq.${branchIdValue}` },
     (payload: RealtimePostgresChangesPayload<ExpArchiveRow>) => {
       const r = (payload.eventType === "DELETE" ? payload.old : payload.new) as ExpArchiveRow;
 
@@ -521,7 +622,7 @@ export default function VencimientosPage() {
   .subscribe();
 
     return () => { supabase.removeChannel(ch); };
-  }, []);
+  }, [tenantId, currentBranch?.id]);
 
   /* ---------- Handlers ---------- */
   function updateSuggestions(query: string) {
@@ -549,6 +650,10 @@ export default function VencimientosPage() {
     if (!name.trim()) return alert("Ingresá un producto.");
     if (!isValidDdMmAa(expDate)) return alert("Fecha inválida. Usa dd-mm-aa.");
     if (qty === "" || (typeof qty === "number" && qty <= 0)) return alert("Cantidad inválida.");
+    if (!tenantId || !branchId) {
+      alert("Seleccioná una sucursal válida.");
+      return;
+    }
 
     const supabase = supabaseRef.current;
     const tempId = `tmp_${Math.random().toString(36).slice(2, 8)}`;
@@ -566,25 +671,37 @@ export default function VencimientosPage() {
 
     if (!supabase || supabaseStatus !== "online") {
       // Offline → Outbox insert
-      pushOutbox({ op: "insert", item: optimistic, ts: Date.now() });
+      pushOutbox({ op: "insert", item: optimistic, ts: Date.now(), tenantId, branchId });
       onClear();
       return;
     }
 
     // Online → insert directo
     const payload: any = {
-      name: optimistic.name, exp_date: optimistic.expDate, qty: optimistic.qty, confirmed: optimistic.confirmed,
+      name: optimistic.name,
+      exp_date: optimistic.expDate,
+      qty: optimistic.qty,
+      confirmed: optimistic.confirmed,
       freezer: optimistic.freezer ?? false,
+      tenant_id: tenantId,
+      branch_id: branchId,
     };
     let { data, error } = await supabase.from("expirations").insert(payload).select("*").single();
     if (error && hasFreezerErr(error.message)) {
       ({ data, error } = await supabase.from("expirations")
-        .insert({ name: optimistic.name, exp_date: optimistic.expDate, qty: optimistic.qty, confirmed: optimistic.confirmed })
+        .insert({
+          name: optimistic.name,
+          exp_date: optimistic.expDate,
+          qty: optimistic.qty,
+          confirmed: optimistic.confirmed,
+          tenant_id: tenantId,
+          branch_id: branchId,
+        })
         .select("*").single());
     }
     if (error) {
       // Falla puntual → Outbox
-      pushOutbox({ op: "insert", item: optimistic, ts: Date.now() });
+      pushOutbox({ op: "insert", item: optimistic, ts: Date.now(), tenantId, branchId });
       onClear();
       return;
     }
@@ -620,6 +737,7 @@ export default function VencimientosPage() {
 
   async function updateItemRemote(id: string, patch: Partial<ExpItem>) {
     const supabase = supabaseRef.current;
+    if (!tenantId || !branchId) return;
 
     // Local optimista
     setItemsLocal((prev) =>
@@ -629,7 +747,7 @@ export default function VencimientosPage() {
     // Offline → Outbox update
     if (!supabase || supabaseStatus !== "online") {
       const cur = items.find((x) => x.id === id);
-      if (cur) pushOutbox({ op: "update", item: { ...cur, ...patch, id }, ts: Date.now() });
+      if (cur) pushOutbox({ op: "update", item: { ...cur, ...patch, id }, ts: Date.now(), tenantId, branchId });
       return;
     }
 
@@ -641,14 +759,24 @@ export default function VencimientosPage() {
     if (patch.confirmed !== undefined) upd.confirmed = patch.confirmed;
     if (patch.freezer !== undefined && hasFreezerCol) upd.freezer = patch.freezer;
 
-    let { error } = await supabase.from("expirations").update(upd).eq("id", id);
+    let { error } = await supabase
+      .from("expirations")
+      .update(upd)
+      .eq("id", id)
+      .eq("tenant_id", tenantId ?? null)
+      .eq("branch_id", branchId ?? null);
     if (error && hasFreezerErr(error.message)) {
       const { freezer, ...updBase } = upd;
-      ({ error } = await supabase.from("expirations").update(updBase).eq("id", id));
+      ({ error } = await supabase
+        .from("expirations")
+        .update(updBase)
+        .eq("id", id)
+        .eq("tenant_id", tenantId ?? null)
+        .eq("branch_id", branchId ?? null));
     }
     if (error) {
       const cur = items.find((x) => x.id === id);
-      if (cur) pushOutbox({ op: "update", item: { ...cur, ...patch, id }, ts: Date.now() });
+      if (cur) pushOutbox({ op: "update", item: { ...cur, ...patch, id }, ts: Date.now(), tenantId, branchId });
     }
   }
 
@@ -681,6 +809,10 @@ export default function VencimientosPage() {
   }
 
   async function deleteItem(id: string) {
+    if (!tenantId || !branchId) {
+      alert("Seleccioná una sucursal válida.");
+      return;
+    }
     const prev = items;
     // Local
     setItemsLocal((old) => old.filter((it) => it.id !== id));
@@ -688,11 +820,16 @@ export default function VencimientosPage() {
 
     const supabase = supabaseRef.current;
     if (!supabase || supabaseStatus !== "online") {
-      pushOutbox({ op: "delete", id, ts: Date.now() });
+      pushOutbox({ op: "delete", id, ts: Date.now(), tenantId, branchId });
       return;
     }
 
-    const { error } = await supabase.from("expirations").delete().eq("id", id);
+    const { error } = await supabase
+      .from("expirations")
+      .delete()
+      .eq("id", id)
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId);
     if (error) {
       alert("No pude eliminar en servidor: " + error.message);
       setItemsLocal(() => prev); // rollback
@@ -709,6 +846,10 @@ export default function VencimientosPage() {
 
   async function archiveItem(id: string) {
     const it = items.find((x) => x.id === id); if (!it) return;
+    if (!tenantId || !branchId) {
+      alert("Seleccioná una sucursal válida.");
+      return;
+    }
     const effectiveExp = drafts[id]?.expDate ?? it.expDate;
     if (!isExpired(effectiveExp)) return alert("Solo se pueden archivar productos vencidos.");
     const arch: ArchivedItem = {
@@ -729,6 +870,8 @@ export default function VencimientosPage() {
     const base: any = {
       source_id: it.id, name: arch.name, exp_date: arch.expDate, qty: arch.qty,
       confirmed: arch.confirmed, archived_at: new Date(arch.archivedAt).toISOString(),
+      tenant_id: tenantId,
+      branch_id: branchId,
     };
     let payload = hasArchiveFreezerCol ? { ...base, freezer: arch.freezer ?? false } : base;
     let { data, error } = await supabase.from("expirations_archive").insert(payload).select("*").single();
@@ -746,7 +889,12 @@ export default function VencimientosPage() {
       confirmed: !!data.confirmed, freezer: !!data.freezer, archivedAt: epoch(data.archived_at),
     } : a));
 
-    const del = await supabase.from("expirations").delete().eq("id", id);
+    const del = await supabase
+      .from("expirations")
+      .delete()
+      .eq("id", id)
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId);
     if (del.error) setArchiveErr("Archivado ok, pero no pude borrar el original: " + del.error.message);
   }
 

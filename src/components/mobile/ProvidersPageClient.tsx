@@ -51,6 +51,8 @@ export type Provider = {
   payment_method?: PaymentMethod | null;
   created_at?: string;
   updated_at?: string;
+  tenant_id?: string | null;
+  branch_id?: string | null;
 };
 
 type OrderSummary = {
@@ -108,8 +110,8 @@ const WEEK_PROVIDERS_TABLE = "provider_week_providers";
 
 const DEFAULT_RESPONSIBLE = "General";
 const PENDING_PREFIX = "tmp_";
-const CACHE_KEY = "gestock:proveedores_cache:v5";
-const WEEK_CACHE_KEY = "gestock:proveedores:selected_week";
+const CACHE_KEY_PREFIX = "gestock:proveedores_cache:v5";
+const WEEK_CACHE_KEY_PREFIX = "gestock:proveedores:selected_week";
 
 const DAYS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"] as const;
 const DAY_LABELS_EXT: Record<number, string> = {
@@ -131,26 +133,26 @@ function fmtMoney(n: number | null | undefined) {
 const byName = (a: Provider, b: Provider) =>
   a.name.localeCompare(b.name, "es", { sensitivity: "base" });
 
-function saveCache(list: Provider[]) {
+function saveCache(key: string, list: Provider[]) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(CACHE_KEY, JSON.stringify(list));
+  localStorage.setItem(key, JSON.stringify(list));
 }
-function loadCache(): Provider[] {
+function loadCache(key: string): Provider[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
+    const raw = localStorage.getItem(key);
     return raw ? (JSON.parse(raw) as Provider[]).sort(byName) : [];
   } catch {
     return [];
   }
 }
-function saveSelectedWeek(id: string) {
+function saveSelectedWeek(key: string, id: string) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(WEEK_CACHE_KEY, id);
+  localStorage.setItem(key, id);
 }
-function loadSelectedWeek(): string | null {
+function loadSelectedWeek(key: string): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(WEEK_CACHE_KEY);
+  return localStorage.getItem(key);
 }
 function normalizeDay(d: unknown) {
   const n = Number(d);
@@ -197,6 +199,15 @@ function toMondayYMD(ymd: string) {
 export default function ProvidersPageClient({ slug, branch, tenantId, branchId }: Props) {
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
   const router = useRouter();
+
+  const cacheKey = React.useMemo(
+    () => `${CACHE_KEY_PREFIX}:${tenantId ?? "-"}:${branchId ?? "-"}`,
+    [tenantId, branchId]
+  );
+  const weekCacheKey = React.useMemo(
+    () => `${WEEK_CACHE_KEY_PREFIX}:${tenantId ?? "-"}:${branchId ?? "-"}`,
+    [tenantId, branchId]
+  );
 
   const [providers, setProviders] = React.useState<Provider[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -276,17 +287,28 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
 
   /* ===== Carga inicial ===== */
   React.useEffect(() => {
+    if (!tenantId || !branchId) {
+      setProviders([]);
+      setWeeks([]);
+      setSelectedWeek(null);
+      setLoading(false);
+      return;
+    }
     let mounted = true;
     (async () => {
-      const cached = loadCache();
+      const cached = loadCache(cacheKey);
       if (mounted && cached.length) setProviders(cached);
 
       // 1) providers
-      const { data: provData, error: provError } = await supabase
+      let provQuery = supabase
         .from(TABLE)
         .select("*")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId)
         .order("order_day", { ascending: true })
         .order("name", { ascending: true });
+
+      const { data: provData, error: provError } = await provQuery;
 
       if (!mounted) return;
       if (provError) {
@@ -300,7 +322,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
       const pendings = cached.filter((p) => p.id?.startsWith(PENDING_PREFIX));
       const final = [...remote, ...pendings].sort(byName);
       setProviders(final);
-      saveCache(final);
+      saveCache(cacheKey, final);
 
       // 2) weeks
       const { data: wkData, error: wkErr } = await supabase
@@ -325,14 +347,14 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
           allWeeks.unshift(selected);
         }
       } else {
-        const fromLS = loadSelectedWeek();
+        const fromLS = loadSelectedWeek(weekCacheKey);
         selected = allWeeks.find(w => w.id === fromLS) ?? allWeeks[0];
       }
 
       setWeeks(allWeeks);
       if (selected) {
         setSelectedWeek(selected);
-        saveSelectedWeek(selected.id);
+        saveSelectedWeek(weekCacheKey, selected.id);
       }
 
       // 3) summaries
@@ -350,7 +372,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
       setLoading(false);
     })();
     return () => { mounted = false; };
-  }, [supabase, tenantId, branchId]);
+  }, [supabase, tenantId, branchId, cacheKey, weekCacheKey]);
 
   /* ===== Datos derivados por semana ===== */
   React.useEffect(() => {
@@ -453,43 +475,60 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
 
   /* ===== Realtime (providers) ===== */
   React.useEffect(() => {
+    if (!branchId || !tenantId) return;
+
+    const filter = `branch_id=eq.${branchId}`;
     const channel = supabase
-      .channel("providers-realtime-public")
+      .channel(`providers-${tenantId}-${branchId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: TABLE },
+        { event: "*", schema: "public", table: TABLE, filter },
         (payload: PgPayload<Provider>) => {
           const { eventType, new: newRow, old: oldRow } = payload;
+
+          const matchesContext = (row: Provider | null) => {
+            if (!row) return false;
+            const sameTenant = !row.tenant_id || row.tenant_id === tenantId;
+            const sameBranch = !row.branch_id || row.branch_id === branchId;
+            return sameTenant && sameBranch;
+          };
+
           setProviders((prev) => {
             if (eventType === "DELETE") {
-              if (!oldRow) return prev;
-              const next = prev.filter((p) => p.id !== oldRow.id).sort(byName);
-              saveCache(next);
+              const row = (oldRow as Provider) ?? null;
+              if (!row) return prev;
+              if (!matchesContext(row)) return prev;
+              const next = prev.filter((p) => p.id !== row.id).sort(byName);
+              saveCache(cacheKey, next);
               return next;
             }
             if (eventType === "INSERT") {
-              if (!newRow) return prev;
-              const withoutTmp = prev.filter((p) => !p.id.startsWith(PENDING_PREFIX));
-              const exists = withoutTmp.some((p) => p.id === newRow.id);
+              const row = (newRow as Provider) ?? null;
+              if (!row) return prev;
+              if (!matchesContext(row)) return prev;
               const incoming: Provider = {
-                ...(newRow as Provider),
-                payment_method: normalizePayment((newRow as Provider).payment_method),
+                ...row,
+                payment_method: normalizePayment(row.payment_method),
               };
+              const withoutTmp = prev.filter((p) => !p.id.startsWith(PENDING_PREFIX));
+              const exists = withoutTmp.some((p) => p.id === incoming.id);
               const next = exists
                 ? withoutTmp.map((p) => (p.id === incoming.id ? incoming : p))
                 : [...withoutTmp, incoming];
               const sorted = next.sort(byName);
-              saveCache(sorted);
+              saveCache(cacheKey, sorted);
               return sorted;
             }
             if (eventType === "UPDATE") {
-              if (!newRow) return prev;
+              const row = (newRow as Provider) ?? null;
+              if (!row) return prev;
+              if (!matchesContext(row)) return prev;
               const incoming: Provider = {
-                ...(newRow as Provider),
-                payment_method: normalizePayment((newRow as Provider).payment_method),
+                ...row,
+                payment_method: normalizePayment(row.payment_method),
               };
               const next = prev.map((p) => (p.id === incoming.id ? incoming : p)).sort(byName);
-              saveCache(next);
+              saveCache(cacheKey, next);
               return next;
             }
             return prev;
@@ -499,7 +538,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [supabase]);
+  }, [supabase, tenantId, branchId, cacheKey]);
 
   /* ===== Realtime (order_summaries) ===== */
   React.useEffect(() => {
@@ -625,7 +664,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     const optimistic = [...providers, temp].sort(byName);
 
     setProviders(optimistic);
-    saveCache(optimistic);
+    saveCache(cacheKey, optimistic);
     setCreateOpen(false);
     resetCreateForm();
 
@@ -666,7 +705,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
 
       setProviders((prev) => {
         const reverted = prev.filter((p) => p.id !== temp.id).sort(byName);
-        saveCache(reverted);
+        saveCache(cacheKey, reverted);
         return reverted;
       });
 
@@ -694,7 +733,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
       const withoutTemp = prev.filter((p) => p.id !== temp.id);
       const withoutDup = withoutTemp.filter((p) => p.id !== real.id);
       const merged = [...withoutDup, real].sort(byName);
-      saveCache(merged);
+      saveCache(cacheKey, merged);
       return merged;
     });
 
@@ -755,21 +794,21 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     if (id.startsWith(PENDING_PREFIX)) {
       const next = providers.filter((p) => p.id !== id).sort(byName);
       setProviders(next);
-      saveCache(next);
+      saveCache(cacheKey, next);
       return;
     }
 
     const prev = providers;
     const next = prev.filter((p) => p.id !== id).sort(byName);
     setProviders(next);
-    saveCache(next);
+    saveCache(cacheKey, next);
 
     const { error } = await supabase.from(TABLE).delete().eq("id", id);
     if (error) {
       console.error("Delete error:", error);
       alert("No se pudo borrar en la nube. Reintentá.\n" + (error.message ?? ""));
       setProviders(prev);
-      saveCache(prev);
+      saveCache(cacheKey, prev);
     }
   }
 
@@ -791,7 +830,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     if (editingNorm.id.startsWith(PENDING_PREFIX)) {
       const next = providers.map((it) => (it.id === editingNorm.id ? editingNorm : it)).sort(byName);
       setProviders(next);
-      saveCache(next);
+      saveCache(cacheKey, next);
       setEditOpen(false);
       return;
     }
@@ -813,7 +852,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     const prev = providers;
     const next = prev.map((it) => (it.id === editingNorm.id ? editingNorm : it)).sort(byName);
     setProviders(next);
-    saveCache(next);
+    saveCache(cacheKey, next);
     setEditOpen(false);
 
     const { error } = await supabase
@@ -833,7 +872,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
       console.error("Update error:", error);
       alert("No se pudo actualizar en la nube. Reintentá.\n" + (error.message ?? ""));
       setProviders(prev);
-      saveCache(prev);
+      saveCache(cacheKey, prev);
     }
   }
 
@@ -884,7 +923,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     const nextWeeks = [newW, ...weeks].sort((a,b) => (a.week_start > b.week_start ? -1 : 1));
     setWeeks(nextWeeks);
     setSelectedWeek(newW);
-    saveSelectedWeek(newW.id);
+    saveSelectedWeek(weekCacheKey, newW.id);
     setConfirmNewWeek(false);
 
     setWeekStates({});
@@ -955,7 +994,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
           onValueChange={(id) => {
             const wk = weeks.find(w => w.id === id) || null;
             setSelectedWeek(wk);
-            if (wk) saveSelectedWeek(wk.id);
+            if (wk) saveSelectedWeek(weekCacheKey, wk.id);
           }}
         >
           <SelectTrigger className="h-8 w-[180px] rounded-xl text-xs">
@@ -1171,13 +1210,19 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
                           size="sm"
                           className="h-8 text-xs rounded-lg"
                           aria-label={`Ver pedido de ${p.name}`}
-                          onClick={() =>
-                            router.push(
-                              `/t/${slug}/proveedores/${p.id}/pedido?name=${
-                                encodeURIComponent(p.name)
-                              }&week=${selectedWeek?.id ?? ""}&branch=${branch}&branchId=${branchId}&tenantId=${tenantId}`
-                            )
-                          }
+                          onClick={() => {
+                            const basePath = branch
+                              ? `/t/${slug}/b/${branch}/proveedores/${p.id}/pedido`
+                              : `/t/${slug}/proveedores/${p.id}/pedido`;
+                            const qs = new URLSearchParams({
+                              name: p.name,
+                              week: selectedWeek?.id ?? "",
+                              branch: branch ?? "",
+                              branchId,
+                              tenantId,
+                            });
+                            router.push(`${basePath}?${qs.toString()}`);
+                          }}
                         >
                           Ver Pedido
                         </Button>
