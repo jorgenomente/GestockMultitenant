@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { createClient } from "@supabase/supabase-js";
+import { normBarcode } from "@/lib/pricesServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -345,9 +346,10 @@ export async function POST(req: Request) {
     const rawName = chosen.map.name ? String(r[chosen.map.name] ?? "").trim() : "";
     const rawCode = chosen.map.code ? String(r[chosen.map.code] ?? "").trim() : "";
     const rawBar  = chosen.map.barcode ? String(r[chosen.map.barcode] ?? "").trim() : "";
+    const cleanedBarcode = rawBar ? normBarcode(rawBar) : undefined;
 
     // necesitamos al menos UN identificador
-    if (!rawName && !rawCode && !rawBar) { skipped++; continue; }
+    if (!rawName && !rawCode && !cleanedBarcode) { skipped++; continue; }
 
     const priceNum = parsePrice(r[chosen.map.price as string]);
     const tms = parseUpdatedAt(r[chosen.map.updated as string]);
@@ -356,7 +358,7 @@ export async function POST(req: Request) {
     toInsert.push({
       name: rawName || null,
       code: rawCode || null,
-      barcode: rawBar ? rawBar.replace(/\D+/g, "") : null,
+      barcode: cleanedBarcode ?? null,
       price: priceNum,
       ts: new Date(tms).toISOString(),
     });

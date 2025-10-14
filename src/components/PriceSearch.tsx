@@ -32,9 +32,28 @@ type Catalog = {
   sourceKey?: string;
 };
 
+const MIN_BARCODE_DIGITS_FOR_KEY = 8;
+
+const barcodeKeyValue = (barcode?: string) => {
+  if (!barcode) return "";
+  const trimmed = stripInvisibles(barcode).trim();
+  if (!trimmed) return "";
+  if (/[A-Za-z]/.test(trimmed)) return normText(trimmed);
+  const digits = trimmed.replace(/\D+/g, "");
+  return digits.length >= MIN_BARCODE_DIGITS_FOR_KEY ? digits : "";
+};
+
 /** Clave estable por producto */
-const keyFor = (name: string, barcode?: string, code?: string) =>
-  (barcode && barcode.trim()) || (code && code.trim()) || normText(name);
+const keyFor = (name: string, barcode?: string, code?: string) => {
+  const barKey = barcodeKeyValue(barcode);
+  if (barKey) return barKey;
+
+  const codeKey = code ? normText(code) : "";
+  if (codeKey) return codeKey;
+
+  const nameKey = normText(name);
+  return nameKey || name.trim();
+};
 
 /** Quedate SIEMPRE con la fila de fecha más nueva. Si empata EXACTO, prioriza la que tenga barcode/code. */
 function reduceLatestByDate(list: PriceItem[]): PriceItem[] {
@@ -97,7 +116,7 @@ function headerMatches(header: string, alias: string) {
 
 const excelSerialToMs = (n: number) => Date.UTC(1899, 11, 30) + Math.round(n * 86400000);
 
-/** Normaliza código de barras a solo dígitos; soporta number o string. */
+/** Normaliza código de barras, preservando letras cuando existan. */
 function normBarcode(val: unknown): string | undefined {
   if (val == null) return undefined;
   let s =
@@ -106,7 +125,10 @@ function normBarcode(val: unknown): string | undefined {
       : stripInvisibles(String(val));
   s = s.trim();
   if (!s) return undefined;
-  const digits = s.replace(/\D+/g, "");
+  const compact = s.replace(/\s+/g, " ");
+  const hasLetters = /[A-Za-z]/.test(compact);
+  if (hasLetters) return compact;
+  const digits = compact.replace(/\D+/g, "");
   return digits || undefined;
 }
 
@@ -263,8 +285,10 @@ function normalizeFromApi(x: any): PriceItem {
       ? new Date(updatedAt).toLocaleString("es-AR")
       : "";
 
+  const id = keyFor(name, barcode, code);
+
   return {
-    id: (barcode || code || normText(name) || name) as string,
+    id,
     name,
     code,
     barcode,
@@ -336,7 +360,6 @@ function buildCatalog(rows: Record<string, unknown>[], sourceMode: Catalog["sour
     const rawName = String(r[colMap.name as string] ?? "").trim();
     if (!rawName) continue;
 
-    const nameKey = normText(rawName);
     const code = r[colMap.code as string] ? String(r[colMap.code as string]).trim() : undefined;
     const barcode = colMap.barcode ? normBarcode(r[colMap.barcode]) : undefined;
 
@@ -361,7 +384,7 @@ function buildCatalog(rows: Record<string, unknown>[], sourceMode: Catalog["sour
         : "";
 
     const next: PriceItem = {
-      id: (barcode || code || nameKey || rawName) as string,
+      id: keyFor(rawName, barcode, code),
       name: rawName,
       code,
       barcode,
@@ -557,7 +580,7 @@ export default function PriceSearch({ slug }: { slug: string }) {
 
     const hits: PriceItem[] = [];
     for (const it of items) {
-      const haystack = [normText(it.name), normText(it.code), it.barcode ?? ""]
+      const haystack = [normText(it.name), normText(it.code), normText(it.barcode)]
         .filter(Boolean)
         .join(" ");
       let ok = true;

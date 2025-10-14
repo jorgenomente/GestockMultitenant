@@ -10,8 +10,27 @@ export const stripInvisibles = (s: string) => s.replace(NBSP_RX, " ");
 export const normText = (s: unknown) =>
   !s ? "" : String(s).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
 
-export const keyFor = (name: string, barcode?: string, code?: string) =>
-  (barcode && barcode.trim()) || (code && code.trim()) || normText(name);
+const MIN_BARCODE_DIGITS_FOR_KEY = 8;
+
+const barcodeKeyValue = (barcode?: string) => {
+  if (!barcode) return "";
+  const trimmed = stripInvisibles(barcode).trim();
+  if (!trimmed) return "";
+  if (/[A-Za-z]/.test(trimmed)) return normText(trimmed);
+  const digits = trimmed.replace(/\D+/g, "");
+  return digits.length >= MIN_BARCODE_DIGITS_FOR_KEY ? digits : "";
+};
+
+export const keyFor = (name: string, barcode?: string, code?: string) => {
+  const barKey = barcodeKeyValue(barcode);
+  if (barKey) return barKey;
+
+  const codeKey = code ? normText(code) : "";
+  if (codeKey) return codeKey;
+
+  const nameKey = normText(name);
+  return nameKey || name.trim();
+};
 
 const excelSerialToMs = (n: number) => Date.UTC(1899, 11, 30) + Math.round(n * 86400000);
 
@@ -23,7 +42,10 @@ export function normBarcode(val: unknown): string | undefined {
       : stripInvisibles(String(val));
   s = s.trim();
   if (!s) return undefined;
-  const digits = s.replace(/\D+/g, "");
+  const compact = s.replace(/\s+/g, " ");
+  const hasLetters = /[A-Za-z]/.test(compact);
+  if (hasLetters) return compact;
+  const digits = compact.replace(/\D+/g, "");
   return digits || undefined;
 }
 
@@ -188,7 +210,7 @@ export function buildCatalog(rows: Record<string, unknown>[]): Catalog {
       typeof updRaw === "string" ? String(updRaw) : updatedAt ? new Date(updatedAt).toLocaleString("es-AR") : "";
 
     items.push({
-      id: (barcode || code || normText(rawName) || rawName),
+      id: keyFor(rawName, barcode, code),
       name: rawName,
       code,
       barcode,

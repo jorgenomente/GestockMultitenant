@@ -6,6 +6,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { useBranch } from "@/components/branch/BranchProvider";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -242,121 +243,166 @@ function OrderStatusBadge({ status }: { status: ClientOrder["status"] }) {
 /* ========= Página ========= */
 export default function ClientsPage() {
   const sb = React.useMemo<SupabaseClient>(() => getSupabaseBrowserClient(), []);
+  const { currentBranch, tenantId, loading: branchLoading, error: branchError } = useBranch();
+
+  const branchId = currentBranch?.id ?? null;
+
   const [loading, setLoading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [clients, setClients] = React.useState<ClientWithOrders[]>([]);
-  const [q, setQ] = React.useState(""); 
-  const searchRef = React.useRef<HTMLInputElement>(null);// 🔎 nombre, teléfono o proveedor
+  const [q, setQ] = React.useState("");
+  const searchRef = React.useRef<HTMLInputElement>(null);
 
   const form = useForm<ClientForm>({
     resolver: zodResolver(ClientSchema),
     defaultValues: { name: "", phone: "", articles: [] },
   });
 
-  async function fetchData() {
-  setLoading(true);
-  try {
-    // 1) clientes
-    const { data: cData, error: cErr } = await sb.from("clients").select("*");
-    if (cErr) throw cErr;
-    const ids = (cData ?? []).map((c) => c.id);
-
-    // 2) pedidos por cliente
-    const ordersByClient: Record<string, Array<ClientOrder & { items: ClientOrderItem[]; comments: ClientOrderComment[] }>> = {};
-    let oData: any[] = [];
-    if (ids.length) {
-      const { data, error } = await sb
-        .from("client_orders")
-        .select("*")
-        .in("client_id", ids)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      oData = data ?? [];
+  const fetchData = React.useCallback(async () => {
+    if (!tenantId || !branchId) {
+      setClients([]);
+      return;
     }
 
-    const orderIds = oData.map((o) => o.id);
-
-    // 3) ítems por pedido
-    const itemsByOrder: Record<string, ClientOrderItem[]> = {};
-    if (orderIds.length) {
-      const { data: oiData, error: oiErr } = await sb
-        .from("client_order_items")
+    setLoading(true);
+    try {
+      const { data: cData, error: cErr } = await sb
+        .from("clients")
         .select("*")
-        .in("order_id", orderIds)
-        .order("created_at", { ascending: false });
-      if (oiErr) throw oiErr;
-      (oiData ?? []).forEach((oi) => {
-        (itemsByOrder[oi.order_id] ??= []).push(oi as ClientOrderItem);
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId);
+      if (cErr) throw cErr;
+      const ids = (cData ?? []).map((c) => c.id);
+
+      const ordersByClient: Record<string, Array<ClientOrder & { items: ClientOrderItem[]; comments: ClientOrderComment[] }>> = {};
+      let oData: any[] = [];
+      if (ids.length) {
+        const { data, error } = await sb
+          .from("client_orders")
+          .select("*")
+          .eq("tenant_id", tenantId)
+          .eq("branch_id", branchId)
+          .in("client_id", ids)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        oData = data ?? [];
+      }
+
+      const orderIds = oData.map((o) => o.id);
+
+      const itemsByOrder: Record<string, ClientOrderItem[]> = {};
+      if (orderIds.length) {
+        const { data: oiData, error: oiErr } = await sb
+          .from("client_order_items")
+          .select("*")
+          .eq("tenant_id", tenantId)
+          .eq("branch_id", branchId)
+          .in("order_id", orderIds)
+          .order("created_at", { ascending: false });
+        if (oiErr) throw oiErr;
+        (oiData ?? []).forEach((oi) => {
+          (itemsByOrder[oi.order_id] ??= []).push(oi as ClientOrderItem);
+        });
+      }
+
+      const commentsByOrder: Record<string, ClientOrderComment[]> = {};
+      if (orderIds.length) {
+        const { data: ocData, error: ocErr } = await sb
+          .from("client_order_comments")
+          .select("*")
+          .eq("tenant_id", tenantId)
+          .eq("branch_id", branchId)
+          .in("order_id", orderIds)
+          .order("created_at", { ascending: true });
+        if (ocErr) throw ocErr;
+        (ocData ?? []).forEach((oc) => {
+          (commentsByOrder[oc.order_id] ??= []).push(oc as ClientOrderComment);
+        });
+      }
+
+      (oData ?? []).forEach((o) => {
+        const mergedOrder = {
+          ...o,
+          items: itemsByOrder[o.id] ?? [],
+          comments: commentsByOrder[o.id] ?? [],
+        };
+        (ordersByClient[o.client_id] ??= []).push(mergedOrder);
       });
+
+      const merged: ClientWithOrders[] = (cData ?? []).map((c) => ({
+        ...c,
+        orders: ordersByClient[c.id] ?? [],
+      }));
+
+      merged.sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+      setClients(merged);
+    } catch (e) {
+      console.error(e);
+      alert("Error cargando clientes/pedidos.");
+    } finally {
+      setLoading(false);
     }
+  }, [sb, tenantId, branchId]);
 
-    // 4) NUEVO: comentarios por pedido
-    const commentsByOrder: Record<string, ClientOrderComment[]> = {};
-    if (orderIds.length) {
-      const { data: ocData, error: ocErr } = await sb
-        .from("client_order_comments")
-        .select("*")
-        .in("order_id", orderIds)
-        .order("created_at", { ascending: true }); // cronológico
-      if (ocErr) throw ocErr;
-      (ocData ?? []).forEach((oc) => {
-        (commentsByOrder[oc.order_id] ??= []).push(oc as ClientOrderComment);
-      });
-    }
-
-    // 5) merge
-    (oData ?? []).forEach((o) => {
-      const mergedOrder = {
-        ...o,
-        items: itemsByOrder[o.id] ?? [],
-        comments: commentsByOrder[o.id] ?? [],
-      };
-      (ordersByClient[o.client_id] ??= []).push(mergedOrder);
-    });
-
-    const merged: ClientWithOrders[] = (cData ?? []).map((c) => ({
-      ...c,
-      orders: ordersByClient[c.id] ?? [],
-    }));
-
-    merged.sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
-    setClients(merged);
-  } catch (e) {
-    console.error(e);
-    alert("Error cargando clientes/pedidos.");
-  } finally {
-    setLoading(false);
-  }
-}
-  // Montaje: cargar datos al entrar
   React.useEffect(() => {
-    fetchData();
-  }, []);
+    void fetchData();
+  }, [fetchData]);
 
-  /* Guardar cliente + pedido (form superior) */
   async function onSubmit(values: ClientForm) {
+    if (!tenantId || !branchId) {
+      alert("Seleccioná una sucursal antes de guardar.");
+      return;
+    }
+
     setSaving(true);
     try {
-      // upsert por (name, phone)
-      const { data: client, error: uErr } = await sb
-        .from("clients")
-        .upsert(
-          { name: values.name.trim(), phone: values.phone.trim() },
-          { onConflict: "name,phone" }
-        )
-        .select("*")
-        .single();
-      if (uErr) throw uErr;
+      const trimmedName = values.name.trim();
+      const trimmedPhone = values.phone.trim();
+      const phoneValue = trimmedPhone ? trimmedPhone : null;
 
-      // crear pedido vacío con estado pendiente
+      let finder = sb
+        .from("clients")
+        .select("*")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId)
+        .eq("name", trimmedName)
+        .limit(1);
+
+      finder = phoneValue ? finder.eq("phone", phoneValue) : finder.is("phone", null);
+
+      const { data: existing, error: findErr } = await finder.maybeSingle();
+      if (findErr) throw findErr;
+
+      let clientRow: Client;
+      if (existing) {
+        clientRow = existing as Client;
+      } else {
+        const { data: inserted, error: insertErr } = await sb
+          .from("clients")
+          .insert({
+            name: trimmedName,
+            phone: phoneValue,
+            tenant_id: tenantId,
+            branch_id: branchId,
+          })
+          .select("*")
+          .single();
+        if (insertErr) throw insertErr;
+        clientRow = inserted as Client;
+      }
+
       const { data: order, error: oErr } = await sb
         .from("client_orders")
-        .insert({ client_id: client.id, status: "pendiente" })
+        .insert({
+          client_id: clientRow.id,
+          status: "pendiente",
+          tenant_id: tenantId,
+          branch_id: branchId,
+        })
         .select("*")
         .single();
       if (oErr) throw oErr;
 
-      // insertar ítems del pedido (article @ provider)
       const rows = values.articles.map((raw) => {
         const parsed = parseArticleProvider(raw);
         return {
@@ -364,6 +410,8 @@ export default function ClientsPage() {
           article: parsed.article,
           done: false,
           provider: parsed.provider,
+          tenant_id: tenantId,
+          branch_id: branchId,
         };
       });
 
@@ -372,7 +420,6 @@ export default function ClientsPage() {
         if (oiErr) throw oiErr;
       }
 
-      // reset form y refrescar
       form.reset({ name: "", phone: "", articles: [] });
       await fetchData();
     } catch (e: any) {
@@ -425,16 +472,38 @@ export default function ClientsPage() {
 
   /* 🗑️ Borrar cliente */
   async function deleteClient(clientId: string) {
+    if (!tenantId || !branchId) return;
     const ok = window.confirm(
       "¿Eliminar cliente y TODOS sus pedidos e ítems?\nEsta acción no se puede deshacer."
     );
     if (!ok) return;
-    const { error } = await sb.from("clients").delete().eq("id", clientId);
+    const { error } = await sb
+      .from("clients")
+      .delete()
+      .eq("id", clientId)
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId);
     if (error) {
       alert("No se pudo eliminar el cliente.");
       return;
     }
     await fetchData();
+  }
+
+  if (branchLoading) {
+    return <div className="p-4 text-sm text-gray-600">Cargando sucursales…</div>;
+  }
+
+  if (branchError) {
+    return <div className="p-4 text-sm text-red-600">{branchError}</div>;
+  }
+
+  if (!currentBranch) {
+    return <div className="p-4 text-sm text-gray-600">No hay sucursal seleccionada.</div>;
+  }
+
+  if (!tenantId || !branchId) {
+    return <div className="p-4 text-sm text-gray-600">No hay tenant disponible.</div>;
   }
 
   return (
@@ -557,6 +626,8 @@ export default function ClientsPage() {
             onChange={fetchData}
             onDeleteClient={deleteClient}
             providerList={providerList}
+            tenantId={tenantId}
+            branchId={branchId}
           />
         ))}
       </section>
@@ -572,12 +643,16 @@ function ClientCard({
   onChange,
   onDeleteClient,
   providerList,
+  tenantId,
+  branchId,
 }: {
   client: ClientWithOrders;
   sb: SupabaseClient;
   onChange: () => Promise<void>;
   onDeleteClient: (clientId: string) => Promise<void>;
   providerList: string[];
+  tenantId: string;
+  branchId: string;
 }) {
   const [orderItems, setOrderItems] = React.useState<string[]>([]);
 
@@ -645,14 +720,21 @@ function ClientCard({
     if (!orderItems.length) return;
     const { data: order, error: oErr } = await sb
       .from("client_orders")
-      .insert({ client_id: client.id, status: "pendiente" })
+      .insert({ client_id: client.id, status: "pendiente", tenant_id: tenantId, branch_id: branchId })
       .select("*")
       .single();
     if (oErr) return alert("No se pudo crear el pedido");
 
     const rows = orderItems.map((raw) => {
       const parsed = parseArticleProvider(raw);
-      return { order_id: order.id, article: parsed.article, done: false, provider: parsed.provider };
+      return {
+        order_id: order.id,
+        article: parsed.article,
+        done: false,
+        provider: parsed.provider,
+        tenant_id: tenantId,
+        branch_id: branchId,
+      };
     });
 
     const { error: iErr } = await sb.from("client_order_items").insert(rows);
@@ -762,7 +844,14 @@ function ClientCard({
           <p className="text-xs font-medium">Pedidos</p>
           {client.orders.length === 0 && <p className="text-[11px] text-gray-500">Sin pedidos.</p>}
           {client.orders.map((o) => (
-            <OrderAccordion key={o.id} order={o} sb={sb} onChange={onChange} />
+            <OrderAccordion
+              key={o.id}
+              order={o}
+              sb={sb}
+              onChange={onChange}
+              tenantId={tenantId}
+              branchId={branchId}
+            />
           ))}
         </div>
       </CardContent>
@@ -774,10 +863,14 @@ function OrderAccordion({
   order,
   sb,
   onChange,
+  tenantId,
+  branchId,
 }: {
   order: ClientOrder & { items: ClientOrderItem[]; comments?: ClientOrderComment[] }; // comments opcional
   sb: SupabaseClient;
   onChange: () => Promise<void>;
+  tenantId: string;
+  branchId: string;
 }) {
   const [open, setOpen] = React.useState(false);
 
@@ -808,7 +901,12 @@ function OrderAccordion({
   async function deleteOrder() {
     const ok = window.confirm("¿Eliminar este pedido y todos sus ítems?");
     if (!ok) return;
-    const { error } = await sb.from("client_orders").delete().eq("id", order.id);
+    const { error } = await sb
+      .from("client_orders")
+      .delete()
+      .eq("id", order.id)
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId);
     if (error) {
       alert("No se pudo eliminar el pedido.");
       return;
@@ -827,6 +925,8 @@ function OrderAccordion({
       const { error } = await sb.from("client_order_comments").insert({
         order_id: order.id,
         comment: newComment.trim(),
+        tenant_id: tenantId,
+        branch_id: branchId,
       });
       if (error) {
         alert("No se pudo guardar el comentario");
@@ -840,7 +940,12 @@ function OrderAccordion({
   }
 
   async function deleteComment(commentId: string) {
-    const { error } = await sb.from("client_order_comments").delete().eq("id", commentId);
+    const { error } = await sb
+      .from("client_order_comments")
+      .delete()
+      .eq("id", commentId)
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId);
     if (error) {
       alert("No se pudo borrar el comentario");
       return;
@@ -886,7 +991,7 @@ function OrderAccordion({
 
       <div className="p-2 border-t border-transparent space-y-3">
         <OrderStatusSelector order={order} sb={sb} onChange={onChange} />
-        <OrderItemsList order={order} sb={sb} onChange={onChange} />
+        <OrderItemsList order={order} sb={sb} onChange={onChange} tenantId={tenantId} branchId={branchId} />
 
         {/* === Comentarios === */}
         <div className="space-y-2">
@@ -981,10 +1086,14 @@ function OrderItemsList({
   order,
   sb,
   onChange,
+  tenantId,
+  branchId,
 }: {
   order: ClientOrder & { items: ClientOrderItem[] };
   sb: SupabaseClient;
   onChange: () => Promise<void>;
+  tenantId: string;
+  branchId: string;
 }) {
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editingText, setEditingText] = React.useState("");
@@ -1048,6 +1157,8 @@ function OrderItemsList({
         article: parsed.article,
         done: false,
         provider: parsed.provider,
+        tenant_id: tenantId,
+        branch_id: branchId,
       };
     });
     const { error } = await sb.from("client_order_items").insert(rows);

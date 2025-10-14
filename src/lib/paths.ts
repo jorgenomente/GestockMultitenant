@@ -12,7 +12,7 @@ export const paths = {
   // Módulos por sucursal (1 sola page dinámica sirve para todas las sucursales)
   dashboard: (tenant: string, branch: string) => `/t/${tenant}/b/${branch}`,
   stock:     (tenant: string, branch: string) => `/t/${tenant}/b/${branch}/stock`,
-  orders:    (tenant: string, branch: string) => `/t/${tenant}/b/${branch}/orders`,
+  stats:     (tenant: string, branch: string) => `/t/${tenant}/b/${branch}/stats`,
   priceSearch:(tenant: string, branch: string) => `/t/${tenant}/b/${branch}/price-search`,
   invoices:  (tenant: string, branch: string) => `/t/${tenant}/b/${branch}/invoices`,
   payments:  (tenant: string, branch: string) => `/t/${tenant}/b/${branch}/payments`,

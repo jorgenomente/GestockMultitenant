@@ -12,7 +12,7 @@ type Role = "owner" | "admin" | "staff";
 type TenantRow = { slug: string };
 type MembershipRow = { tenant_id: string; role: Role };
 
-const ROLE_PRIORITY: Role[] = ["owner", "admin", "staff"];
+const ROLE_PRIORITY: Role[] = ["owner"];
 
 function pickPreferredMembership(rows: (Partial<MembershipRow> | null | undefined)[] | null | undefined) {
   if (!rows?.length) return null;
@@ -20,6 +20,7 @@ function pickPreferredMembership(rows: (Partial<MembershipRow> | null | undefine
   const valid = rows.filter((row): row is MembershipRow => {
     if (!row?.tenant_id) return false;
     if (!row.role) return false;
+    if (!ROLE_PRIORITY.includes(row.role)) return false;
     return true;
   });
 
@@ -39,13 +40,13 @@ export default async function AdminRedirect() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login?next=/admin");
 
-  // 2) Membership (prioriza owner/admin)
+  // 2) Membership (solo owner)
   const fetchMembership = async (client: Awaited<ReturnType<typeof getSupabaseUserServerClient>>) => {
     return client
       .from("memberships")
       .select("tenant_id, role")
       .eq("user_id", user.id)
-      .in("role", ["owner", "admin"] satisfies Role[])
+      .eq("role", "owner")
       .returns<MembershipRow[]>();
   };
 

@@ -70,7 +70,7 @@ export default async function BranchDashboard({
 
       <section className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <CardKpi label="Productos" value={prodCount ?? 0} href={paths.stock(tenant.slug, branch.slug)} />
-        <CardKpi label="Órdenes" value={orderCount ?? 0} href={paths.orders(tenant.slug, branch.slug)} />
+        <CardKpi label="Estadísticas" value={orderCount ?? 0} href={paths.stats(tenant.slug, branch.slug)} />
         <CardKpi label="Price Search" value="ir" href={paths.priceSearch(tenant.slug, branch.slug)} />
       </section>
 
@@ -78,7 +78,7 @@ export default async function BranchDashboard({
         <h2 className="font-medium">Accesos rápidos</h2>
         <nav className="flex flex-wrap gap-2">
           <QuickLink href={paths.stock(tenant.slug, branch.slug)}>Stock</QuickLink>
-          <QuickLink href={paths.orders(tenant.slug, branch.slug)}>Pedidos</QuickLink>
+          <QuickLink href={paths.stats(tenant.slug, branch.slug)}>Estadísticas</QuickLink>
           <QuickLink href={paths.invoices(tenant.slug, branch.slug)}>Facturas</QuickLink>
           <QuickLink href={paths.payments(tenant.slug, branch.slug)}>Pagos</QuickLink>
           <QuickLink href={paths.tasks(tenant.slug, branch.slug)}>Tareas</QuickLink>

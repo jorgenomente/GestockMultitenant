@@ -63,6 +63,16 @@ const TABLE_UI_STATE = "order_ui_state";
 const PENDING_PREFIX = "tmp_";
 const GROUP_PLACEHOLDER = "__group__placeholder__";
 
+const isMissingProviderError = (error: unknown) => {
+  if (!error || typeof error !== "object") return false;
+  const code = typeof (error as any).code === "string" ? (error as any).code : "";
+  const message = typeof (error as any).message === "string" ? (error as any).message.toLowerCase() : "";
+  if (!message) return false;
+  if (message.includes("proveedor") && message.includes("no existe")) return true;
+  if (message.includes("provider") && message.includes("does not exist")) return true;
+  return code === "P0001" && message.includes("proveedor");
+};
+
 /* ---------- Subcomponente: Stepper ---------- */
 type StepperProps = { value: number; onChange: (n: number) => void; min?: number; step?: number; };
 
@@ -423,11 +433,44 @@ const auto = useDragAutoscroll({
 
 /** NUEVO: tipos para settings de la app */
 type SalesPersistMeta = {
-  url: string;
+  url?: string;
+  base64?: string;
+  mime_type?: string;
   filename?: string;
   uploaded_at?: string;
   tenant_id?: string | null;
   branch_id?: string | null;
+  scope_key?: string;
+};
+
+const SALES_KEY_ROOT = "sales_url";
+const salesKeyForScope = (tenantId?: string | null, branchId?: string | null) => {
+  const tid = tenantId?.trim() || "";
+  const bid = branchId?.trim() || "";
+  if (tid && bid) return `${SALES_KEY_ROOT}:${tid}:${bid}`;
+  if (tid) return `${SALES_KEY_ROOT}:${tid}`;
+  return SALES_KEY_ROOT;
+};
+const salesKeysForLookup = (tenantId?: string | null, branchId?: string | null) => {
+  const keys: string[] = [];
+  if (tenantId && branchId) keys.push(salesKeyForScope(tenantId, branchId));
+  if (tenantId) keys.push(salesKeyForScope(tenantId, null));
+  keys.push(SALES_KEY_ROOT);
+  return Array.from(new Set(keys));
+};
+
+const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+};
+const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i += 1) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
 };
 
 /** ==== Format helpers (mostrar fechas “date-only” guardadas en UTC) ==== */
@@ -498,23 +541,46 @@ async function loadSalesFromURL(url: string): Promise<SalesRow[]> {
   return parseSalesArrayBuffer(ab);
 }
 
-/** NUEVO: lee en DB la URL activa de ventas (o retorna fallback) */
-async function getActiveSalesURL(supabase: ReturnType<typeof getSupabaseBrowserClient>): Promise<SalesPersistMeta> {
-  const { data, error } = await supabase
-    .from(TABLE_SETTINGS)
-    .select('value')
-    .eq('key', 'sales_url')
-    .maybeSingle();
-
-  if (error) {
-    if (error.message && !['PGRST302', '42P01'].includes(error.code ?? '')) {
-      console.warn('getActiveSalesURL warning', error);
-    }
-    return { url: VENTAS_URL, tenant_id: null, branch_id: null };
+async function loadSalesFromMeta(meta: SalesPersistMeta): Promise<SalesRow[]> {
+  if (meta.base64) {
+    const buffer = base64ToArrayBuffer(meta.base64);
+    return parseSalesArrayBuffer(buffer);
   }
-  const meta = (data?.value as SalesPersistMeta | undefined);
-  if (meta?.url) return meta;
-  return { url: VENTAS_URL, tenant_id: null, branch_id: null };
+  if (meta.url) return loadSalesFromURL(meta.url);
+  return loadSalesFromURL(VENTAS_URL);
+}
+
+/** NUEVO: lee en DB la URL activa de ventas (scoped por tenant/branch, fallback) */
+async function getActiveSalesMeta(
+  supabase: ReturnType<typeof getSupabaseBrowserClient>,
+  tenantId?: string | null,
+  branchId?: string | null,
+): Promise<SalesPersistMeta> {
+  const keys = salesKeysForLookup(tenantId ?? null, branchId ?? null);
+  for (const key of keys) {
+    try {
+      const { data, error } = await supabase
+        .from(TABLE_SETTINGS)
+        .select('value')
+        .eq('key', key)
+        .maybeSingle();
+      if (error) {
+        const code = error.code ?? "";
+        if (code === 'PGRST302') continue; // not found
+        if (code === '42P01') break;       // table missing -> fallback default
+        if (error.message) console.warn('getActiveSalesMeta warning', error);
+        continue;
+      }
+      const raw = data?.value as SalesPersistMeta | undefined;
+      if (raw && (raw.url || raw.base64)) {
+        return { ...raw, tenant_id: tenantId ?? null, branch_id: branchId ?? null, scope_key: key };
+      }
+    } catch (err) {
+      console.warn('getActiveSalesMeta exception', err);
+      break;
+    }
+  }
+  return { url: VENTAS_URL, tenant_id: tenantId ?? null, branch_id: branchId ?? null, scope_key: SALES_KEY_ROOT };
 }
 
 function computeStats(sales: SalesRow[], product: string, now = Date.now()): Stats {
@@ -541,6 +607,13 @@ function latestDateForProduct(sales: SalesRow[], product: string): number {
   return rows.reduce((max, r) => (r.date > max ? r.date : max), rows[0].date);
 }
 
+const normalizeSearchParam = (value: string | null) => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "null" || trimmed === "undefined") return null;
+  return trimmed;
+};
+
 /* =================== Página =================== */
 export default function ProviderOrderPage() {
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
@@ -555,11 +628,12 @@ export default function ProviderOrderPage() {
   const provId = String(params?.provId || "");
   const search = useSearchParams();
   const selectedWeekId = search.get("week");
-  const tenantIdFromQuery = search.get("tenantId");
-  const branchIdFromQuery = search.get("branchId");
+  const tenantIdFromQuery = normalizeSearchParam(search.get("tenantId"));
+  const branchIdFromQuery = normalizeSearchParam(search.get("branchId"));
+  const providerNameFromQuery = normalizeSearchParam(search.get("name"));
 
   const [providerNameOverride, setProviderNameOverride] = React.useState<string | null>(null);
-  const providerName = search.get("name") || providerNameOverride || "Proveedor";
+  const providerName = providerNameFromQuery || providerNameOverride || "Proveedor";
 
   const [contextIds, setContextIds] = React.useState<{ tenantId: string | null; branchId: string | null }>({
     tenantId: tenantIdFromQuery,
@@ -646,13 +720,13 @@ const rootStyle: React.CSSProperties = {
     let mounted = true;
     (async () => {
       try {
-        const meta = await getActiveSalesURL(supabase);
-        const rows = await loadSalesFromURL(meta.url);
+        const meta = await getActiveSalesMeta(supabase, tenantId ?? null, branchId ?? null);
+        const rows = await loadSalesFromMeta(meta);
         if (!mounted) return;
         setSales(rows);
         setSalesMeta({
-          source: meta.url === VENTAS_URL ? "default" : "imported",
-          label: meta.filename || (meta.url === VENTAS_URL ? "ventas.xlsx" : "archivo importado"),
+          source: meta.url === VENTAS_URL && !meta.base64 ? "default" : "imported",
+          label: meta.filename || (meta.url === VENTAS_URL && !meta.base64 ? "ventas.xlsx" : "archivo importado"),
         });
       } catch (e) {
         console.error("load active sales error", e);
@@ -661,7 +735,7 @@ const rootStyle: React.CSSProperties = {
     })();
 
     return () => { mounted = false; };
-  }, [supabase]);
+  }, [supabase, tenantId, branchId]);
 
   // crear/obtener pedido PENDIENTE + cargar ítems
 
@@ -716,6 +790,10 @@ React.useEffect(() => {
           break;
         }
         if (error) {
+          if (isMissingProviderError(error)) {
+            skipTable = true;
+            break;
+          }
           ordersError = error;
           break;
         }
@@ -772,6 +850,10 @@ React.useEffect(() => {
             break;
           }
           if (error) {
+            if (isMissingProviderError(error)) {
+              skipTableInsert = true;
+              break;
+            }
             ordersError = error;
             break;
           }
@@ -917,7 +999,6 @@ React.useEffect(() => {
   })();
   return () => { mounted = false; };
 }, [supabase, provId, providerName, tenantId, branchId, ordersTable, itemsTable]);
-
 
 
   // Realtime (escucha cambios en items)
@@ -1924,7 +2005,6 @@ async function handleExport() {
   async function handleImportSales(file: File) {
     setImportingSales(true);
     try {
-      // 1) Subir a Storage
       const ts  = Date.now();
       const safeName = file.name.replace(/[^\w.\-]+/g, "_");
       const path = `${STORAGE_DIR_SALES}/sales_${ts}__${safeName}`;
@@ -1937,28 +2017,51 @@ async function handleExport() {
           upsert: false,
           contentType: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         });
-      if (upErr) throw upErr;
 
-      // 2) URL pública
-      const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-      const url = pub.publicUrl;
+      let payload: SalesPersistMeta;
+      if (upErr) {
+        const statusCode = typeof upErr.statusCode === "number" ? upErr.statusCode : (typeof (upErr as any)?.status === "number" ? (upErr as any).status : undefined);
+        const isNotFound = statusCode === 404;
+        const mentionsBucket = typeof upErr.message === "string" && upErr.message.toLowerCase().includes("bucket");
+        if (!isNotFound && !mentionsBucket) throw upErr;
 
-      // 3) Guardar como fuente activa
-      const payload: SalesPersistMeta = {
-        url,
-        filename: file.name,
-        uploaded_at: new Date().toISOString(),
-      };
+        const buffer = await file.arrayBuffer();
+        payload = {
+          base64: arrayBufferToBase64(buffer),
+          mime_type: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          filename: file.name,
+          uploaded_at: new Date().toISOString(),
+          tenant_id: tenantId ?? null,
+          branch_id: branchId ?? null,
+        };
+      } else {
+        const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+        const url = pub.publicUrl;
+        payload = {
+          url,
+          filename: file.name,
+          uploaded_at: new Date().toISOString(),
+          tenant_id: tenantId ?? null,
+          branch_id: branchId ?? null,
+        };
+      }
+
+      const salesKey = salesKeyForScope(tenantId ?? null, branchId ?? null);
+      payload.scope_key = salesKey;
       const { error: setErr } = await supabase
         .from(TABLE_SETTINGS)
-        .upsert({ key: "sales_url", value: payload }, { onConflict: "key" });
+        .upsert({ key: salesKey, value: payload }, { onConflict: "key" });
       if (setErr) throw setErr;
 
-      // 4) Recargar ventas desde la nueva URL
-      const rows = await loadSalesFromURL(url);
+      const usedInlineStorage = Boolean(payload.base64);
+      const rows = await loadSalesFromMeta(payload);
       setSales(rows);
       setSalesMeta({ source: "imported", label: file.name || "archivo importado" });
-      alert("Ventas actualizadas desde el archivo importado ✅");
+      alert(
+        usedInlineStorage
+          ? "Ventas importadas y guardadas localmente (no se encontró el bucket de Storage). ✅"
+          : "Ventas actualizadas desde el archivo importado ✅"
+      );
     } catch (e: any) {
       console.error("handleImportSales error", e);
       alert(`No se pudo importar el archivo de ventas.\n${e?.message ?? ""}`);
@@ -1970,7 +2073,8 @@ async function handleExport() {
 
   async function resetSalesSource() {
     try {
-      await supabase.from(TABLE_SETTINGS).delete().eq("key", "sales_url");
+      const salesKey = salesKeyForScope(tenantId ?? null, branchId ?? null);
+      await supabase.from(TABLE_SETTINGS).delete().eq("key", salesKey);
       const rows = await loadSalesFromURL(VENTAS_URL);
       setSales(rows);
       setSalesMeta({ source: "default", label: "ventas.xlsx" });

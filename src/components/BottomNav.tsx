@@ -91,7 +91,7 @@ export default function BottomNav() {
       icon: BarChart,
       requiresBranch: true,
       buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
-        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/orders` : null,
+        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/stats` : null,
     },
     {
       label: "Stock",
