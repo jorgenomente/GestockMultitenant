@@ -2,6 +2,7 @@
 
 import React, { Suspense } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { useBranch } from "@/components/branch/BranchProvider";
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
@@ -28,8 +29,6 @@ import {
   History as HistoryIcon,
   CalendarPlus,
   Trash2,
-  ChevronLeft,
-  ChevronRight,
   CalendarDays,
   Truck,
   Check,
@@ -81,6 +80,14 @@ type SnapshotProvider = {
 };
 
 /* ====== Snapshots (Historial) ====== */
+type SnapshotPayload = {
+  totalsByFreq?: Record<Freq, number> | null;
+  totalsByMethod?: { EFECTIVO?: number; TRANSFER?: number } | null;
+  totalSemana?: number | null;
+  diferencia?: number | null;
+  providersByFreq?: Record<Freq, SnapshotProvider[]> | null;
+};
+
 type BudgetSnapshot = {
   id: string;
   weekStart: string;
@@ -100,7 +107,7 @@ function snapshotTitle(h: BudgetSnapshot) {
 }
 
 /* =================== Constantes =================== */
-const CACHE_KEY = "gestock:proveedores_cache:v4";
+const CACHE_KEY_PREFIX = "gestock:proveedores_cache:v5";
 const TABLE_PROVIDERS = "providers";
 const TABLE_SUMMARIES = "order_summaries";
 const TABLE_SUMMARIES_WEEK = "order_summaries_week";
@@ -113,7 +120,7 @@ const TABLE_SNAPS = "budget_snapshots";
 /* === Semana + inclusión (desde Proveedores) === */
 const TABLE_PW_WEEKS = "provider_weeks";               // semanas “fuente”
 const TABLE_PW_INCLUDED = "provider_week_providers";   // inclusión por semana
-const WEEK_CACHE_KEY = "gestock:proveedores:selected_week"; // pista local (no bloqueante)
+const WEEK_CACHE_KEY_PREFIX = "gestock:proveedores:selected_week"; // pista local (no bloqueante)
 
 type PWWeekRow = { id: string; week_start: string; label?: string | null };
 type PWIncludedRow = { id: string; week_id: string; provider_id: string; added_at: string | null };
@@ -135,7 +142,7 @@ type SnapshotRow = {
   week_end: string;
   label: string | null;
   budget_cap: number;
-  payload: any;
+  payload: SnapshotPayload | null;
   created_at: string;
 };
 
@@ -249,14 +256,13 @@ const [weekOptions, setWeekOptions] = React.useState<PWWeekRow[]>([]);
     const sunday = addDays(monday, 6);
     return { weekStart: monday.toISOString(), weekEnd: sunday.toISOString() };
   });
-  const [mounted, setMounted] = React.useState(false);
-
   /* Fila de semana de trabajo (para persistir overrides si hace falta) — fija al cargar */
   const [weekRow, setWeekRow] = React.useState<WeekRow | null>(null);
 
   /* Presupuesto */
   const [budget, setBudget] = React.useState<number>(0);
   const [budgetInput, setBudgetInput] = React.useState<string>("0");
+  const [persistedBudget, setPersistedBudget] = React.useState<number>(0);
 
   /* Datos y overrides */
   const [data, setData] = React.useState<BudgetProvider[]>([]);
@@ -279,26 +285,46 @@ const [weekOptions, setWeekOptions] = React.useState<PWWeekRow[]>([]);
   const [includedIds, setIncludedIds] = React.useState<Set<string>>(new Set());
   const [includedLoading, setIncludedLoading] = React.useState(true);
 
-  React.useEffect(() => setMounted(true), []);
+  const { currentBranch, tenantId, loading: branchLoading, error: branchError } = useBranch();
+  const branchId = currentBranch?.id ?? null;
 
-  function shiftWeek(delta: number) {
-    // Sólo cambia etiqueta visual
-    const start = week.weekStart ? new Date(week.weekStart) : startOfMonday(new Date());
-    const end = week.weekEnd ? new Date(week.weekEnd) : addDays(start, 6);
-    const nextStart = addDays(start, 7 * delta);
-    const nextEnd = addDays(end, 7 * delta);
-    const meta = { weekStart: nextStart.toISOString(), weekEnd: nextEnd.toISOString() };
-    setWeek(meta);
-  }
+  const cacheKey = React.useMemo(
+    () => `${CACHE_KEY_PREFIX}:${tenantId ?? "-"}:${branchId ?? "-"}`,
+    [tenantId, branchId]
+  );
+  const weekCacheKey = React.useMemo(
+    () => `${WEEK_CACHE_KEY_PREFIX}:${tenantId ?? "-"}:${branchId ?? "-"}`,
+    [tenantId, branchId]
+  );
+
+  React.useEffect(() => {
+    setWeekOptions([]);
+    setWeekRow(null);
+    setBudget(0);
+    setBudgetInput("0");
+    setPersistedBudget(0);
+    setData([]);
+    setOverrides({});
+    setHistory([]);
+    setDirty(false);
+    setSaveState("idle");
+    setActiveWeekId(null);
+    setIncludedIds(new Set());
+    setLoading(true);
+    setIncludedLoading(true);
+  }, [cacheKey]);
 
   /* ===== Helpers Supabase ===== */
-  async function ensureWeekRow(meta: WeekMeta) {
+  const ensureWeekRow = React.useCallback(async (meta: WeekMeta) => {
+    if (!tenantId || !branchId) throw new Error("Falta la sucursal actual");
     const ws = toDateStr(meta.weekStart);
     const we = toDateStr(meta.weekEnd);
 
     const { data: found, error: e1 } = await supabase
       .from(TABLE_WEEKS)
       .select("*")
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId)
       .eq("week_start", ws)
       .eq("week_end", we)
       .maybeSingle();
@@ -309,25 +335,36 @@ const [weekOptions, setWeekOptions] = React.useState<PWWeekRow[]>([]);
     const label = `Semana ${getISOWeekFromISO(meta.weekStart)} · ${formatAR(meta.weekStart)}–${formatAR(meta.weekEnd)}`;
     const { data: inserted, error: e2 } = await supabase
       .from(TABLE_WEEKS)
-      .insert([{ week_start: ws, week_end: we, label, budget_cap: 10_000_000 }])
+      .insert([{ week_start: ws, week_end: we, label, budget_cap: 10_000_000, tenant_id: tenantId, branch_id: branchId }])
       .select("*")
       .single();
 
     if (e2) throw e2;
     return inserted as WeekRow;
-  }
+  }, [supabase, tenantId, branchId]);
 
   async function upsertOverride(weekId: string, providerId: string, ov: { amount: number; enabled: boolean }) {
+    if (!tenantId || !branchId) return;
     await supabase.from(TABLE_OVERRIDES).upsert(
-      { week_id: weekId, provider_id: providerId, amount: ov.amount || 0, enabled: !!ov.enabled },
+      {
+        week_id: weekId,
+        provider_id: providerId,
+        amount: ov.amount || 0,
+        enabled: !!ov.enabled,
+        tenant_id: tenantId,
+        branch_id: branchId,
+      },
       { onConflict: "week_id,provider_id" }
     );
   }
 
-  async function fetchHistory() {
+  const fetchHistory = React.useCallback(async () => {
+    if (!tenantId || !branchId) return;
     const { data, error } = await supabase
       .from(TABLE_SNAPS)
       .select("*")
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -336,55 +373,112 @@ const [weekOptions, setWeekOptions] = React.useState<PWWeekRow[]>([]);
     }
 
     const list: BudgetSnapshot[] = (data as SnapshotRow[]).map((r) => {
-      const p = r.payload || {};
+      const payload = r.payload || {};
+      const byFreq: Record<Freq, number> = { SEMANAL: 0, QUINCENAL: 0, MENSUAL: 0 };
+      ORDER.forEach((freq) => {
+        byFreq[freq] = Number(payload.totalsByFreq?.[freq] ?? 0);
+      });
+
+      const totalsByMethod = {
+        EFECTIVO: Number(payload.totalsByMethod?.EFECTIVO ?? 0),
+        TRANSFER: Number(payload.totalsByMethod?.TRANSFER ?? 0),
+      };
+
+      const providersByFreq = payload.providersByFreq
+        ? (Object.fromEntries(
+            ORDER.map((freq) => [freq, payload.providersByFreq?.[freq] ?? []])
+          ) as Record<Freq, SnapshotProvider[]>)
+        : undefined;
+
       return {
         id: r.id,
         weekStart: new Date(r.week_start).toISOString(),
         weekEnd: new Date(r.week_end).toISOString(),
         label: r.label ?? undefined,
         budgetCap: Number(r.budget_cap) || 0,
-        totalsByFreq: p.totalsByFreq ?? { SEMANAL: 0, QUINCENAL: 0, MENSUAL: 0 },
-        totalsByMethod: p.totalsByMethod ?? { EFECTIVO: 0, TRANSFER: 0 },
-        totalSemana: p.totalSemana ?? 0,
-        diferencia: p.diferencia ?? 0,
-        providersByFreq: p.providersByFreq ?? undefined,
+        totalsByFreq: byFreq,
+        totalsByMethod,
+        totalSemana: Number(payload.totalSemana ?? 0),
+        diferencia: Number(payload.diferencia ?? 0),
+        providersByFreq,
         createdAt: r.created_at,
       };
     });
 
     setHistory(list);
-  }
+  }, [supabase, tenantId, branchId]);
 // Cargar opciones de semanas (provider_weeks)
 React.useEffect(() => {
+  if (!tenantId || !branchId) return;
+  let alive = true;
   (async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from(TABLE_PW_WEEKS)
       .select("id, week_start, label")
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId)
       .order("week_start", { ascending: false })
       .limit(52);
-    const list = (data as PWWeekRow[]) || [];
+    if (!alive) return;
+    if (error) {
+      console.warn("[presupuesto] provider_weeks:", error.message);
+      setWeekOptions([]);
+      return;
+    }
+    const list = (data as PWWeekRow[] | null) ?? [];
     setWeekOptions(list);
-    if (!urlWeekId && list[0]?.id) setActiveWeekId(list[0].id);
   })();
-}, [supabase]);
+  return () => { alive = false; };
+}, [supabase, tenantId, branchId]);
+
+// Si no hay week en la URL, usar la cache/local o la primera disponible
+React.useEffect(() => {
+  if (!tenantId || !branchId) return;
+  if (urlWeekId) return;
+  if (!weekOptions.length) {
+    if (activeWeekId !== null) setActiveWeekId(null);
+    return;
+  }
+  if (activeWeekId && weekOptions.some((w) => w.id === activeWeekId)) return;
+
+  let stored: string | null = null;
+  if (typeof window !== "undefined") stored = window.localStorage.getItem(weekCacheKey);
+  const fallback = stored && weekOptions.some((w) => w.id === stored)
+    ? stored
+    : weekOptions[0]?.id ?? null;
+
+  if (fallback && fallback !== activeWeekId) setActiveWeekId(fallback);
+}, [tenantId, branchId, weekOptions, weekCacheKey, urlWeekId, activeWeekId]);
 
 // Si viene ?week= en la URL, tomarlo como activo y guardarlo en local
 React.useEffect(() => {
-  if (urlWeekId) {
-    setActiveWeekId(urlWeekId);
-    if (typeof window !== "undefined") localStorage.setItem(WEEK_CACHE_KEY, urlWeekId);
+  if (!urlWeekId) return;
+  if (!tenantId || !branchId) return;
+  setActiveWeekId(urlWeekId);
+  if (typeof window !== "undefined") localStorage.setItem(weekCacheKey, urlWeekId);
+}, [urlWeekId, tenantId, branchId, weekCacheKey]);
+
+React.useEffect(() => {
+  if (!tenantId || !branchId) return;
+  if (typeof window === "undefined") return;
+  if (activeWeekId) {
+    window.localStorage.setItem(weekCacheKey, activeWeekId);
+  } else {
+    window.localStorage.removeItem(weekCacheKey);
   }
-}, [urlWeekId]);
+}, [activeWeekId, tenantId, branchId, weekCacheKey]);
 
 // Al cambiar la semana activa: sincronizar rango visual + budget_week
 React.useEffect(() => {
   let alive = true;
   (async () => {
-    if (!activeWeekId) return;
+    if (!activeWeekId || !tenantId || !branchId) return;
     const { data, error } = await supabase
       .from(TABLE_PW_WEEKS)
       .select("week_start")
       .eq("id", activeWeekId)
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId)
       .maybeSingle();
     if (error || !data) return;
 
@@ -401,19 +495,30 @@ React.useEffect(() => {
       setWeekRow(row);
       setBudget(row.budget_cap || 0);
       setBudgetInput((row.budget_cap || 0).toLocaleString("es-AR"));
-    } catch {}
+      setPersistedBudget(row.budget_cap || 0);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[presupuesto] ensureWeekRow (active):", message);
+    }
   })();
   return () => { alive = false; };
-}, [activeWeekId, supabase]);
+}, [activeWeekId, supabase, tenantId, branchId, ensureWeekRow]);
 
   /* ===== Cargar proveedores y montos ===== */
   React.useEffect(() => {
     let alive = true;
     (async () => {
+      if (!tenantId || !branchId) {
+        if (alive) {
+          setData([]);
+          setLoading(false);
+        }
+        return;
+      }
       try {
         // cache local para render rápido
         if (typeof window !== "undefined") {
-          const raw = localStorage.getItem(CACHE_KEY);
+          const raw = localStorage.getItem(cacheKey);
           if (raw) {
             const cached = JSON.parse(raw) as ProviderCache[];
             const mapped: BudgetProvider[] = cached.map((p) => ({
@@ -435,6 +540,8 @@ React.useEffect(() => {
         const { data: prov, error: e1 } = await supabase
           .from(TABLE_PROVIDERS)
           .select("id,name,freq,status,payment_method,responsible,order_day,receive_day")
+          .eq("tenant_id", tenantId)
+          .eq("branch_id", branchId)
           .order("name", { ascending: true });
 
         if (e1) throw e1;
@@ -445,13 +552,17 @@ if (activeWeekId) {
   const { data, error } = await supabase
     .from(TABLE_SUMMARIES_WEEK)
     .select("provider_id,total")
-    .eq("week_id", activeWeekId);
+    .eq("week_id", activeWeekId)
+    .eq("tenant_id", tenantId)
+    .eq("branch_id", branchId);
   if (error) console.warn("[presupuesto] order_summaries_week:", error.message);
   sums = (data as OrderSummary[] | null) ?? null;
 } else {
   const { data, error } = await supabase
     .from(TABLE_SUMMARIES)
-    .select("provider_id,total");
+    .select("provider_id,total")
+    .eq("tenant_id", tenantId)
+    .eq("branch_id", branchId);
   if (error) console.warn("[presupuesto] order_summaries:", error.message);
   sums = (data as OrderSummary[] | null) ?? null;
 }
@@ -462,12 +573,13 @@ const mapSum = new Map<string, number>();
 });
 
 
-        const mapped: BudgetProvider[] = (prov as any[]).map((p) => ({
+        const provRows = (prov as ProviderCache[] | null) ?? [];
+        const mapped: BudgetProvider[] = provRows.map((p) => ({
           id: p.id,
           name: p.name,
           freq: p.freq as Freq,
           status: p.status as Status,
-          payment: normPayment(p.payment_method as any),
+          payment: normPayment(p.payment_method ?? null),
           amount: mapSum.get(p.id) ?? 0,
           responsible: p.responsible ?? null,
           order_day: typeof p.order_day === "number" ? p.order_day : null,
@@ -484,16 +596,25 @@ const mapSum = new Map<string, number>();
           prev.forEach((old) => {
             if (!merged.find((m) => m.id === old.id)) merged.push(old);
           });
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem(cacheKey, JSON.stringify(merged));
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              console.warn("[presupuesto] cache save:", message);
+            }
+          }
           return merged;
         });
-      } catch (e) {
-        console.warn("[presupuesto] proveedores:", (e as any)?.message);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[presupuesto] proveedores:", message);
       } finally {
         if (alive) setLoading(false);
       }
     })();
     return () => { alive = false; };
-}, [supabase, activeWeekId]);
+  }, [supabase, activeWeekId, tenantId, branchId, cacheKey]);
 
 
   /* ===== Included IDs por semana ACTIVA (cross-device) ===== */
@@ -502,25 +623,31 @@ const mapSum = new Map<string, number>();
     (async () => {
       setIncludedLoading(true);
       try {
-        if (!activeWeekId) { if (!cancelled) setIncludedIds(new Set()); return; }
+        if (!activeWeekId || !tenantId || !branchId) {
+          if (!cancelled) setIncludedIds(new Set());
+          return;
+        }
 
         const { data, error } = await supabase
           .from(TABLE_PW_INCLUDED)
           .select("provider_id")
-          .eq("week_id", activeWeekId);
+          .eq("week_id", activeWeekId)
+          .eq("tenant_id", tenantId)
+          .eq("branch_id", branchId);
 
         if (error) throw error;
         const set = new Set<string>((data as PWIncludedRow[]).map(r => r.provider_id));
         if (!cancelled) setIncludedIds(set);
-      } catch (e) {
-        console.warn("[presupuesto] included providers:", (e as any)?.message);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[presupuesto] included providers:", message);
         if (!cancelled) setIncludedIds(new Set());
       } finally {
         if (!cancelled) setIncludedLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [activeWeekId, supabase]);
+  }, [activeWeekId, supabase, tenantId, branchId]);
 
   /* ===== Helpers de cálculo ===== */
   const amountFor = React.useCallback(
@@ -575,19 +702,45 @@ const mapSum = new Map<string, number>();
 
   /* ===== Presupuesto (editable con check) ===== */
   function handleBudgetChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setBudgetInput(e.target.value);
+    const raw = e.target.value;
+    const digits = raw.replace(/[^\d]/g, "");
+    if (!digits) {
+      setBudget(0);
+      setBudgetInput("");
+    } else {
+      const n = Number(digits);
+      setBudget(n);
+      setBudgetInput(n.toLocaleString("es-AR"));
+    }
     markDirty();
   }
   function handleBudgetBlur() {
     const n = parseMoney(budgetInput);
-    setBudgetInput(n.toLocaleString("es-AR"));
-  }
-  async function handleBudgetSave() {
-    const n = parseMoney(budgetInput);
     setBudget(n);
-    setBudgetInput(n.toLocaleString("es-AR"));
-    if (!weekRow) return;
-    await supabase.from(TABLE_WEEKS).update({ budget_cap: n, updated_at: new Date().toISOString() }).eq("id", weekRow.id);
+    setBudgetInput(n ? n.toLocaleString("es-AR") : "0");
+    if (n !== persistedBudget) {
+      handleBudgetSave(n).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[presupuesto] budget save (blur):", message);
+      });
+    }
+  }
+  async function handleBudgetSave(nextValue?: number) {
+    const n = typeof nextValue === "number" ? nextValue : parseMoney(budgetInput);
+    setBudget(n);
+    setBudgetInput(n ? n.toLocaleString("es-AR") : "0");
+    if (n === persistedBudget) return;
+    if (!weekRow || !tenantId || !branchId) return;
+    const updatedAt = new Date().toISOString();
+    const { error } = await supabase
+      .from(TABLE_WEEKS)
+      .update({ budget_cap: n, updated_at: updatedAt })
+      .eq("id", weekRow.id)
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId);
+    if (error) throw error;
+    setPersistedBudget(n);
+    setWeekRow((prev) => (prev ? { ...prev, budget_cap: n, updated_at: updatedAt } : prev));
   }
 
   /* ===== Guardar snapshot (botón Guardar) ===== */
@@ -621,6 +774,7 @@ const mapSum = new Map<string, number>();
 
   async function saveSnapshot() {
     if (!week.weekStart || !week.weekEnd) return;
+    if (!tenantId || !branchId) return;
     setSaveState("saving");
     const weekNo = getISOWeekFromISO(week.weekStart);
     const label = `Semana ${weekNo} · ${formatAR(week.weekStart)}–${formatAR(week.weekEnd)}`;
@@ -632,6 +786,8 @@ const mapSum = new Map<string, number>();
       label,
       budget_cap: budget,
       payload,
+      tenant_id: tenantId,
+      branch_id: branchId,
     }]);
 
     if (historyOpen) fetchHistory();
@@ -655,6 +811,7 @@ const mapSum = new Map<string, number>();
     setWeek({ weekStart: new Date(h.weekStart).toISOString(), weekEnd: new Date(h.weekEnd).toISOString() });
     setBudget(h.budgetCap || 0);
     setBudgetInput((h.budgetCap || 0).toLocaleString("es-AR"));
+    setPersistedBudget(h.budgetCap || 0);
     const ov = buildOverridesFromSnapshot(h);
     setOverrides(ov);
     setDirty(false);
@@ -662,8 +819,9 @@ const mapSum = new Map<string, number>();
     try {
       const row = await ensureWeekRow({ weekStart: h.weekStart, weekEnd: h.weekEnd });
       setWeekRow(row);
-    } catch (e) {
-      console.warn("[presupuesto] openSnapshot ensureWeekRow:", (e as any)?.message);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[presupuesto] openSnapshot ensureWeekRow:", message);
     }
     setHistoryOpen(false);
   }
@@ -679,12 +837,17 @@ const mapSum = new Map<string, number>();
   /* ===== Historial: abrir, renombrar, borrar ===== */
   React.useEffect(() => {
     if (historyOpen) fetchHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyOpen]);
+  }, [historyOpen, fetchHistory]);
 
   async function updateHistoryLabel(id: string, label: string) {
     setHistory((prev) => prev.map((s) => (s.id === id ? { ...s, label } : s)));
-    await supabase.from(TABLE_SNAPS).update({ label }).eq("id", id);
+    if (!tenantId || !branchId) return;
+    await supabase
+      .from(TABLE_SNAPS)
+      .update({ label })
+      .eq("id", id)
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId);
   }
   function askDeleteSnapshot(s: BudgetSnapshot) {
     setConfirmDelete({ open: true, id: s.id, title: snapshotTitle(s) });
@@ -693,12 +856,30 @@ const mapSum = new Map<string, number>();
     const id = confirmDelete.id;
     setConfirmDelete({ open: false });
     if (!id) return;
-    await supabase.from(TABLE_SNAPS).delete().eq("id", id);
+    if (!tenantId || !branchId) return;
+    await supabase
+      .from(TABLE_SNAPS)
+      .delete()
+      .eq("id", id)
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId);
     fetchHistory();
   }
 
   /* =================== Render =================== */
   const inputCh = Math.max(8, budgetInput.replace(/\s/g, "").length + 1);
+
+  if (branchLoading) {
+    return <div className="p-4 text-sm text-neutral-500">Cargando sucursales…</div>;
+  }
+
+  if (branchError) {
+    return <div className="p-4 text-sm text-red-600">{branchError}</div>;
+  }
+
+  if (!tenantId || !branchId || !currentBranch) {
+    return <div className="p-4 text-sm text-neutral-500">No hay sucursal seleccionada.</div>;
+  }
 
   return (
     <div className="p-4 pb-24 space-y-4 max-w-md mx-auto">
@@ -712,7 +893,7 @@ const mapSum = new Map<string, number>();
           sp.set("week", id);
           router.replace(`?${sp.toString()}`, { scroll: false });
           setActiveWeekId(id);
-          if (typeof window !== "undefined") localStorage.setItem(WEEK_CACHE_KEY, id);
+          if (typeof window !== "undefined") localStorage.setItem(weekCacheKey, id);
         }}
       >
         <SelectTrigger className="h-10 w-full">
@@ -926,10 +1107,24 @@ const mapSum = new Map<string, number>();
               value={budgetInput}
               onChange={handleBudgetChange}
               onBlur={handleBudgetBlur}
-              onKeyDown={(e) => { if (e.key === "Enter") handleBudgetSave(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleBudgetSave().catch((err) => {
+                    const message = err instanceof Error ? err.message : String(err);
+                    console.warn("[presupuesto] budget save (enter):", message);
+                  });
+                }
+              }}
             />
             <Button size="icon" className="h-8 w-8 rounded-full" aria-label="Guardar presupuesto base"
-              title="Guardar presupuesto base" onClick={handleBudgetSave}>
+              title="Guardar presupuesto base"
+              onClick={() => {
+                handleBudgetSave().catch((err) => {
+                  const message = err instanceof Error ? err.message : String(err);
+                  console.warn("[presupuesto] budget save (click):", message);
+                });
+              }}
+            >
               <Check className="h-4 w-4" />
             </Button>
           </div>
@@ -1032,7 +1227,6 @@ const mapSum = new Map<string, number>();
                   <div className="space-y-2">
                     {items.map((p) => {
                       const ov = overrides[p.id];
-                      const amount = ov?.enabled ? ov.amount : (p.amount || 0);
                       const amountBase = p.amount || 0;
 
                       return (
@@ -1066,7 +1260,7 @@ const mapSum = new Map<string, number>();
 
                             {/* Línea presupuestado (debajo) */}
                             <div className="mt-2 flex items-center justify-between gap-3">
-                              <label className="text-xs text-slate-600">Monto presupuestado</label>
+                              <span className="text-xs text-slate-600">Monto presupuestado</span>
                               <div className="flex items-center gap-2">
                                 <Input
                                   inputMode="numeric"
