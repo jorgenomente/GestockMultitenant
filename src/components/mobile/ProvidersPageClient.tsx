@@ -173,8 +173,8 @@ const IMPORT_TABLE_SEQUENCE: ImportTableConfig[] = [
   { key: "order_items", table: "order_items", conflict: "id", forceTenant: true, forceBranch: true, drop: ["user_id", "subtotal", "created_at", "updated_at"] },
   { key: "order_snapshots", table: "order_snapshots", conflict: "id", drop: ["user_id", "tenant_id", "branch_id", "created_at", "updated_at"] },
   { key: "order_ui_state", table: "order_ui_state", conflict: "order_id" },
-  { key: "order_summaries", table: "order_summaries", conflict: "provider_id" },
-  { key: "order_summaries_week", table: "order_summaries_week", conflict: "week_id,provider_id", drop: ["id"] },
+  { key: "order_summaries", table: "order_summaries", conflict: "provider_id", forceTenant: true, forceBranch: true },
+  { key: "order_summaries_week", table: "order_summaries_week", conflict: "week_id,provider_id", forceTenant: true, forceBranch: true, drop: ["id"] },
   { key: "app_settings", table: "app_settings", conflict: "key", forceTenant: true, forceBranch: true, drop: ["created_at", "updated_at"] },
 ];
 
@@ -223,6 +223,26 @@ const BRANCH_SCOPED_TABLES = new Set([
   "provider_week_states",
   "app_settings",
 ]);
+
+const ORDERS_EXPORT_VERSION = 1 as const;
+const ORDERS_EXPORT_SOURCE = "gestock/pedidos";
+
+type OrdersExportTableKey =
+  | "orders"
+  | "order_items"
+  | "order_snapshots"
+  | "order_ui_state"
+  | "order_summaries"
+  | "order_summaries_week";
+
+type OrdersExportPayload = {
+  version: typeof ORDERS_EXPORT_VERSION;
+  exportedAt: string;
+  source: string;
+  providers: Array<{ id: string; name: string | null }>;
+  weeks: Array<{ id: string; week_start: string | null }>;
+  tables: Partial<Record<OrdersExportTableKey, unknown>>;
+};
 
 const isMissingTableError = (error: PostgrestError | null | undefined) => {
   if (!error) return false;
@@ -405,8 +425,12 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     return toYMDLocal(nextMonday);
   });
   const importInputRef = React.useRef<HTMLInputElement | null>(null);
+  const ordersImportInputRef = React.useRef<HTMLInputElement | null>(null);
   const [importingData, setImportingData] = React.useState(false);
+  const [importingOrders, setImportingOrders] = React.useState(false);
   const [copyingData, setCopyingData] = React.useState(false);
+  const [downloadingJson, setDownloadingJson] = React.useState(false);
+  const [downloadingOrders, setDownloadingOrders] = React.useState(false);
   const [exportDialogOpen, setExportDialogOpen] = React.useState(false);
   const [exportBranchId, setExportBranchId] = React.useState<string | null>(branchId ?? null);
   const [branchOptions, setBranchOptions] = React.useState<Array<{ id: string; slug: string | null; name: string | null }>>([]);
@@ -888,17 +912,33 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const totalProviders = visibleProviders.length;
   const todayIdx = new Date().getDay();
 
-  const handleImportClick = React.useCallback(() => {
-    importInputRef.current?.click();
-  }, []);
+const handleImportClick = React.useCallback(() => {
+  importInputRef.current?.click();
+}, []);
 
-const clearGestockCaches = React.useCallback(() => {
+const handleOrdersImportClick = React.useCallback(() => {
+  ordersImportInputRef.current?.click();
+}, []);
+
+const clearGestockCaches = React.useCallback((tenant?: string | null, branch?: string | null) => {
   if (typeof window === "undefined") return;
   try {
+    const tenantMatch = tenant?.trim() || null;
+    const branchMatch = branch?.trim() || null;
     const toRemove: string[] = [];
+
+    const matchesScope = (key: string): boolean => {
+      if (!key.startsWith("gestock:")) return false;
+      if (!tenantMatch && !branchMatch) return true;
+      const parts = key.split(":");
+      const hasTenant = tenantMatch ? parts.includes(tenantMatch) : true;
+      const hasBranch = branchMatch ? parts.includes(branchMatch) : true;
+      return hasTenant && hasBranch;
+    };
+
     for (let i = 0; i < window.localStorage.length; i += 1) {
       const key = window.localStorage.key(i);
-      if (key && key.startsWith("gestock:")) toRemove.push(key);
+      if (key && matchesScope(key)) toRemove.push(key);
     }
     toRemove.forEach((key) => window.localStorage.removeItem(key));
   } catch {}
@@ -920,7 +960,6 @@ const applyProvidersPayload = React.useCallback(async (
 
   const showMessages = options.showMessages ?? true;
   const targetBranchId = options.target.id;
-  const targetBranchSlug = options.target.slug ?? null;
   const tables = payload.tables;
 
   const cleanupErrors: string[] = [];
@@ -1400,11 +1439,334 @@ const applyProvidersPayload = React.useCallback(async (
   }
 
   if (targetBranchId === branchId) {
-    clearGestockCaches();
+    clearGestockCaches(tenantId, targetBranchId);
     router.refresh();
   }
 
   return errors.length === 0;
+}, [branchId, clearGestockCaches, router, showAlert, supabase, tenantId]);
+
+const applyOrdersPayload = React.useCallback(async (
+  payload: OrdersExportPayload,
+  options: ApplyPayloadOptions,
+): Promise<boolean> => {
+  if (!tenantId) {
+    await showAlert("Seleccioná una sucursal antes de aplicar datos.");
+    return false;
+  }
+
+  if (!payload || payload.version !== ORDERS_EXPORT_VERSION) {
+    await showAlert("Formato de pedidos incompatible con esta versión.");
+    return false;
+  }
+
+  const showMessages = options.showMessages ?? true;
+  const targetBranchId = options.target.id;
+
+  const providerRows = Array.isArray(payload.providers) ? payload.providers : [];
+  if (!providerRows.length) {
+    await showAlert("El archivo no contiene información de proveedores para mapear los pedidos.");
+    return false;
+  }
+
+  const errors: string[] = [];
+
+  const { data: existingProvidersData, error: existingProvidersError } = await supabase
+    .from("providers")
+    .select("id,name")
+    .eq("tenant_id", tenantId)
+    .eq("branch_id", targetBranchId);
+  if (existingProvidersError && !isMissingTableError(existingProvidersError)) {
+    errors.push(`Proveedores destino: ${existingProvidersError.message}`);
+  }
+  const existingProviders = (existingProvidersData as Array<{ id: string; name: string | null }> | null) ?? [];
+  const existingByName = new Map<string, string>();
+  existingProviders.forEach((row) => {
+    if (!row?.id || !row?.name) return;
+    const norm = buildNameKey(row.name);
+    if (norm) existingByName.set(norm, row.id);
+  });
+
+  const providerIdMap = new Map<string, string>();
+  providerRows.forEach((row) => {
+    const originalId = typeof row.id === "string" ? row.id : null;
+    if (!originalId) return;
+    const baseName = ensureName(row.name);
+    if (!baseName) {
+      errors.push(`Proveedor sin nombre en el archivo (ID ${originalId})`);
+      return;
+    }
+    const norm = baseName.toLowerCase();
+    const mappedId = existingByName.get(norm);
+    if (!mappedId) {
+      errors.push(`Proveedor "${baseName}" no existe en la sucursal destino.`);
+      return;
+    }
+    providerIdMap.set(originalId, mappedId);
+  });
+
+  if (!providerIdMap.size) {
+    if (showMessages) await showAlert("Ningún proveedor del archivo coincide con los proveedores de la sucursal destino.", true);
+    return false;
+  }
+
+  const weekRows = Array.isArray(payload.weeks) ? payload.weeks : [];
+  const weekIdMap = new Map<string, string>();
+  const existingWeeksResp = await supabase
+    .from("provider_weeks")
+    .select("id,week_start")
+    .eq("tenant_id", tenantId)
+    .eq("branch_id", targetBranchId);
+  if (existingWeeksResp.error && !isMissingTableError(existingWeeksResp.error)) {
+    errors.push(`Semanas destino: ${existingWeeksResp.error.message}`);
+  }
+  const existingWeeks = (existingWeeksResp.data as Array<{ id: string; week_start: string | null }> | null) ?? [];
+  const existingWeekByStart = new Map<string, string>();
+  existingWeeks.forEach((row) => {
+    const start = typeof row.week_start === "string" ? row.week_start : null;
+    if (!row.id || !start) return;
+    existingWeekByStart.set(start, row.id);
+  });
+
+  const weeksToInsert: Array<{ originalId: string; week_start: string }> = [];
+  weekRows.forEach((row) => {
+    const originalId = typeof row.id === "string" ? row.id : null;
+    const weekStartRaw = typeof row.week_start === "string" ? row.week_start : null;
+    if (!originalId || !weekStartRaw) return;
+    const existingId = existingWeekByStart.get(weekStartRaw);
+    if (existingId) {
+      weekIdMap.set(originalId, existingId);
+      return;
+    }
+    weeksToInsert.push({ originalId, week_start: weekStartRaw });
+  });
+
+  if (weeksToInsert.length) {
+    const insertRows = weeksToInsert.map((row) => ({
+      id: uuid(),
+      week_start: row.week_start,
+      tenant_id: tenantId,
+      branch_id: targetBranchId,
+    }));
+    const { data: insertedWeeks, error: insertWeeksErr } = await supabase
+      .from("provider_weeks")
+      .insert(insertRows)
+      .select("id,week_start");
+    if (insertWeeksErr) {
+      errors.push(`Semanas destino: ${insertWeeksErr.message}`);
+    } else {
+      const inserted = (insertedWeeks as Array<{ id: string; week_start: string | null }> | null) ?? [];
+      inserted.forEach((row) => {
+        const start = typeof row.week_start === "string" ? row.week_start : null;
+        if (!row.id || !start) return;
+        existingWeekByStart.set(start, row.id);
+      });
+      weeksToInsert.forEach((row) => {
+        const mapped = existingWeekByStart.get(row.week_start);
+        if (mapped) weekIdMap.set(row.originalId, mapped);
+      });
+    }
+  }
+
+  const applyDrops = applyDropsFactory(tenantId, targetBranchId);
+  const ordersCfg = IMPORT_TABLE_LOOKUP.get("orders")!;
+  const itemsCfg = IMPORT_TABLE_LOOKUP.get("order_items")!;
+  const snapshotsCfg = IMPORT_TABLE_LOOKUP.get("order_snapshots")!;
+  const uiStateCfg = IMPORT_TABLE_LOOKUP.get("order_ui_state")!;
+  const orderSummaryCfg = IMPORT_TABLE_LOOKUP.get("order_summaries")!;
+  const orderSummaryWeekCfg = IMPORT_TABLE_LOOKUP.get("order_summaries_week")!;
+
+  const preparedOrders: Record<string, unknown>[] = [];
+  const preparedItems: Record<string, unknown>[] = [];
+  const preparedSnapshots: Record<string, unknown>[] = [];
+  const preparedUi: Record<string, unknown>[] = [];
+  const preparedSummaries: Record<string, unknown>[] = [];
+  const preparedSummaryWeeks: Record<string, unknown>[] = [];
+
+  const orderIdMap = new Map<string, string>();
+
+  const ordersRaw = ensureArray<Record<string, unknown>>(payload.tables.orders);
+  for (const rawRow of ordersRaw) {
+    if (!isPlainObject(rawRow)) continue;
+    const providerRef = typeof rawRow.provider_id === "string" ? rawRow.provider_id : "";
+    const mappedProvider = providerIdMap.get(providerRef);
+    if (!mappedProvider) {
+      errors.push(`Pedido omitido: proveedor ${providerRef} no existe en destino.`);
+      continue;
+    }
+    const originalId = ensureId(rawRow.id);
+    const mappedOrderId = uuid();
+    orderIdMap.set(originalId, mappedOrderId);
+    orderIdMap.set(mappedOrderId, mappedOrderId);
+    const sanitized: Record<string, unknown> = {
+      ...rawRow,
+      id: mappedOrderId,
+      provider_id: mappedProvider,
+      tenant_id: tenantId,
+      branch_id: targetBranchId,
+    };
+    applyDrops(sanitized, ordersCfg);
+    preparedOrders.push(sanitized);
+  }
+
+  const itemsRaw = ensureArray<Record<string, unknown>>(payload.tables.order_items);
+  for (const rawRow of itemsRaw) {
+    if (!isPlainObject(rawRow)) continue;
+    const orderRef = typeof rawRow.order_id === "string" ? rawRow.order_id : "";
+    const mappedOrder = orderIdMap.get(orderRef);
+    if (!mappedOrder) {
+      errors.push(`Item omitido: pedido ${orderRef} no existe en destino.`);
+      continue;
+    }
+    const sanitized: Record<string, unknown> = {
+      ...rawRow,
+      id: uuid(),
+      order_id: mappedOrder,
+      tenant_id: tenantId,
+      branch_id: targetBranchId,
+    };
+    applyDrops(sanitized, itemsCfg);
+    preparedItems.push(sanitized);
+  }
+
+  const snapshotsRaw = ensureArray<Record<string, unknown>>(payload.tables.order_snapshots);
+  for (const rawRow of snapshotsRaw) {
+    if (!isPlainObject(rawRow)) continue;
+    const orderRef = typeof rawRow.order_id === "string" ? rawRow.order_id : "";
+    const mappedOrder = orderIdMap.get(orderRef);
+    if (!mappedOrder) {
+      errors.push(`Snapshot omitido: pedido ${orderRef} no existe en destino.`);
+      continue;
+    }
+    const sanitized: Record<string, unknown> = {
+      ...rawRow,
+      id: uuid(),
+      order_id: mappedOrder,
+      tenant_id: tenantId,
+      branch_id: targetBranchId,
+    };
+    applyDrops(sanitized, snapshotsCfg);
+    preparedSnapshots.push(sanitized);
+  }
+
+  const uiRaw = ensureArray<Record<string, unknown>>(payload.tables.order_ui_state);
+  for (const rawRow of uiRaw) {
+    if (!isPlainObject(rawRow)) continue;
+    const orderRef = typeof rawRow.order_id === "string" ? rawRow.order_id : "";
+    const mappedOrder = orderIdMap.get(orderRef);
+    if (!mappedOrder) {
+      errors.push(`Estado UI omitido: pedido ${orderRef} no existe en destino.`);
+      continue;
+    }
+    const sanitized: Record<string, unknown> = {
+      ...rawRow,
+      order_id: mappedOrder,
+      tenant_id: tenantId,
+      branch_id: targetBranchId,
+    };
+    applyDrops(sanitized, uiStateCfg);
+    preparedUi.push(sanitized);
+  }
+
+  const summaryRaw = ensureArray<Record<string, unknown>>(payload.tables.order_summaries);
+  for (const rawRow of summaryRaw) {
+    if (!isPlainObject(rawRow)) continue;
+    const providerRef = typeof rawRow.provider_id === "string" ? rawRow.provider_id : "";
+    const mappedProvider = providerIdMap.get(providerRef);
+    if (!mappedProvider) {
+      errors.push(`Resumen omitido: proveedor ${providerRef} no existe en destino.`);
+      continue;
+    }
+    const sanitized: Record<string, unknown> = {
+      ...rawRow,
+      provider_id: mappedProvider,
+      tenant_id: tenantId,
+      branch_id: targetBranchId,
+    };
+    applyDrops(sanitized, orderSummaryCfg);
+    preparedSummaries.push(sanitized);
+  }
+
+  const summaryWeekRaw = ensureArray<Record<string, unknown>>(payload.tables.order_summaries_week);
+  for (const rawRow of summaryWeekRaw) {
+    if (!isPlainObject(rawRow)) continue;
+    const providerRef = typeof rawRow.provider_id === "string" ? rawRow.provider_id : "";
+    const mappedProvider = providerIdMap.get(providerRef);
+    if (!mappedProvider) {
+      errors.push(`Resumen semanal omitido: proveedor ${providerRef} no existe en destino.`);
+      continue;
+    }
+    const weekRef = typeof rawRow.week_id === "string" ? rawRow.week_id : "";
+    const mappedWeek = weekIdMap.get(weekRef);
+    if (!mappedWeek) {
+      errors.push(`Resumen semanal omitido: semana ${weekRef} no existe en destino.`);
+      continue;
+    }
+    const sanitized: Record<string, unknown> = {
+      ...rawRow,
+      provider_id: mappedProvider,
+      week_id: mappedWeek,
+      tenant_id: tenantId,
+      branch_id: targetBranchId,
+    };
+    applyDrops(sanitized, orderSummaryWeekCfg);
+    preparedSummaryWeeks.push(sanitized);
+  }
+
+  const runInsert = async (table: string, rows: Record<string, unknown>[]) => {
+    if (!rows.length) return;
+    for (let offset = 0; offset < rows.length; offset += IMPORT_CHUNK_SIZE) {
+      const chunk = rows.slice(offset, offset + IMPORT_CHUNK_SIZE);
+      const { error } = await supabase.from(table).insert(chunk);
+      if (error) {
+        errors.push(`Tabla ${table}: ${error.message ?? "error desconocido"}`);
+        break;
+      }
+    }
+  };
+
+  await runInsert("orders", preparedOrders);
+  await runInsert("order_items", preparedItems);
+  await runInsert("order_snapshots", preparedSnapshots);
+  await runInsert("order_ui_state", preparedUi);
+
+  const runUpsert = async (
+    table: string,
+    rows: Record<string, unknown>[],
+    conflict: string | undefined,
+  ) => {
+    if (!rows.length) return;
+    for (let offset = 0; offset < rows.length; offset += IMPORT_CHUNK_SIZE) {
+      const chunk = rows.slice(offset, offset + IMPORT_CHUNK_SIZE);
+      let error: PostgrestError | null = null;
+      if (conflict) {
+        ({ error } = await supabase.from(table).upsert(chunk, { onConflict: conflict }));
+      } else {
+        ({ error } = await supabase.from(table).upsert(chunk));
+      }
+      if (error) {
+        errors.push(`Tabla ${table}: ${error.message ?? "error desconocido"}`);
+        break;
+      }
+    }
+  };
+
+  await runUpsert("order_summaries", preparedSummaries, orderSummaryCfg.conflict);
+  await runUpsert("order_summaries_week", preparedSummaryWeeks, orderSummaryWeekCfg.conflict);
+
+  if (errors.length) {
+    if (showMessages) await showAlert(`Importación completada con errores:\n${errors.join("\n")}`, true);
+    return false;
+  }
+
+  if (targetBranchId === branchId) {
+    clearGestockCaches(tenantId, targetBranchId);
+    router.refresh();
+  }
+
+  if (showMessages) await showAlert("Pedidos importados correctamente.");
+
+  return true;
 }, [branchId, clearGestockCaches, router, showAlert, supabase, tenantId]);
 
 const applyDropsFactory = (
@@ -1425,6 +1787,24 @@ const readPayloadFromFile = async (file: File): Promise<ProvidersExportPayload> 
   const parsed = JSON.parse(raw) as ProvidersExportPayload;
   if (parsed.version !== 1) throw new Error("Versión de exportación no soportada.");
   if (!isPlainObject(parsed.tables)) throw new Error("Formato de tablas inválido en el archivo.");
+  return parsed;
+};
+
+const readOrdersPayloadFromFile = async (file: File): Promise<OrdersExportPayload> => {
+  const raw = await file.text();
+  const parsed = JSON.parse(raw) as OrdersExportPayload;
+  if (parsed.version !== ORDERS_EXPORT_VERSION) {
+    throw new Error("Versión de exportación no soportada para pedidos.");
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Formato de pedidos inválido.");
+  }
+  if (!parsed.tables || typeof parsed.tables !== "object") {
+    throw new Error("Formato de tablas inválido en el archivo de pedidos.");
+  }
+  if (!Array.isArray(parsed.providers)) {
+    throw new Error("El archivo de pedidos no incluye la lista de proveedores.");
+  }
   return parsed;
 };
 
@@ -1464,11 +1844,11 @@ const ORDER_TABLES = [
 const buildNameKey = (name: string) => stripBranchSuffix(name).toLowerCase();
 
   // Para repetir: exportá en el proyecto anterior (gestock-v2) y seleccioná aquí el .json resultante.
-  const handleImportFile = React.useCallback(async (file: File) => {
-    if (!tenantId || !branchId) {
-      await showAlert("Seleccioná una sucursal antes de importar.");
-      return;
-    }
+const handleImportFile = React.useCallback(async (file: File) => {
+  if (!tenantId || !branchId) {
+    await showAlert("Seleccioná una sucursal antes de importar.");
+    return;
+  }
     if (!file) return;
 
     setImportingData(true);
@@ -1504,8 +1884,36 @@ const buildNameKey = (name: string) => stripBranchSuffix(name).toLowerCase();
   }, [applyProvidersPayload, branch, branchId, showAlert, tenantId]);
   const onImportFileChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) void handleImportFile(file);
-  }, [handleImportFile]);
+  if (file) void handleImportFile(file);
+}, [handleImportFile]);
+
+const handleImportOrdersFile = React.useCallback(async (file: File) => {
+  if (!tenantId || !branchId) {
+    await showAlert("Seleccioná una sucursal antes de importar.");
+    return;
+  }
+  if (!file) return;
+
+  setImportingOrders(true);
+  try {
+    const payload = await readOrdersPayloadFromFile(file);
+    await applyOrdersPayload(payload, {
+      target: { id: branchId, slug: branch ?? null },
+      showMessages: true,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await showAlert(`No se pudo importar el archivo de pedidos.\n${message}`, true);
+  } finally {
+    setImportingOrders(false);
+    if (ordersImportInputRef.current) ordersImportInputRef.current.value = "";
+  }
+}, [applyOrdersPayload, branch, branchId, showAlert, tenantId]);
+
+const onImportOrdersFileChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+  const file = event.target.files?.[0];
+  if (file) void handleImportOrdersFile(file);
+}, [handleImportOrdersFile]);
 
 const buildExportPayload = React.useCallback(async (
     target: { id: string; slug: string | null } | null,
@@ -1673,6 +2081,133 @@ const buildExportPayload = React.useCallback(async (
     }
   }, [branchId, branch, slug, supabase, tenantId]);
 
+  const buildOrdersExportPayload = React.useCallback(async (): Promise<OrdersExportPayload | null> => {
+    if (!tenantId || !branchId) {
+      await showAlert("Seleccioná una sucursal antes de descargar.");
+      return null;
+    }
+
+    try {
+      const payload: OrdersExportPayload = {
+        version: ORDERS_EXPORT_VERSION,
+        exportedAt: new Date().toISOString(),
+        source: ORDERS_EXPORT_SOURCE,
+        providers: [],
+        weeks: [],
+        tables: {},
+      };
+
+      const supa = supabase;
+
+      const { data: providersData, error: providersErr } = await supa
+        .from("providers")
+        .select("id,name")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId)
+        .order("name", { ascending: true });
+      if (providersErr) throw providersErr;
+      const providers = (providersData as Array<{ id: string; name: string | null }> | null) ?? [];
+      if (!providers.length) {
+        await showAlert("No hay proveedores en esta sucursal para exportar pedidos.");
+        return null;
+      }
+      payload.providers = providers.map((row) => ({ id: row.id, name: row.name ?? null }));
+
+      const providerIds = providers
+        .map((p) => (typeof p.id === "string" ? p.id : null))
+        .filter((id): id is string => Boolean(id && id.length));
+
+      const ordersQuery = supa
+        .from("orders")
+        .select("*")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId)
+        .order("created_at", { ascending: true });
+
+      const { data: ordersData, error: ordersErr } = await ordersQuery;
+      if (ordersErr) {
+        if (isMissingTableError(ordersErr)) {
+          await showAlert("Todavía no hay pedidos en esta sucursal.");
+          return null;
+        }
+        throw ordersErr;
+      }
+
+      const orders = (ordersData as Record<string, unknown>[] | null) ?? [];
+      if (!orders.length) {
+        await showAlert("Todavía no hay pedidos en esta sucursal.");
+        return null;
+      }
+      payload.tables.orders = orders;
+
+      const orderIds = orders
+        .map((row) => (typeof row.id === "string" ? row.id : null))
+        .filter((id): id is string => Boolean(id));
+
+      if (orderIds.length) {
+        const { data: itemsData, error: itemsErr } = await supa
+          .from("order_items")
+          .select("*")
+          .in("order_id", orderIds);
+        if (itemsErr && !isMissingTableError(itemsErr)) throw itemsErr;
+        if (itemsData?.length) payload.tables.order_items = itemsData as Record<string, unknown>[];
+
+        const { data: snapsData, error: snapsErr } = await supa
+          .from("order_snapshots")
+          .select("*")
+          .in("order_id", orderIds)
+          .order("created_at", { ascending: true });
+        if (snapsErr && !isMissingTableError(snapsErr)) throw snapsErr;
+        if (snapsData?.length) payload.tables.order_snapshots = snapsData as Record<string, unknown>[];
+
+        const { data: uiStateData, error: uiErr } = await supa
+          .from("order_ui_state")
+          .select("*")
+          .in("order_id", orderIds);
+        if (uiErr && !isMissingTableError(uiErr)) throw uiErr;
+        if (uiStateData?.length) payload.tables.order_ui_state = uiStateData as Record<string, unknown>[];
+      }
+
+      if (providerIds.length) {
+        const { data: summaryData, error: sumErr } = await supa
+          .from("order_summaries")
+          .select("*")
+          .in("provider_id", providerIds);
+        if (sumErr && !isMissingTableError(sumErr)) throw sumErr;
+        if (summaryData?.length) payload.tables.order_summaries = summaryData as Record<string, unknown>[];
+
+        const { data: summaryWeekData, error: sumWeekErr } = await supa
+          .from("order_summaries_week")
+          .select("*")
+          .in("provider_id", providerIds);
+        if (sumWeekErr && !isMissingTableError(sumWeekErr)) throw sumWeekErr;
+        if (summaryWeekData?.length) payload.tables.order_summaries_week = summaryWeekData as Record<string, unknown>[];
+
+        const weekIds = (summaryWeekData as Array<{ week_id: string | null }> | null ?? [])
+          .map((row) => (typeof row.week_id === "string" ? row.week_id : null))
+          .filter((id): id is string => Boolean(id));
+        if (weekIds.length) {
+          const { data: weeksData, error: weeksErr } = await supa
+            .from("provider_weeks")
+            .select("id,week_start")
+            .in("id", weekIds);
+          if (weeksErr && !isMissingTableError(weeksErr)) throw weeksErr;
+          if (weeksData?.length) {
+            const normalized = (weeksData as Array<{ id: string; week_start: string | null }>);
+            payload.weeks = normalized.map((row) => ({ id: row.id, week_start: row.week_start ?? null }));
+          }
+        }
+      }
+
+      return payload;
+    } catch (err) {
+      console.error("orders export error", err);
+      const message = err instanceof Error ? err.message : String(err);
+      await showAlert(`No se pudieron exportar los pedidos.\n${message}`);
+      return null;
+    }
+  }, [branchId, showAlert, supabase, tenantId]);
+
   const handleSaveSnapshot = React.useCallback(async () => {
     if (!tenantId || !branchId) {
       await showAlert("Seleccioná una sucursal antes de guardar la copia.");
@@ -1691,6 +2226,66 @@ const buildExportPayload = React.useCallback(async (
     }
   }, [branch, branchId, buildExportPayload, persistBranchSnapshot, showAlert, tenantId]);
 
+  const handleDownloadJson = React.useCallback(async () => {
+    if (!tenantId || !branchId) {
+      await showAlert("Seleccioná una sucursal antes de descargar.");
+      return;
+    }
+    setDownloadingJson(true);
+    try {
+      const payload = await buildExportPayload({ id: branchId, slug: branch ?? null });
+      if (!payload) return;
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      const safeSlug = branch?.trim() || branchId;
+      const today = new Date().toISOString().slice(0, 10);
+      anchor.download = `proveedores-${safeSlug}-${today}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("download json error", err);
+      const message = err instanceof Error ? err.message : String(err);
+      await showAlert(`No se pudo generar el archivo.\n${message}`);
+    } finally {
+      setDownloadingJson(false);
+    }
+  }, [branch, branchId, buildExportPayload, showAlert, tenantId]);
+
+  const handleDownloadOrders = React.useCallback(async () => {
+    if (!tenantId || !branchId) {
+      await showAlert("Seleccioná una sucursal antes de descargar.");
+      return;
+    }
+    setDownloadingOrders(true);
+    try {
+      const payload = await buildOrdersExportPayload();
+      if (!payload) return;
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      const safeSlug = branch?.trim() || branchId;
+      const today = new Date().toISOString().slice(0, 10);
+      anchor.download = `pedidos-${safeSlug}-${today}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("download orders error", err);
+      const message = err instanceof Error ? err.message : String(err);
+      await showAlert(`No se pudo generar el archivo de pedidos.\n${message}`);
+    } finally {
+      setDownloadingOrders(false);
+    }
+  }, [branch, branchId, buildOrdersExportPayload, showAlert, tenantId]);
+
   const handleRestoreSnapshot = React.useCallback(async () => {
     if (!tenantId || !branchId) {
       await showAlert("Seleccioná una sucursal antes de restaurar.");
@@ -1705,7 +2300,7 @@ const buildExportPayload = React.useCallback(async (
         showMessages: false,
       });
       if (applied) {
-        clearGestockCaches();
+        clearGestockCaches(tenantId, branchId);
         await showAlert("Configuración restaurada correctamente.");
         await loadBackupInfo();
       } else {
@@ -2264,6 +2859,13 @@ const buildExportPayload = React.useCallback(async (
               className="hidden"
               onChange={onImportFileChange}
             />
+            <input
+              ref={ordersImportInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={onImportOrdersFileChange}
+            />
             <Button
               variant="outline"
               size="sm"
@@ -2281,6 +2883,33 @@ const buildExportPayload = React.useCallback(async (
               disabled={copyingData}
             >
               {copyingData ? "Copiando…" : "Copiar datos"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-lg"
+              onClick={handleOrdersImportClick}
+              disabled={importingOrders || copyingData}
+            >
+              {importingOrders ? "Importando pedidos…" : "Importar pedidos"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-lg"
+              onClick={() => { void handleDownloadOrders(); }}
+              disabled={downloadingOrders || importingOrders || importingData || copyingData}
+            >
+              {downloadingOrders ? "Descargando pedidos…" : "Descargar pedidos"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-lg"
+              onClick={() => { void handleDownloadJson(); }}
+              disabled={downloadingJson || copyingData || importingData || importingOrders}
+            >
+              {downloadingJson ? "Descargando…" : "Descargar JSON"}
             </Button>
             <Button
               variant="outline"

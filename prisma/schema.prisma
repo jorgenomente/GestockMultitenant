@@ -7,13 +7,19 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  // Si más adelante usas múltiples esquemas de Postgres:
-  // schemas = ["public"]
 }
 
-/*
-  🔹 De momento no declaramos modelos.
-  🔹 Esto es suficiente para que `prisma generate` funcione.
-  🔹 Cuando quieras mapear tablas existentes de Supabase o crear nuevas,
-     agrega aquí tus `model`, `enum`, etc., y corre `prisma migrate` o `db push`.
-*/
+model StockLog {
+  id           String   @id @default(uuid())
+  orderItemId  String   @map("order_item_id")
+  stockPrev    Decimal  @map("stock_prev")
+  stockIn      Decimal  @map("stock_in")
+  stockOut     Decimal  @map("stock_out")
+  stockApplied Decimal  @map("stock_applied")
+  salesSince   Decimal  @map("sales_since")
+  appliedAt    DateTime @map("applied_at") @default(dbgenerated("timezone('utc', now())"))
+  committedAt  DateTime @map("committed_at") @default(dbgenerated("timezone('utc', now())"))
+  tenantId     String?  @map("tenant_id")
+  branchId     String?  @map("branch_id")
+  createdAt    DateTime @map("created_at") @default(dbgenerated("timezone('utc', now())"))
+}

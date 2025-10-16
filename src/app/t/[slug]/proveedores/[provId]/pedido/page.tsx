@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   Plus, Minus, Search, Download, Upload, Trash2, ArrowLeft,
-  History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package,
+  History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package, Loader2,
 } from "lucide-react";
 
 /* =================== Config =================== */
@@ -34,6 +34,7 @@ const VENTAS_URL = "/ventas.xlsx";
 const TABLE_SNAPSHOTS = "order_snapshots";
 const TABLE_ORDER_SUMMARIES = "order_summaries";
 const TABLE_ORDER_SUMMARIES_WEEK = "order_summaries_week";
+const TABLE_STOCK_LOGS = "stock_logs";
 
 const ORDERS_TABLE_ENV = process.env.NEXT_PUBLIC_PROVIDER_ORDERS_TABLE?.trim();
 const ITEMS_TABLE_ENV = process.env.NEXT_PUBLIC_PROVIDER_ORDER_ITEMS_TABLE?.trim();
@@ -484,6 +485,14 @@ const formatUTCWeekday = (t: number) =>
 
 /* =================== Utils =================== */
 const NBSP_RX = /[\u00A0\u202F]/g;
+const DIAC_RX = /\p{Diacritic}/gu;
+const normText = (s: string) => s.replace(NBSP_RX, " ").trim();
+const normKey = (s: string) => normText(s).normalize("NFD").replace(DIAC_RX, "").toLowerCase();
+const nowLocalIso = () => {
+  const now = new Date();
+  const offsetMs = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 16);
+};
 const excelSerialToUTC = (s: number) => Date.UTC(1899, 11, 30) + Math.round(s * 86400000);
 function parseDateCell(v: unknown): number | null {
   if (v == null) return null;
@@ -652,6 +661,106 @@ export default function ProviderOrderPage() {
   const [margin, setMargin] = React.useState<number>(48);
   const [filter, setFilter] = React.useState("");
   const [sortMode, setSortMode] = React.useState<SortMode>("alpha_asc");
+  const [batchSalesModalOpen, setBatchSalesModalOpen] = React.useState(false);
+  const [batchSalesInput, setBatchSalesInput] = React.useState(() => nowLocalIso());
+  const [batchApplying, setBatchApplying] = React.useState(false);
+
+  React.useEffect(() => {
+    if (batchSalesModalOpen) setBatchSalesInput(nowLocalIso());
+  }, [batchSalesModalOpen]);
+
+  const salesByProduct = React.useMemo(() => {
+    const map = new Map<string, SalesRow[]>();
+    sales.forEach((row) => {
+      const key = normKey(row.product);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(row);
+    });
+    return map;
+  }, [sales]);
+
+  const computeSalesSinceStock = React.useCallback(
+    (productName: string, fromTs: number | null) => {
+      if (fromTs == null) return 0;
+      const rows = salesByProduct.get(normKey(productName));
+      if (!rows || !rows.length) return 0;
+      const now = Date.now();
+      return rows
+        .filter((row) => row.date >= fromTs && row.date <= now)
+        .reduce((acc, row) => acc + (row.qty || 0), 0);
+    },
+    [salesByProduct]
+  );
+
+  const applySalesToAll = React.useCallback(async () => {
+    const ts = new Date(batchSalesInput);
+    if (Number.isNaN(ts.getTime())) {
+      alert("Ingresá una fecha y hora válidas.");
+      return;
+    }
+
+    const fromMs = ts.getTime();
+    const nowIso = new Date().toISOString();
+
+    const selection = items
+      .filter((item) => item.stock_qty != null && item.stock_updated_at)
+      .map((item) => {
+        const productLabel = (item.display_name?.trim() || item.product_name).trim();
+        const salesQty = computeSalesSinceStock(productLabel, fromMs);
+        const stockPrev = Math.round((Number(item.stock_qty ?? 0) || 0) * 100) / 100;
+        const stockApplied = Math.max(0, Math.round((stockPrev - salesQty) * 100) / 100);
+        return { item, salesQty: Math.round(salesQty * 100) / 100, stockPrev, stockApplied };
+      });
+
+    if (!selection.length) {
+      alert("No encontramos productos con stock registrado para ajustar.");
+      return;
+    }
+
+    setBatchApplying(true);
+    try {
+      for (const row of selection) {
+        const { item, stockApplied } = row;
+        const { error } = await supabase
+          .from(itemsTable)
+          .update({ stock_qty: stockApplied, stock_updated_at: nowIso })
+          .eq("id", item.id);
+        if (error) throw error;
+      }
+
+      const logsPayload = selection.map((row) => ({
+        order_item_id: row.item.id,
+        stock_prev: row.stockPrev,
+        stock_in: 0,
+        stock_out: row.salesQty,
+        stock_applied: row.stockApplied,
+        sales_since: row.salesQty,
+        applied_at: nowIso,
+        tenant_id: row.item.tenant_id ?? tenantId ?? null,
+        branch_id: row.item.branch_id ?? branchId ?? null,
+      }));
+
+      const { error: logError } = await supabase.from(TABLE_STOCK_LOGS).insert(logsPayload);
+      if (logError && logError.code !== "42P01") {
+        console.warn("stock log insert error", logError);
+      }
+
+      setItems((prev) =>
+        prev.map((item) => {
+          const next = selection.find((row) => row.item.id === item.id);
+          if (!next) return item;
+          return { ...item, stock_qty: next.stockApplied, stock_updated_at: nowIso };
+        })
+      );
+
+      setBatchSalesModalOpen(false);
+    } catch (err: any) {
+      console.error("apply sales batch error", err);
+      alert(err?.message ?? "No se pudo aplicar las ventas.");
+    } finally {
+      setBatchApplying(false);
+    }
+  }, [batchSalesInput, items, itemsTable, supabase, computeSalesSinceStock, tenantId, branchId]);
 
   // UI persistente (Supabase)
   const [groupOrder, setGroupOrder] = React.useState<string[]>([]);
@@ -1591,7 +1700,6 @@ async function bulkAddItems(names: string[], groupName: string) {
   );
 }
 
-
   async function updateUnitPrice(id: string, unit_price: number) {
   const safe = Math.max(0, Number.isFinite(unit_price) ? Math.round(unit_price) : 0);
   const nowIso = new Date().toISOString();
@@ -2435,22 +2543,55 @@ const { data: inserted, error: insErr } = await supabase
       </Select>
     </div>
 
-    {/* Casilla maestra a la derecha */}
-    <label
-      className="inline-flex items-center gap-2 px-2 py-1 rounded-md border hover:bg-muted cursor-pointer"
-      title={allChecked ? "Desmarcar todos" : "Marcar todos"}
-    >
-      <Checkbox
-        checked={bulkState}
-        onCheckedChange={(v) => setAllChecked(v === true)}
-        aria-label={allChecked ? "Desmarcar todos" : "Marcar todos"}
-      />
-      <span className="text-sm select-none hidden sm:inline">
-        {allChecked ? "Todos" : "Marcar todos"}
-      </span>
-    </label>
+    <div className="flex items-center gap-2">
+      {/* Casilla maestra a la derecha */}
+      <label
+        className="inline-flex items-center gap-2 px-2 py-1 rounded-md border hover:bg-muted cursor-pointer"
+        title={allChecked ? "Desmarcar todos" : "Marcar todos"}
+      >
+        <Checkbox
+          checked={bulkState}
+          onCheckedChange={(v) => setAllChecked(v === true)}
+          aria-label={allChecked ? "Desmarcar todos" : "Marcar todos"}
+        />
+        <span className="text-sm select-none hidden sm:inline">
+          {allChecked ? "Todos" : "Marcar todos"}
+        </span>
+      </label>
+
+      <Button variant="outline" size="sm" onClick={() => setBatchSalesModalOpen(true)}>
+        Aplicar ventas
+      </Button>
+    </div>
   </div>
 </div>
+
+      <AlertDialog open={batchSalesModalOpen} onOpenChange={setBatchSalesModalOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Aplicar ventas a todos los productos</AlertDialogTitle>
+            <AlertDialogDescription>
+              Seleccioná desde qué fecha y hora querés descontar las ventas registradas. Aplicaremos la resta a todos los productos que tengan stock confirmado desde ese momento hasta ahora.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="mt-4 space-y-3">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted-foreground">Fecha y hora inicial</span>
+              <Input
+                type="datetime-local"
+                value={batchSalesInput}
+                onChange={(event) => setBatchSalesInput(event.target.value)}
+              />
+            </label>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={batchApplying}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction disabled={batchApplying} onClick={() => void applySalesToAll()}>
+              {batchApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Aplicar ventas"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
 
       {/* Grupos con drag & drop */}
@@ -2493,6 +2634,7 @@ const { data: inserted, error: insErr } = await supabase
                 onRenameItemLabel={updateDisplayName}
                 setItemChecked={setItemChecked}
                 onUpdateStock={updateStock}
+                computeSalesSinceStock={computeSalesSinceStock}
                 containerProps={containerProps} // <-- clave
               />
             )}
@@ -2807,10 +2949,18 @@ function StockEditor({
   value,
   updatedAt,
   onCommit,
+  salesSince,
+  onApplySales,
+  applying = false,
+  applyDisabled = false,
 }: {
   value?: number | null;
   updatedAt?: string | null;
   onCommit: (n: number | null) => Promise<void> | void;
+  salesSince?: number;
+  onApplySales?: () => Promise<void> | void;
+  applying?: boolean;
+  applyDisabled?: boolean;
 }) {
   const [val, setVal] = React.useState<string>(value == null ? "" : String(value));
   const [dirty, setDirty] = React.useState(false);
@@ -2832,11 +2982,11 @@ function StockEditor({
     setDirty(false);
   };
 
-  // sello relativo (igual que en PriceEditor)
   const rtf = React.useMemo(
     () => new Intl.RelativeTimeFormat("es-AR", { numeric: "auto" }),
     []
   );
+
   function sinceText(iso?: string | null) {
     if (!iso) return { text: "—", title: "" };
     const t = new Date(iso).getTime();
@@ -2844,59 +2994,79 @@ function StockEditor({
     const min = Math.round(diff / 60000);
     const hr = Math.round(diff / 3600000);
     const dy = Math.round(diff / 86400000);
-    const text = min < 60 ? rtf.format(-min, "minute")
-      : hr < 24 ? rtf.format(-hr, "hour")
-      : rtf.format(-dy, "day");
+    const text =
+      min < 60 ? rtf.format(-min, "minute") : hr < 24 ? rtf.format(-hr, "hour") : rtf.format(-dy, "day");
     return { text, title: new Date(iso).toLocaleString("es-AR") };
   }
+
   const since = sinceText(updatedAt);
+  const qtyFormatter = React.useMemo(() => new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }), []);
 
   return (
-  <div className="space-y-1 w-full">
-    <div className="flex items-center justify-between gap-2">
-      {/* Label */}
-      <span className="text-[11px] text-muted-foreground">Stock</span>
+    <div className="w-full space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted-foreground">Stock</span>
+        <div className="flex items-center gap-2">
+          <Input
+            className="h-8 w-24 text-right tabular-nums"
+            inputMode="numeric"
+            placeholder="0"
+            value={val}
+            onChange={(e) => {
+              setVal(e.target.value);
+              setDirty(true);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && dirty) {
+                e.preventDefault();
+                void commit();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setVal(value == null ? "" : String(value));
+                setDirty(false);
+              }
+            }}
+            aria-label="Stock actual"
+          />
+          <Button
+            size="icon"
+            className="h-8 w-8"
+            variant={dirty ? "default" : "secondary"}
+            disabled={!dirty}
+            onClick={() => void commit()}
+            aria-label="Confirmar stock"
+            title="Confirmar stock"
+          >
+            <Check className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
 
-      {/* Input + botón */}
-      <div className="flex items-center gap-2">
-        <Input
-          className="h-8 w-24 text-right tabular-nums"
-          inputMode="numeric"
-          placeholder="0"
-          value={val}
-          onChange={(e) => {
-            setVal(e.target.value);
-            setDirty(true);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && dirty) { e.preventDefault(); void commit(); }
-            if (e.key === "Escape") { e.preventDefault(); setVal(value == null ? "" : String(value)); setDirty(false); }
-          }}
-          aria-label="Stock actual"
-        />
-        <Button
-          size="icon"
-          className="h-8 w-8"
-          variant={dirty ? "default" : "secondary"}
-          disabled={!dirty}
-          onClick={() => void commit()}
-          aria-label="Confirmar stock"
-          title="Confirmar stock"
-        >
-          <Check className="h-4 w-4" />
-        </Button>
+      <div className="flex flex-col items-end gap-1">
+        <div className="text-[11px] text-muted-foreground text-right" title={since.title}>
+          {updatedAt ? `act. ${since.text}` : "sin firma"}
+        </div>
+
+        {onApplySales && (
+          <div className="flex w-full items-center justify-between gap-2 text-[11px]">
+            <span className="text-muted-foreground">
+              Ventas pendientes: {qtyFormatter.format(Math.max(0, salesSince ?? 0))}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7"
+              disabled={applyDisabled || applying}
+              onClick={() => void onApplySales()}
+            >
+              {applying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Aplicar ventas"}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
-
-    {/* Firma */}
-    <div className="text-[11px] text-muted-foreground text-right" title={since.title}>
-      {updatedAt ? `act. ${since.text}` : "sin firma"}
-    </div>
-  </div>
-);
-
-
-
+  );
 }
 
 
@@ -2910,6 +3080,7 @@ function GroupSection(props: {
   tokenMatch: (name: string, q: string) => boolean;
   placeholder: string;
   onRenameItemLabel: (id: string, label: string) => Promise<void> | void; // 👈 NUEVO
+  computeSalesSinceStock: (product: string, fromTs: number | null) => number;
   
 
   // CRUD base
@@ -2946,7 +3117,7 @@ function GroupSection(props: {
     onBulkAddItems, onBulkRemoveByNames, sortMode,
     onMoveUp, onMoveDown, checkedMap, setItemChecked,
     containerProps, onUpdatePackSize, onUpdateStock,
-    onRenameItemLabel // <-- NUEVO
+    onRenameItemLabel, computeSalesSinceStock
   } = props;
 
   // === Estado del texto del buscador (queda ARRIBA del bloque nuevo)
@@ -3349,6 +3520,9 @@ const mergedClassName = [
             const subtotal = (it.unit_price || 0) * (it.qty || 0);
             const anchor = latestDateForProduct(sales, it.product_name);
             const st = computeStats(sales, it.product_name, anchor);
+            const productLabel = (it.display_name?.trim() || it.product_name).trim();
+            const lastStockTs = it.stock_updated_at ? new Date(it.stock_updated_at).getTime() : null;
+            const pendingSales = lastStockTs ? computeSalesSinceStock(productLabel, lastStockTs) : 0;
             const isChecked = !!checkedMap[it.id];
 
             return (
@@ -3445,6 +3619,7 @@ const mergedClassName = [
       value={it.stock_qty ?? null}
       updatedAt={it.stock_updated_at}
       onCommit={(n) => onUpdateStock(it.id, n)}
+      salesSince={pendingSales}
     />
   </div>
 </div>

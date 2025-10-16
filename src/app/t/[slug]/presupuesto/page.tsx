@@ -122,6 +122,18 @@ const TABLE_PW_WEEKS = "provider_weeks";               // semanas “fuente”
 const TABLE_PW_INCLUDED = "provider_week_providers";   // inclusión por semana
 const WEEK_CACHE_KEY_PREFIX = "gestock:proveedores:selected_week"; // pista local (no bloqueante)
 
+const BUDGET_KEY_ROOT = "budget_cap";
+const budgetKeyForScope = (
+  tenantId?: string | null,
+  branchId?: string | null,
+  weekId?: string | null,
+) => {
+  const tid = tenantId?.trim() || "-";
+  const bid = branchId?.trim() || "-";
+  const wid = weekId?.trim() || "global";
+  return `${BUDGET_KEY_ROOT}:${tid}:${bid}:${wid}`;
+};
+
 type PWWeekRow = { id: string; week_start: string; label?: string | null };
 type PWIncludedRow = { id: string; week_id: string; provider_id: string; added_at: string | null };
 
@@ -295,6 +307,10 @@ const [weekOptions, setWeekOptions] = React.useState<PWWeekRow[]>([]);
   const weekCacheKey = React.useMemo(
     () => `${WEEK_CACHE_KEY_PREFIX}:${tenantId ?? "-"}:${branchId ?? "-"}`,
     [tenantId, branchId]
+  );
+  const budgetKey = React.useMemo(
+    () => budgetKeyForScope(tenantId, branchId, activeWeekId),
+    [tenantId, branchId, activeWeekId]
   );
 
   React.useEffect(() => {
@@ -472,7 +488,37 @@ React.useEffect(() => {
 React.useEffect(() => {
   let alive = true;
   (async () => {
-    if (!activeWeekId || !tenantId || !branchId) return;
+    if (!tenantId || !branchId) return;
+
+    if (!activeWeekId) {
+      // Vista global (sin semana seleccionada) — recupera presupuesto general si existe.
+      setBudget(0);
+      setBudgetInput("0");
+      setPersistedBudget(0);
+      try {
+        const { data, error } = await supabase
+          .from("app_settings")
+          .select("value")
+          .eq("tenant_id", tenantId)
+          .eq("branch_id", branchId)
+          .eq("key", budgetKey)
+          .maybeSingle();
+        if (!alive) return;
+        if (error && error.code !== "PGRST116") throw error;
+        const stored = data?.value != null ? Number(data.value) : null;
+        if (stored != null && Number.isFinite(stored)) {
+          setBudget(stored);
+          setBudgetInput(stored ? stored.toLocaleString("es-AR") : "0");
+          setPersistedBudget(stored);
+          setWeekRow((prev) => (prev ? { ...prev, budget_cap: stored } : prev));
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[presupuesto] budget load (global):", message);
+      }
+      return;
+    }
+
     const { data, error } = await supabase
       .from(TABLE_PW_WEEKS)
       .select("week_start")
@@ -492,17 +538,45 @@ React.useEffect(() => {
     try {
       const row = await ensureWeekRow(meta); // fila en budget_weeks
       if (!alive) return;
+
       setWeekRow(row);
-      setBudget(row.budget_cap || 0);
-      setBudgetInput((row.budget_cap || 0).toLocaleString("es-AR"));
-      setPersistedBudget(row.budget_cap || 0);
+      let resolvedBudget = row.budget_cap || 0;
+      setBudget(resolvedBudget);
+      setBudgetInput(resolvedBudget ? resolvedBudget.toLocaleString("es-AR") : "0");
+      setPersistedBudget(resolvedBudget);
+
+      try {
+        const { data: settingsRow, error: settingsErr } = await supabase
+          .from("app_settings")
+          .select("value")
+          .eq("tenant_id", tenantId)
+          .eq("branch_id", branchId)
+          .eq("key", budgetKey)
+          .maybeSingle();
+        if (settingsErr && settingsErr.code !== "PGRST116") throw settingsErr;
+        if (settingsRow?.value != null) {
+          const parsed = Number(settingsRow.value);
+          if (Number.isFinite(parsed)) resolvedBudget = parsed;
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[presupuesto] budget load (week):", message);
+      }
+
+      if (!alive) return;
+      if (resolvedBudget !== row.budget_cap) {
+        setWeekRow({ ...row, budget_cap: resolvedBudget });
+        setBudget(resolvedBudget);
+        setBudgetInput(resolvedBudget ? resolvedBudget.toLocaleString("es-AR") : "0");
+        setPersistedBudget(resolvedBudget);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn("[presupuesto] ensureWeekRow (active):", message);
     }
   })();
   return () => { alive = false; };
-}, [activeWeekId, supabase, tenantId, branchId, ensureWeekRow]);
+}, [activeWeekId, supabase, tenantId, branchId, ensureWeekRow, budgetKey]);
 
   /* ===== Cargar proveedores y montos ===== */
   React.useEffect(() => {
@@ -739,6 +813,24 @@ const mapSum = new Map<string, number>();
       .eq("tenant_id", tenantId)
       .eq("branch_id", branchId);
     if (error) throw error;
+
+    try {
+      const { error: settingsError } = await supabase
+        .from("app_settings")
+        .upsert({
+          key: budgetKey,
+          tenant_id: tenantId,
+          branch_id: branchId,
+          value: String(n),
+        }, { onConflict: "key" });
+      if (settingsError && settingsError.code !== "PGRST116") {
+        console.warn("[presupuesto] budget save (settings):", settingsError.message);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[presupuesto] budget save (settings):", message);
+    }
+
     setPersistedBudget(n);
     setWeekRow((prev) => (prev ? { ...prev, budget_cap: n, updated_at: updatedAt } : prev));
   }
