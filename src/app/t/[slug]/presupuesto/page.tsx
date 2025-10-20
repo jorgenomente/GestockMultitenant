@@ -15,25 +15,14 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetTrigger,
-} from "@/components/ui/sheet";
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-
 /* Icons */
 import {
   ChevronsDown,
-  History as HistoryIcon,
-  CalendarPlus,
-  Trash2,
   CalendarDays,
   Truck,
   Check,
-  FolderOpen as OpenIcon,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
 
 /* =================== Tipos =================== */
@@ -66,46 +55,6 @@ type BudgetProvider = {
   receive_day?: number | null;
 };
 
-/** Lo que guardamos por proveedor en el snapshot (historial) */
-type SnapshotProvider = {
-  id: string;
-  name: string;
-  freq: Freq;
-  status: Status;
-  payment: "EFECTIVO" | "TRANSFER";
-  responsible?: string | null;
-  usedOverride: boolean;
-  overrideAmount?: number;
-  amount: number;
-};
-
-/* ====== Snapshots (Historial) ====== */
-type SnapshotPayload = {
-  totalsByFreq?: Record<Freq, number> | null;
-  totalsByMethod?: { EFECTIVO?: number; TRANSFER?: number } | null;
-  totalSemana?: number | null;
-  diferencia?: number | null;
-  providersByFreq?: Record<Freq, SnapshotProvider[]> | null;
-};
-
-type BudgetSnapshot = {
-  id: string;
-  weekStart: string;
-  weekEnd: string;
-  label?: string;
-  budgetCap: number;
-  totalsByFreq: Record<Freq, number>;
-  totalsByMethod: { EFECTIVO: number; TRANSFER: number };
-  totalSemana: number;
-  diferencia: number;
-  providersByFreq?: Record<Freq, SnapshotProvider[]>;
-  createdAt: string;
-};
-
-function snapshotTitle(h: BudgetSnapshot) {
-  return h.label?.trim() || `${formatAR(h.weekStart)}–${formatAR(h.weekEnd)}`;
-}
-
 /* =================== Constantes =================== */
 const CACHE_KEY_PREFIX = "gestock:proveedores_cache:v5";
 const TABLE_PROVIDERS = "providers";
@@ -115,7 +64,6 @@ const TABLE_SUMMARIES_WEEK = "order_summaries_week";
 /* === Presupuesto (propio) === */
 const TABLE_WEEKS = "budget_weeks";
 const TABLE_OVERRIDES = "budget_overrides";
-const TABLE_SNAPS = "budget_snapshots";
 
 /* === Semana + inclusión (desde Proveedores) === */
 const TABLE_PW_WEEKS = "provider_weeks";               // semanas “fuente”
@@ -146,16 +94,6 @@ type WeekRow = {
   budget_cap: number;
   created_at: string;
   updated_at: string;
-};
-
-type SnapshotRow = {
-  id: string;
-  week_start: string;
-  week_end: string;
-  label: string | null;
-  budget_cap: number;
-  payload: SnapshotPayload | null;
-  created_at: string;
 };
 
 const FREQ_LABEL: Record<Freq, string> = {
@@ -218,14 +156,6 @@ function getISOWeekFromISO(dateISO: string): number {
 const parseMoney = (s: string) => Number(String(s).replace(/[^\d]/g, "")) || 0;
 const normPayment = (v?: PayMethod | null): "EFECTIVO" | "TRANSFER" =>
   v === "TRANSFERENCIA" ? "TRANSFER" : v === "TRANSFER" ? "TRANSFER" : "EFECTIVO";
-function startOfMonday(d: Date) {
-  const day = d.getDay();
-  const diff = (day + 6) % 7;
-  const res = new Date(d);
-  res.setDate(d.getDate() - diff);
-  res.setHours(0, 0, 0, 0);
-  return res;
-}
 function addDays(d: Date, days: number) {
   const res = new Date(d);
   res.setDate(res.getDate() + days);
@@ -243,6 +173,7 @@ const toDateStr = (iso: string) => new Date(iso).toISOString().slice(0, 10);
 
 /* Overrides (presupuestado) - en memoria; se persisten sólo si hay weekRow */
 type Overrides = Record<string, { enabled: boolean; amount: number }>;
+type WeekMeta = { weekStart: string; weekEnd: string };
 
 /* =================== Page =================== */
 export default function PresupuestoPage() {
@@ -261,13 +192,6 @@ const urlWeekId = search.get("week"); // ?week=<provider_weeks.id>
 
 const [weekOptions, setWeekOptions] = React.useState<PWWeekRow[]>([]);
 
-  /* Semana SOLO como etiqueta/título (no afecta datos) */
-  type WeekMeta = { weekStart: string; weekEnd: string };
-  const [week, setWeek] = React.useState<WeekMeta>(() => {
-    const monday = startOfMonday(new Date());
-    const sunday = addDays(monday, 6);
-    return { weekStart: monday.toISOString(), weekEnd: sunday.toISOString() };
-  });
   /* Fila de semana de trabajo (para persistir overrides si hace falta) — fija al cargar */
   const [weekRow, setWeekRow] = React.useState<WeekRow | null>(null);
 
@@ -280,17 +204,7 @@ const [weekOptions, setWeekOptions] = React.useState<PWWeekRow[]>([]);
   const [data, setData] = React.useState<BudgetProvider[]>([]);
   const [overrides, setOverrides] = React.useState<Overrides>({});
 
-  /* Historial */
-  const [historyOpen, setHistoryOpen] = React.useState(false);
-  const [history, setHistory] = React.useState<BudgetSnapshot[]>([]);
-  const [confirmDelete, setConfirmDelete] = React.useState<{ open: boolean; id?: string; title?: string }>({ open: false });
-
-  /* Cambios sin guardar y estado del botón Guardar */
-  const [dirty, setDirty] = React.useState(false);
-  const [saveState, setSaveState] = React.useState<"idle" | "saving" | "saved">("idle");
-
-  /* Confirmación para cambiar de snapshot con cambios pendientes */
-  const [pendingOpen, setPendingOpen] = React.useState<{ open: boolean; target?: BudgetSnapshot | null }>({ open: false, target: null });
+  const [budgetSaveState, setBudgetSaveState] = React.useState<"idle" | "saving" | "saved" | "error">("idle");
 
   /* ===== Semana ACTIVA para inclusión (cross-device) ===== */
   const [activeWeekId, setActiveWeekId] = React.useState<string | null>(null);
@@ -319,11 +233,9 @@ const [weekOptions, setWeekOptions] = React.useState<PWWeekRow[]>([]);
     setBudget(0);
     setBudgetInput("0");
     setPersistedBudget(0);
+    setBudgetSaveState("idle");
     setData([]);
     setOverrides({});
-    setHistory([]);
-    setDirty(false);
-    setSaveState("idle");
     setActiveWeekId(null);
     setIncludedIds(new Set());
     setLoading(true);
@@ -374,55 +286,6 @@ const [weekOptions, setWeekOptions] = React.useState<PWWeekRow[]>([]);
     );
   }
 
-  const fetchHistory = React.useCallback(async () => {
-    if (!tenantId || !branchId) return;
-    const { data, error } = await supabase
-      .from(TABLE_SNAPS)
-      .select("*")
-      .eq("tenant_id", tenantId)
-      .eq("branch_id", branchId)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.warn("[presupuesto] snapshots:", error.message);
-      return;
-    }
-
-    const list: BudgetSnapshot[] = (data as SnapshotRow[]).map((r) => {
-      const payload = r.payload || {};
-      const byFreq: Record<Freq, number> = { SEMANAL: 0, QUINCENAL: 0, MENSUAL: 0 };
-      ORDER.forEach((freq) => {
-        byFreq[freq] = Number(payload.totalsByFreq?.[freq] ?? 0);
-      });
-
-      const totalsByMethod = {
-        EFECTIVO: Number(payload.totalsByMethod?.EFECTIVO ?? 0),
-        TRANSFER: Number(payload.totalsByMethod?.TRANSFER ?? 0),
-      };
-
-      const providersByFreq = payload.providersByFreq
-        ? (Object.fromEntries(
-            ORDER.map((freq) => [freq, payload.providersByFreq?.[freq] ?? []])
-          ) as Record<Freq, SnapshotProvider[]>)
-        : undefined;
-
-      return {
-        id: r.id,
-        weekStart: new Date(r.week_start).toISOString(),
-        weekEnd: new Date(r.week_end).toISOString(),
-        label: r.label ?? undefined,
-        budgetCap: Number(r.budget_cap) || 0,
-        totalsByFreq: byFreq,
-        totalsByMethod,
-        totalSemana: Number(payload.totalSemana ?? 0),
-        diferencia: Number(payload.diferencia ?? 0),
-        providersByFreq,
-        createdAt: r.created_at,
-      };
-    });
-
-    setHistory(list);
-  }, [supabase, tenantId, branchId]);
 // Cargar opciones de semanas (provider_weeks)
 React.useEffect(() => {
   if (!tenantId || !branchId) return;
@@ -495,6 +358,8 @@ React.useEffect(() => {
       setBudget(0);
       setBudgetInput("0");
       setPersistedBudget(0);
+      setWeekRow(null);
+      setBudgetSaveState("idle");
       try {
         const { data, error } = await supabase
           .from("app_settings")
@@ -533,47 +398,47 @@ React.useEffect(() => {
     const meta = { weekStart: monday.toISOString(), weekEnd: sunday.toISOString() };
     if (!alive) return;
 
-    setWeek(meta); // etiqueta/rango visual
 
+    let row: WeekRow | null = null;
     try {
-      const row = await ensureWeekRow(meta); // fila en budget_weeks
-      if (!alive) return;
-
-      setWeekRow(row);
-      let resolvedBudget = row.budget_cap || 0;
-      setBudget(resolvedBudget);
-      setBudgetInput(resolvedBudget ? resolvedBudget.toLocaleString("es-AR") : "0");
-      setPersistedBudget(resolvedBudget);
-
-      try {
-        const { data: settingsRow, error: settingsErr } = await supabase
-          .from("app_settings")
-          .select("value")
-          .eq("tenant_id", tenantId)
-          .eq("branch_id", branchId)
-          .eq("key", budgetKey)
-          .maybeSingle();
-        if (settingsErr && settingsErr.code !== "PGRST116") throw settingsErr;
-        if (settingsRow?.value != null) {
-          const parsed = Number(settingsRow.value);
-          if (Number.isFinite(parsed)) resolvedBudget = parsed;
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn("[presupuesto] budget load (week):", message);
-      }
-
-      if (!alive) return;
-      if (resolvedBudget !== row.budget_cap) {
-        setWeekRow({ ...row, budget_cap: resolvedBudget });
-        setBudget(resolvedBudget);
-        setBudgetInput(resolvedBudget ? resolvedBudget.toLocaleString("es-AR") : "0");
-        setPersistedBudget(resolvedBudget);
-      }
+      row = await ensureWeekRow(meta);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn("[presupuesto] ensureWeekRow (active):", message);
+      row = null;
     }
+
+    if (!alive) return;
+
+    setWeekRow(row);
+    let resolvedBudget = row?.budget_cap || 0;
+
+    try {
+      const { data: settingsRow, error: settingsErr } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId)
+        .eq("key", budgetKey)
+        .maybeSingle();
+      if (settingsErr && settingsErr.code !== "PGRST116") throw settingsErr;
+      if (settingsRow?.value != null) {
+        const parsed = Number(settingsRow.value);
+        if (Number.isFinite(parsed)) resolvedBudget = parsed;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[presupuesto] budget load (week):", message);
+    }
+
+    if (!alive) return;
+    setBudget(resolvedBudget);
+    setBudgetInput(resolvedBudget ? resolvedBudget.toLocaleString("es-AR") : "0");
+    setPersistedBudget(resolvedBudget);
+    if (row && resolvedBudget !== row.budget_cap) {
+      setWeekRow({ ...row, budget_cap: resolvedBudget });
+    }
+    setBudgetSaveState("idle");
   })();
   return () => { alive = false; };
 }, [activeWeekId, supabase, tenantId, branchId, ensureWeekRow, budgetKey]);
@@ -755,14 +620,8 @@ const mapSum = new Map<string, number>();
     return { f, amount, pct };
   });
 
-  /* ===== Cambios ===== */
-  function markDirty() {
-    setDirty(true);
-    if (saveState === "saved") setSaveState("idle");
-  }
   function setOverrideAmount(id: string, value: number) {
     setOverrides((prev) => ({ ...prev, [id]: { enabled: prev[id]?.enabled ?? false, amount: value } }));
-    markDirty();
   }
   function toggleOverride(id: string, enabled: boolean) {
     setOverrides((prev) => {
@@ -771,7 +630,6 @@ const mapSum = new Map<string, number>();
       if (weekRow) upsertOverride(weekRow.id, id, nextOv).catch(console.error);
       return { ...prev, [id]: nextOv };
     });
-    markDirty();
   }
 
   /* ===== Presupuesto (editable con check) ===== */
@@ -786,7 +644,7 @@ const mapSum = new Map<string, number>();
       setBudget(n);
       setBudgetInput(n.toLocaleString("es-AR"));
     }
-    markDirty();
+    if (budgetSaveState !== "idle") setBudgetSaveState("idle");
   }
   function handleBudgetBlur() {
     const n = parseMoney(budgetInput);
@@ -803,17 +661,32 @@ const mapSum = new Map<string, number>();
     const n = typeof nextValue === "number" ? nextValue : parseMoney(budgetInput);
     setBudget(n);
     setBudgetInput(n ? n.toLocaleString("es-AR") : "0");
-    if (n === persistedBudget) return;
-    if (!weekRow || !tenantId || !branchId) return;
-    const updatedAt = new Date().toISOString();
-    const { error } = await supabase
-      .from(TABLE_WEEKS)
-      .update({ budget_cap: n, updated_at: updatedAt })
-      .eq("id", weekRow.id)
-      .eq("tenant_id", tenantId)
-      .eq("branch_id", branchId);
-    if (error) throw error;
+    if (!tenantId || !branchId) return;
+    if (n === persistedBudget && budgetSaveState === "idle") return;
 
+    setBudgetSaveState("saving");
+    const updatedAt = new Date().toISOString();
+
+    if (weekRow) {
+      try {
+        const { error } = await supabase
+          .from(TABLE_WEEKS)
+          .update({ budget_cap: n, updated_at: updatedAt })
+          .eq("id", weekRow.id)
+          .eq("tenant_id", tenantId)
+          .eq("branch_id", branchId);
+        if (error && error.code !== "PGRST116") {
+          console.warn("[presupuesto] budget save (weeks):", error.message);
+        } else if (!error) {
+          setWeekRow((prev) => (prev ? { ...prev, budget_cap: n, updated_at: updatedAt } : prev));
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[presupuesto] budget save (weeks):", message);
+      }
+    }
+
+    let settingsOk = false;
     try {
       const { error: settingsError } = await supabase
         .from("app_settings")
@@ -822,140 +695,27 @@ const mapSum = new Map<string, number>();
           tenant_id: tenantId,
           branch_id: branchId,
           value: String(n),
-        }, { onConflict: "key" });
+        }, { onConflict: "key" })
+        .select("updated_at")
+        .maybeSingle();
       if (settingsError && settingsError.code !== "PGRST116") {
         console.warn("[presupuesto] budget save (settings):", settingsError.message);
+      } else {
+        settingsOk = true;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn("[presupuesto] budget save (settings):", message);
     }
 
-    setPersistedBudget(n);
-    setWeekRow((prev) => (prev ? { ...prev, budget_cap: n, updated_at: updatedAt } : prev));
-  }
-
-  /* ===== Guardar snapshot (botón Guardar) ===== */
-  function snapshotCurrentPayload() {
-    const snapProvidersByFreq: Record<Freq, SnapshotProvider[]> = { SEMANAL: [], QUINCENAL: [], MENSUAL: [] };
-    visibleData.forEach((p) => {
-      const ov = overrides[p.id];
-      const usedOverride = !!ov?.enabled;
-      const finalAmount = usedOverride ? ov!.amount : (p.amount || 0);
-      snapProvidersByFreq[p.freq].push({
-        id: p.id,
-        name: p.name,
-        freq: p.freq,
-        status: p.status,
-        payment: p.payment,
-        responsible: p.responsible,
-        usedOverride,
-        overrideAmount: usedOverride ? ov!.amount : undefined,
-        amount: finalAmount,
-      });
-    });
-    ORDER.forEach((f) => snapProvidersByFreq[f].sort((a, b) => a.name.localeCompare(b.name, "es")));
-    return {
-      totalsByFreq,
-      totalsByMethod: { EFECTIVO: totalEfectivo, TRANSFER: totalTransfer },
-      totalSemana,
-      diferencia,
-      providersByFreq: snapProvidersByFreq,
-    };
-  }
-
-  async function saveSnapshot() {
-    if (!week.weekStart || !week.weekEnd) return;
-    if (!tenantId || !branchId) return;
-    setSaveState("saving");
-    const weekNo = getISOWeekFromISO(week.weekStart);
-    const label = `Semana ${weekNo} · ${formatAR(week.weekStart)}–${formatAR(week.weekEnd)}`;
-    const payload = snapshotCurrentPayload();
-
-    await supabase.from(TABLE_SNAPS).insert([{
-      week_start: toDateStr(week.weekStart),
-      week_end:   toDateStr(week.weekEnd),
-      label,
-      budget_cap: budget,
-      payload,
-      tenant_id: tenantId,
-      branch_id: branchId,
-    }]);
-
-    if (historyOpen) fetchHistory();
-    setDirty(false);
-    setSaveState("saved");
-    setTimeout(() => setSaveState("idle"), 2500);
-  }
-
-  /* ===== Abrir snapshot ===== */
-  function buildOverridesFromSnapshot(h: BudgetSnapshot): Overrides {
-    const map: Overrides = {};
-    ORDER.forEach((f) => {
-      (h.providersByFreq?.[f] ?? []).forEach((p) => {
-        map[p.id] = { enabled: true, amount: Number(p.amount || 0) };
-      });
-    });
-    return map;
-  }
-
-  async function openSnapshotNow(h: BudgetSnapshot) {
-    setWeek({ weekStart: new Date(h.weekStart).toISOString(), weekEnd: new Date(h.weekEnd).toISOString() });
-    setBudget(h.budgetCap || 0);
-    setBudgetInput((h.budgetCap || 0).toLocaleString("es-AR"));
-    setPersistedBudget(h.budgetCap || 0);
-    const ov = buildOverridesFromSnapshot(h);
-    setOverrides(ov);
-    setDirty(false);
-    setSaveState("idle");
-    try {
-      const row = await ensureWeekRow({ weekStart: h.weekStart, weekEnd: h.weekEnd });
-      setWeekRow(row);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn("[presupuesto] openSnapshot ensureWeekRow:", message);
-    }
-    setHistoryOpen(false);
-  }
-
-  function onRequestOpenSnapshot(h: BudgetSnapshot) {
-    if (dirty) {
-      setPendingOpen({ open: true, target: h });
+    if (settingsOk) {
+      setPersistedBudget(n);
+      setBudgetSaveState("saved");
+      setTimeout(() => setBudgetSaveState("idle"), 1800);
     } else {
-      openSnapshotNow(h);
+      setBudgetSaveState("error");
+      setTimeout(() => setBudgetSaveState("idle"), 3000);
     }
-  }
-
-  /* ===== Historial: abrir, renombrar, borrar ===== */
-  React.useEffect(() => {
-    if (historyOpen) fetchHistory();
-  }, [historyOpen, fetchHistory]);
-
-  async function updateHistoryLabel(id: string, label: string) {
-    setHistory((prev) => prev.map((s) => (s.id === id ? { ...s, label } : s)));
-    if (!tenantId || !branchId) return;
-    await supabase
-      .from(TABLE_SNAPS)
-      .update({ label })
-      .eq("id", id)
-      .eq("tenant_id", tenantId)
-      .eq("branch_id", branchId);
-  }
-  function askDeleteSnapshot(s: BudgetSnapshot) {
-    setConfirmDelete({ open: true, id: s.id, title: snapshotTitle(s) });
-  }
-  async function doDeleteSnapshot() {
-    const id = confirmDelete.id;
-    setConfirmDelete({ open: false });
-    if (!id) return;
-    if (!tenantId || !branchId) return;
-    await supabase
-      .from(TABLE_SNAPS)
-      .delete()
-      .eq("id", id)
-      .eq("tenant_id", tenantId)
-      .eq("branch_id", branchId);
-    fetchHistory();
   }
 
   /* =================== Render =================== */
@@ -976,275 +736,77 @@ const mapSum = new Map<string, number>();
   return (
     <div className="p-4 pb-24 space-y-4 max-w-md mx-auto">
       <header className="space-y-3">
-  <div className="flex items-center justify-between gap-2">
-    <div className="flex-1">
-      <Select
-        value={activeWeekId ?? undefined}
-        onValueChange={(id) => {
-          const sp = new URLSearchParams(search.toString());
-          sp.set("week", id);
-          router.replace(`?${sp.toString()}`, { scroll: false });
-          setActiveWeekId(id);
-          if (typeof window !== "undefined") localStorage.setItem(weekCacheKey, id);
-        }}
-      >
-        <SelectTrigger className="h-10 w-full">
-          <SelectValue placeholder="Elegí una semana" />
-        </SelectTrigger>
-        <SelectContent>
-          {weekOptions.map((w) => (
-            <SelectItem key={w.id} value={w.id}>
-              {weekOptLabel(w)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-
-    {/* Botón Historial */}
-    <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
-      <SheetTrigger asChild>
-        <Button variant="outline" size="icon" className="h-9 w-9 rounded-full" aria-label="Historial">
-          <HistoryIcon className="h-4 w-4" />
-        </Button>
-      </SheetTrigger>
-
-
-            <SheetContent side="left" className="w-[85vw] sm:w-[420px] max-h-[100svh] overflow-y-auto overscroll-contain">
-              <SheetHeader>
-                <SheetTitle>Historial de semanas</SheetTitle>
-                <SheetDescription>Snapshots guardados manualmente con “Guardar” o al iniciar una nueva semana.</SheetDescription>
-              </SheetHeader>
-
-              <div className="mt-4 space-y-3 pb-10">
-                {history.length === 0 && (
-                  <div className="text-sm text-muted-foreground">Aún no hay registros.</div>
-                )}
-
-                {history.map((h) => {
-                  const snapSum = (list?: SnapshotProvider[]) =>
-                    (list ?? []).reduce((s, it) => s + (it.amount || 0), 0);
-
-                  return (
-                    <Card key={h.id} className="border-slate-200">
-                      <CardContent className="py-3 space-y-3">
-                        {/* Encabezado editable + abrir + borrar */}
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1">
-                            <Input
-                              value={snapshotTitle(h)}
-                              onChange={(e) => updateHistoryLabel(h.id, e.target.value)}
-                              className="h-8 text-sm font-medium"
-                              aria-label="Nombre de la semana"
-                            />
-                            <div className="text-xs text-slate-500 mt-1">
-                              Guardado: {new Date(h.createdAt).toLocaleString("es-AR")}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full"
-                              onClick={() => onRequestOpenSnapshot(h)} aria-label="Abrir presupuesto" title="Abrir">
-                              <OpenIcon className="h-4 w-4" />
-                            </Button>
-                            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full"
-                              onClick={() => askDeleteSnapshot(h)} aria-label="Eliminar snapshot" title="Eliminar">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-
-                        {/* Resumen numérico */}
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="text-slate-600">Presupuesto:</div>
-                          <div className="font-bold">{fmtARS(h.budgetCap)}</div>
-                        </div>
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="text-slate-600">Total:</div>
-                          <div className="font-bold">{fmtARS(h.totalSemana)}</div>
-                        </div>
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="text-slate-600">Dif.:</div>
-                          <div className="font-bold">{fmtARS(h.diferencia)}</div>
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-2 text-xs">
-                          <div className="rounded-md p-2 bg-emerald-50">
-                            <div className="text-slate-500">Semanales</div>
-                            <div className="font-semibold">{fmtARS(h.totalsByFreq.SEMANAL)}</div>
-                          </div>
-                          <div className="rounded-md p-2 bg-amber-50">
-                            <div className="text-slate-500">Quincenales</div>
-                            <div className="font-semibold">{fmtARS(h.totalsByFreq.QUINCENAL)}</div>
-                          </div>
-                          <div className="rounded-md p-2 bg-rose-50">
-                            <div className="text-slate-500">Mensuales</div>
-                            <div className="font-semibold">{fmtARS(h.totalsByFreq.MENSUAL)}</div>
-                          </div>
-                        </div>
-
-                        {/* Desplegables del snapshot */}
-                        {h.providersByFreq ? (
-                          <Accordion type="multiple" className="mt-2">
-                            {ORDER.map((f) => {
-                              const list = h.providersByFreq?.[f] ?? [];
-                              if (list.length === 0) return null;
-                              const total = snapSum(list);
-                              return (
-                                <AccordionItem key={f} value={`${h.id}-${f}`} className="border rounded-lg">
-                                  <AccordionTrigger className="px-3 py-2 hover:no-underline">
-                                    <div className="w-full flex items-center justify-between">
-                                      <div className="text-sm font-medium">{FREQ_LABEL[f]}</div>
-                                      <Badge className={`rounded-full px-2 py-0.5 text-xs ${FREQ_BADGE[f]}`}>
-                                        {fmtARS(total)}
-                                      </Badge>
-                                    </div>
-                                  </AccordionTrigger>
-                                  <AccordionContent className="px-3 pb-2 space-y-2">
-                                    {list.map((p) => (
-                                      <div key={p.id} className="rounded-md border border-slate-200 px-3 py-2 flex items-start justify-between">
-                                        <div>
-                                          <div className="text-[15px] font-semibold">{p.name}</div>
-                                          <div className="text-[11px] text-slate-500 flex flex-wrap gap-2 mt-0.5">
-                                            <span>• {p.payment === "EFECTIVO" ? "Efectivo" : "Transferencia"}</span>
-                                            {p.responsible ? <span>• {p.responsible}</span> : null}
-                                            <span className={p.status === "REALIZADO" ? "uppercase text-emerald-700" : "uppercase text-orange-600"}>
-                                              • {p.status.toLowerCase()}
-                                            </span>
-                                            {p.usedOverride && (
-                                              <span className="uppercase text-sky-700">
-                                                • presupuestado ({fmtARS(p.overrideAmount ?? 0)})
-                                              </span>
-                                            )}
-                                          </div>
-                                        </div>
-                                        <div className="font-semibold">{fmtARS(p.amount)}</div>
-                                      </div>
-                                    ))}
-                                  </AccordionContent>
-                                </AccordionItem>
-                              );
-                            })}
-                          </Accordion>
-                        ) : null}
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-
-              {/* Confirmación borrar */}
-              <AlertDialog open={confirmDelete.open} onOpenChange={(open) => setConfirmDelete((s) => ({ ...s, open }))}>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Eliminar semana</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      ¿Seguro que querés eliminar <b>{confirmDelete.title}</b> del historial? Esta acción no se puede deshacer.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                    <AlertDialogAction onClick={doDeleteSnapshot}>Eliminar</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-
-              {/* Confirmación de abrir con cambios pendientes */}
-              <AlertDialog open={pendingOpen.open} onOpenChange={(open) => setPendingOpen((s) => ({ ...s, open }))}>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Tienes cambios sin guardar</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      ¿Querés <b>guardar y abrir</b> el otro presupuesto, <b>descartar y abrir</b>, o <b>cancelar</b>?
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter className="gap-2">
-                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        const t = pendingOpen.target!;
-                        setPendingOpen({ open: false, target: null });
-                        openSnapshotNow(t); // descartar y abrir
-                      }}
-                    >
-                      Descartar y abrir
-                    </Button>
-                    <AlertDialogAction
-                      onClick={async () => {
-                        await saveSnapshot();
-                        const t = pendingOpen.target!;
-                        setPendingOpen({ open: false, target: null });
-                        openSnapshotNow(t); // guardar y abrir
-                      }}
-                    >
-                      Guardar y abrir
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </SheetContent>
-          </Sheet>
-        </div>
-
-        {/* Presupuesto (editable) + Guardar */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 rounded-xl border border-slate-300 px-2 py-1 bg-white">
-            <Input
-              aria-label="Presupuesto semanal"
-              inputMode="numeric"
-              enterKeyHint="done"
-              pattern="[0-9]*"
-              className="h-10 font-mono text-lg border-0 shadow-none focus-visible:ring-0 p-0"
-              style={{ width: `${inputCh}ch` }}
-              value={budgetInput}
-              onChange={handleBudgetChange}
-              onBlur={handleBudgetBlur}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  handleBudgetSave().catch((err) => {
-                    const message = err instanceof Error ? err.message : String(err);
-                    console.warn("[presupuesto] budget save (enter):", message);
-                  });
-                }
-              }}
-            />
-            <Button size="icon" className="h-8 w-8 rounded-full" aria-label="Guardar presupuesto base"
-              title="Guardar presupuesto base"
-              onClick={() => {
-                handleBudgetSave().catch((err) => {
-                  const message = err instanceof Error ? err.message : String(err);
-                  console.warn("[presupuesto] budget save (click):", message);
-                });
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex-1">
+            <Select
+              value={activeWeekId ?? undefined}
+              onValueChange={(id) => {
+                const sp = new URLSearchParams(search.toString());
+                sp.set("week", id);
+                router.replace(`?${sp.toString()}`, { scroll: false });
+                setActiveWeekId(id);
+                if (typeof window !== "undefined") localStorage.setItem(weekCacheKey, id);
               }}
             >
-              <Check className="h-4 w-4" />
-            </Button>
+              <SelectTrigger className="h-10 w-full">
+                <SelectValue placeholder="Elegí una semana" />
+              </SelectTrigger>
+              <SelectContent>
+                {weekOptions.map((w) => (
+                  <SelectItem key={w.id} value={w.id}>
+                    {weekOptLabel(w)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
-          <span className="text-indigo-600 font-semibold">Presupuesto</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 rounded-xl border border-slate-300 px-2 py-1 bg-white">
+              <Input
+                aria-label="Presupuesto semanal"
+                inputMode="numeric"
+                enterKeyHint="done"
+                pattern="[0-9]*"
+                className="h-10 font-mono text-lg border-0 shadow-none focus-visible:ring-0 p-0"
+                style={{ width: `${inputCh}ch` }}
+                value={budgetInput}
+                onChange={handleBudgetChange}
+                onBlur={handleBudgetBlur}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleBudgetSave().catch((err) => {
+                      const message = err instanceof Error ? err.message : String(err);
+                      console.warn("[presupuesto] budget save (enter):", message);
+                    });
+                  }
+                }}
+              />
+              <Button
+                size="icon"
+                className={`h-8 w-8 rounded-full transition-colors ${budgetSaveState === "saved" ? "bg-emerald-600 text-white" : budgetSaveState === "error" ? "bg-rose-100 text-rose-700" : ""}`}
+                aria-label="Guardar presupuesto"
+                title={budgetSaveState === "saved" ? "Presupuesto guardado" : budgetSaveState === "error" ? "Hubo un problema al guardar" : "Guardar presupuesto"}
+                disabled={budgetSaveState === "saving"}
+                onClick={() => {
+                  handleBudgetSave().catch((err) => {
+                    const message = err instanceof Error ? err.message : String(err);
+                    console.warn("[presupuesto] budget save (click):", message);
+                  });
+                }}
+              >
+                {budgetSaveState === "saving" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : budgetSaveState === "error" ? (
+                  <AlertCircle className="h-4 w-4" />
+                ) : (
+                  <Check className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
 
-          <Button
-            size="sm"
-            className={`ml-auto rounded-full ${saveState === "saved" ? "bg-emerald-600 hover:bg-emerald-600" : ""}`}
-            onClick={saveSnapshot}
-            aria-label="Guardar (agregar al historial)"
-            title={saveState === "saved" ? "Guardado" : "Guardar (agrega al historial)"}
-            disabled={saveState === "saving"}
-          >
-            {saveState === "saving" ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-1 animate-spin" /> Guardando…
-              </>
-            ) : saveState === "saved" ? (
-              <>
-                <Check className="h-4 w-4 mr-1" /> Guardado
-              </>
-            ) : (
-              <>
-                <CalendarPlus className="h-4 w-4 mr-1" /> Guardar
-              </>
-            )}
-          </Button>
+            <span className="text-indigo-600 font-semibold">Presupuesto</span>
+          </div>
         </div>
 
         {/* Barra segmentada por frecuencia */}

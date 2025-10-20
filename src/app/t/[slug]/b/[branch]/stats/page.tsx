@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Loader2, Upload } from "lucide-react";
 import { useBranch } from "@/components/branch/BranchProvider";
+import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 /* ========= Config ========= */
 const VENTAS_URL = "/ventas.xlsx";
@@ -43,6 +44,33 @@ type SavedMeta = {
   ts?: number;
   size?: number;
   storage: "idb" | "local-b64" | "default";
+};
+
+type SalesPersistMeta = {
+  url?: string;
+  base64?: string;
+  mime_type?: string;
+  filename?: string;
+  uploaded_at?: string;
+  tenant_id?: string | null;
+  branch_id?: string | null;
+  scope_key?: string;
+};
+
+const SALES_KEY_ROOT = "sales_url";
+const salesKeyForScope = (tenantId?: string | null, branchId?: string | null) => {
+  const tid = tenantId?.trim() || "";
+  const bid = branchId?.trim() || "";
+  if (tid && bid) return `${SALES_KEY_ROOT}:${tid}:${bid}`;
+  if (tid) return `${SALES_KEY_ROOT}:${tid}`;
+  return SALES_KEY_ROOT;
+};
+const salesKeysForLookup = (tenantId?: string | null, branchId?: string | null) => {
+  const keys: string[] = [];
+  if (tenantId && branchId) keys.push(salesKeyForScope(tenantId, branchId));
+  if (tenantId) keys.push(salesKeyForScope(tenantId, null));
+  keys.push(SALES_KEY_ROOT);
+  return Array.from(new Set(keys));
 };
 
 /* ========= Utils ========= */
@@ -249,12 +277,63 @@ function clearMeta(key: string) {
   localStorage.removeItem(key);
 }
 
+const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+};
+
+async function fetchActiveSalesMeta(
+  supabase: ReturnType<typeof getSupabaseBrowserClient>,
+  tenantId?: string | null,
+  branchId?: string | null,
+): Promise<SalesPersistMeta | null> {
+  if (!tenantId) return null;
+  const keys = salesKeysForLookup(tenantId ?? null, branchId ?? null);
+  for (const key of keys) {
+    try {
+      const { data, error } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("key", key)
+        .maybeSingle();
+      if (error) {
+        const code = error.code ?? "";
+        if (code === "PGRST302") continue;
+        if (code === "42P01") break;
+        console.warn("fetchActiveSalesMeta warning", error);
+        continue;
+      }
+      const raw = data?.value as SalesPersistMeta | undefined;
+      if (raw && (raw.url || raw.base64)) {
+        return { ...raw, scope_key: key, tenant_id: tenantId ?? null, branch_id: branchId ?? null };
+      }
+    } catch (err) {
+      console.warn("fetchActiveSalesMeta exception", err);
+      break;
+    }
+  }
+  return null;
+}
+
 /* ========= Hook: ventas compartidas ========= */
-function useSharedSales(storageSuffix: string | null) {
+function useSharedSales(
+  storageSuffix: string | null,
+  opts: {
+    supabase?: ReturnType<typeof getSupabaseBrowserClient>;
+    tenantId?: string | null;
+    branchId?: string | null;
+  } = {}
+) {
   const metaKey = makeKey(SALES_META_LS_KEY_BASE, storageSuffix);
   const legacyKey = makeKey(SALES_LS_KEY_LEGACY_BASE, storageSuffix);
   const idbKey = makeKey(IDB_SALES_KEY_BASE, storageSuffix);
   const bcName = makeKey(SALES_BC_NAME_BASE, storageSuffix);
+  const supabaseClient = opts.supabase;
+  const tenantId = opts.tenantId ?? null;
+  const branchId = opts.branchId ?? null;
 
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -292,6 +371,45 @@ function useSharedSales(storageSuffix: string | null) {
     try {
       setLoading(true);
       setError(null);
+
+      if (supabaseClient && tenantId) {
+        const meta = await fetchActiveSalesMeta(supabaseClient, tenantId, branchId);
+        if (meta && (meta.base64 || meta.url)) {
+          try {
+            let buffer: ArrayBuffer | null = null;
+            if (meta.base64) {
+              buffer = base64ToArrayBuffer(meta.base64);
+            } else if (meta.url) {
+              const res = await fetch(meta.url, { cache: "no-store" });
+              if (!res.ok) throw new Error(`No se pudo cargar ${meta.url}`);
+              buffer = await res.arrayBuffer();
+            }
+
+            if (buffer) {
+              const map = await parseVentasArrayBuffer(buffer);
+              setByProduct(map);
+              const filename = meta.filename || "ventas.xlsx";
+              const savedMeta: SavedMeta = {
+                filename,
+                ts: meta.uploaded_at ? Date.parse(meta.uploaded_at) : Date.now(),
+                size: buffer.byteLength,
+                storage: "idb",
+              };
+              try {
+                await idbSet(idbKey, buffer);
+                writeMeta(metaKey, savedMeta);
+              } catch (cacheErr) {
+                console.warn("No se pudo cachear ventas", cacheErr);
+              }
+              setSource({ kind: "imported", filename, meta: savedMeta });
+              setLoading(false);
+              return;
+            }
+          } catch (remoteErr: any) {
+            console.warn("No se pudo cargar ventas remotas", remoteErr);
+          }
+        }
+      }
 
       const bufFromIdb = await idbGet<ArrayBuffer>(idbKey);
       const meta = readMeta(metaKey);
@@ -349,7 +467,7 @@ function useSharedSales(storageSuffix: string | null) {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageSuffix]);
+  }, [storageSuffix, supabaseClient, tenantId, branchId]);
 
   async function importVentas(file: File) {
     try {
@@ -411,7 +529,42 @@ export default function EstadisticaPage() {
   const { currentBranch, tenantId } = useBranch();
   const branchId = currentBranch?.id ?? null;
   const storageSuffix = tenantId && branchId ? `${tenantId}:${branchId}` : null;
-  const { loading, error, byProduct, importVentas, clearVentas, source } = useSharedSales(storageSuffix);
+  const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
+  const { loading, error, byProduct, importVentas, clearVentas, source } = useSharedSales(storageSuffix, {
+    supabase,
+    tenantId,
+    branchId,
+  });
+  const handleCopyError = React.useCallback(async () => {
+    if (!error) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(error);
+        return;
+      }
+    } catch (err) {
+      console.warn("copy error message failed", err);
+    }
+    try {
+      if (typeof document !== "undefined") {
+        const textarea = document.createElement("textarea");
+        textarea.value = error;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        return;
+      }
+    } catch (fallbackErr) {
+      console.warn("fallback copy failed", fallbackErr);
+    }
+    if (typeof window !== "undefined") {
+      window.prompt("Copiá el mensaje de error:", error);
+    }
+  }, [error]);
 
   if (!tenantId || !currentBranch) {
     return (
@@ -803,8 +956,17 @@ export default function EstadisticaPage() {
           )}
 
           {error && (
-            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              {error}
+            <div className="flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <p className="flex-1 whitespace-pre-wrap break-words">{error}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleCopyError}
+                className="shrink-0 border-amber-400 text-amber-900 hover:bg-amber-100"
+              >
+                Copiar
+              </Button>
             </div>
           )}
         </CardContent>

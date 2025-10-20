@@ -416,6 +416,36 @@ function useSharedSales() {
 /* ========= Página ========= */
 export default function EstadisticaPage() {
   const { loading, error, byProduct, importVentas, clearVentas, source } = useSharedSales();
+  const handleCopyError = React.useCallback(async () => {
+    if (!error) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(error);
+        return;
+      }
+    } catch (err) {
+      console.warn("copy error message failed", err);
+    }
+    try {
+      if (typeof document !== "undefined") {
+        const textarea = document.createElement("textarea");
+        textarea.value = error;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        return;
+      }
+    } catch (fallbackErr) {
+      console.warn("fallback copy failed", fallbackErr);
+    }
+    if (typeof window !== "undefined") {
+      window.prompt("Copiá el mensaje de error:", error);
+    }
+  }, [error]);
 
   /* ----- UI persistente (fix SSR hydration) ----- */
   type UiState = {
@@ -812,8 +842,17 @@ export default function EstadisticaPage() {
           )}
 
           {error && (
-            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              {error}
+            <div className="flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <p className="flex-1 whitespace-pre-wrap break-words">{error}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleCopyError}
+                className="shrink-0 border-amber-400 text-amber-900 hover:bg-amber-100"
+              >
+                Copiar
+              </Button>
             </div>
           )}
         </CardContent>

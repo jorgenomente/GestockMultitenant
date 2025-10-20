@@ -4,6 +4,7 @@ import React from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { SALES_STORAGE_BUCKET, SALES_STORAGE_DIR } from "@/lib/salesStorage";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 
 /* UI */
@@ -56,13 +57,37 @@ const ITEM_TABLE_CANDIDATES = [
 
 
 /** NUEVO: Config persistencia multi-dispositivo */
-const STORAGE_BUCKET = "gestock";
-const STORAGE_DIR_SALES = "sales";
+const STORAGE_BUCKET = SALES_STORAGE_BUCKET;
+const STORAGE_DIR_SALES = SALES_STORAGE_DIR;
 const TABLE_SETTINGS = "app_settings";
 const TABLE_UI_STATE = "order_ui_state";
 
 const PENDING_PREFIX = "tmp_";
 const GROUP_PLACEHOLDER = "__group__placeholder__";
+
+let ensureSalesBucketPromise: Promise<boolean> | null = null;
+
+async function ensureSalesBucketOnce() {
+  if (!ensureSalesBucketPromise) {
+    ensureSalesBucketPromise = (async () => {
+      try {
+        const res = await fetch("/api/storage/sales/ensure", { method: "POST" });
+        if (!res.ok) {
+          const errorText = await res.text().catch(() => "");
+          console.warn("ensureSalesBucket failed", res.status, errorText);
+          return false;
+        }
+        return true;
+      } catch (err) {
+        console.warn("ensureSalesBucket error", err);
+        return false;
+      }
+    })();
+  }
+  const ok = await ensureSalesBucketPromise;
+  if (!ok) ensureSalesBucketPromise = null;
+  return ok;
+}
 
 const isMissingProviderError = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
@@ -633,8 +658,9 @@ export default function ProviderOrderPage() {
   minYToHide: 24,     // no ocultar hasta pasar ~24px
 });
 
-  const params = useParams<{ provId: string }>();
+  const params = useParams<{ slug: string; provId: string }>();
   const provId = String(params?.provId || "");
+  const tenantSlug = String(params?.slug || "");
   const search = useSearchParams();
   const selectedWeekId = search.get("week");
   const tenantIdFromQuery = normalizeSearchParam(search.get("tenantId"));
@@ -776,6 +802,35 @@ export default function ProviderOrderPage() {
   });
   const salesUploadRef = React.useRef<HTMLInputElement | null>(null);
   const [importingSales, setImportingSales] = React.useState(false);
+  const [salesImportError, setSalesImportError] = React.useState<string | null>(null);
+  const handleCopySalesError = React.useCallback(async () => {
+    if (!salesImportError) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(salesImportError);
+        return;
+      }
+    } catch (err) {
+      console.warn("copy sales error failed", err);
+    }
+    try {
+      if (typeof document !== "undefined") {
+        const textarea = document.createElement("textarea");
+        textarea.value = salesImportError;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        return;
+      }
+    } catch (fallbackErr) {
+      console.warn("fallback copy sales error failed", fallbackErr);
+    }
+    if (typeof window !== "undefined") window.prompt("Copiá el mensaje de error:", salesImportError);
+  }, [salesImportError]);
   // ===== Altura del BottomNav y estilo root (variable CSS global en la página) =====
 const bottomNavHeightPx = 76; // ajustá 72–84px según mida tu BottomNav real
 const rootStyle: React.CSSProperties = {
@@ -2113,30 +2168,60 @@ async function handleExport() {
   async function handleImportSales(file: File) {
     setImportingSales(true);
     try {
+      setSalesImportError(null);
       const ts  = Date.now();
       const safeName = file.name.replace(/[^\w.\-]+/g, "_");
       const path = `${STORAGE_DIR_SALES}/sales_${ts}__${safeName}`;
 
-      const { error: upErr } = await supabase
-        .storage
-        .from(STORAGE_BUCKET)
-        .upload(path, file, {
+      await ensureSalesBucketOnce();
+
+      let uploadError: any = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, {
           cacheControl: "3600",
           upsert: false,
-          contentType: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          contentType:
+            file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         });
 
+        if (!error) {
+          uploadError = null;
+          break;
+        }
+
+        uploadError = error;
+        const statusCode =
+          typeof error.statusCode === "number"
+            ? error.statusCode
+            : typeof (error as any)?.status === "number"
+            ? (error as any).status
+            : undefined;
+        const mentionsBucket =
+          typeof error.message === "string" && error.message.toLowerCase().includes("bucket");
+        const shouldRetry = attempt === 0 && (statusCode === 404 || mentionsBucket);
+        if (!shouldRetry) break;
+        ensureSalesBucketPromise = null;
+        await ensureSalesBucketOnce();
+      }
+
       let payload: SalesPersistMeta;
-      if (upErr) {
-        const statusCode = typeof upErr.statusCode === "number" ? upErr.statusCode : (typeof (upErr as any)?.status === "number" ? (upErr as any).status : undefined);
+      if (uploadError) {
+        const statusCode =
+          typeof uploadError.statusCode === "number"
+            ? uploadError.statusCode
+            : typeof (uploadError as any)?.status === "number"
+            ? (uploadError as any).status
+            : undefined;
         const isNotFound = statusCode === 404;
-        const mentionsBucket = typeof upErr.message === "string" && upErr.message.toLowerCase().includes("bucket");
-        if (!isNotFound && !mentionsBucket) throw upErr;
+        const mentionsBucket =
+          typeof uploadError.message === "string" && uploadError.message.toLowerCase().includes("bucket");
+        if (!isNotFound && !mentionsBucket) throw uploadError;
 
         const buffer = await file.arrayBuffer();
         payload = {
           base64: arrayBufferToBase64(buffer),
-          mime_type: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          mime_type:
+            file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           filename: file.name,
           uploaded_at: new Date().toISOString(),
           tenant_id: tenantId ?? null,
@@ -2156,10 +2241,28 @@ async function handleExport() {
 
       const salesKey = salesKeyForScope(tenantId ?? null, branchId ?? null);
       payload.scope_key = salesKey;
-      const { error: setErr } = await supabase
-        .from(TABLE_SETTINGS)
-        .upsert({ key: salesKey, value: payload }, { onConflict: "key" });
-      if (setErr) throw setErr;
+      if (!tenantSlug) throw new Error("No se pudo determinar el tenant actual.");
+
+      const scope = branchId ? "branch" : "global";
+      const response = await fetch(`/api/t/${tenantSlug}/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope,
+          key: salesKey,
+          value: payload,
+          ...(branchId ? { branchId } : {}),
+        }),
+      });
+
+      if (!response.ok) {
+        let message = "No se pudo guardar las ventas importadas.";
+        try {
+          const errJson = await response.json();
+          if (errJson?.error) message = String(errJson.error);
+        } catch {}
+        throw new Error(message);
+      }
 
       const usedInlineStorage = Boolean(payload.base64);
       const rows = await loadSalesFromMeta(payload);
@@ -2172,7 +2275,9 @@ async function handleExport() {
       );
     } catch (e: any) {
       console.error("handleImportSales error", e);
-      alert(`No se pudo importar el archivo de ventas.\n${e?.message ?? ""}`);
+      const message = e?.message ? String(e.message) : "";
+      setSalesImportError(message || "No se pudo importar el archivo de ventas.");
+      alert(`No se pudo importar el archivo de ventas.\n${message}`);
     } finally {
       setImportingSales(false);
       if (salesUploadRef.current) salesUploadRef.current.value = "";
@@ -2481,6 +2586,21 @@ const { data: inserted, error: insErr } = await supabase
           </div>
         </AlertDialogContent>
       </AlertDialog>
+
+      {salesImportError && (
+        <div className="mt-3 flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <p className="flex-1 whitespace-pre-wrap break-words">{salesImportError}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleCopySalesError}
+            className="shrink-0 border-amber-400 text-amber-900 hover:bg-amber-100"
+          >
+            Copiar
+          </Button>
+        </div>
+      )}
 
       {/* 5) Ped Ant.  ← NUEVO: guarda qty → previous_qty para todos */}
   <Button
