@@ -652,7 +652,17 @@ export default function EstadisticaPage() {
   const filtered = React.useMemo(() => {
     const q = normKey(query);
     if (!q) return [];
-    return productOptions.filter((n) => normKey(n).includes(q)).slice(0, 200);
+    const words = q
+      .split(/\s+/)
+      .map((w) => w.trim())
+      .filter(Boolean);
+    if (!words.length) return [];
+    return productOptions
+      .filter((n) => {
+        const nk = normKey(n);
+        return words.every((word) => nk.includes(word));
+      })
+      .slice(0, 200);
   }, [query, productOptions]);
 
   const selectedId = normKey(selectedName);

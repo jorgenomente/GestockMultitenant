@@ -6,7 +6,7 @@ import { paths } from "@/lib/paths";
 import type { ReactNode } from "react";
 
 type BranchRow = { id: string; name: string; slug: string };
-type MembershipRow = { branch_ids: string[] | null };
+type MembershipRow = { branch_ids: string[] | null; role: string | null };
 type TenantRow = { id: string };
 
 type LayoutProps = {
@@ -44,7 +44,7 @@ export default async function TenantLayout({ children, params }: LayoutProps) {
 
   const { data: membershipRow, error: membershipError } = await supabase
     .from("memberships")
-    .select("branch_ids")
+    .select("branch_ids, role")
     .eq("user_id", user.id)
     .eq("tenant_id", tenantId)
     .maybeSingle<MembershipRow>();
@@ -52,6 +52,7 @@ export default async function TenantLayout({ children, params }: LayoutProps) {
   if (membershipError) throw membershipError;
 
   let list: BranchRow[] = [];
+  const role = membershipRow?.role ?? null;
 
   const branchIds = membershipRow?.branch_ids;
 
@@ -91,20 +92,18 @@ export default async function TenantLayout({ children, params }: LayoutProps) {
     <div className="min-h-dvh">
       <nav className="flex gap-3 border-b p-3 overflow-x-auto">
         {list.map((b) => (
-          <Link
-            key={b.id}
-            href={paths.stock(slug, b.slug)}
-            className="underline text-sm"
-          >
+          <Link key={b.id} href={paths.stock(slug, b.slug)} className="underline text-sm">
             {b.name}
           </Link>
         ))}
 
-        <div className="ml-auto">
-          <Link href={paths.admin(slug)} className="text-sm">
-            Admin
-          </Link>
-        </div>
+        {role === "owner" && (
+          <div className="ml-auto">
+            <Link href={paths.admin(slug)} className="text-sm">
+              Admin
+            </Link>
+          </div>
+        )}
       </nav>
       {children}
     </div>

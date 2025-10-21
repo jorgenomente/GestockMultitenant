@@ -3,6 +3,8 @@ import Link from "next/link";
 import { getSupabaseServer } from "@/lib/authz";
 import { paths } from "@/lib/paths";
 
+type MembershipRow = { role: string | null };
+
 export default async function BranchDashboard({
   params,
 }: {
@@ -10,6 +12,10 @@ export default async function BranchDashboard({
 }) {
   const { slug, branch: branchSlug } = await params;
   const supabase = await getSupabaseServer();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   // 1) Tenant por slug (simple)
   const { data: tenant, error: tErr } = await supabase
@@ -54,6 +60,23 @@ export default async function BranchDashboard({
       .eq("branch_id", branch.id),
   ]);
 
+  let role: string | null = null;
+
+  if (user) {
+    const { data: membershipRow, error: membershipErr } = await supabase
+      .from("memberships")
+      .select("role")
+      .eq("tenant_id", tenant.id)
+      .eq("user_id", user.id)
+      .maybeSingle<MembershipRow>();
+
+    if (membershipErr) {
+      console.error("branch dashboard membership lookup failed", membershipErr);
+    }
+
+    role = membershipRow?.role ?? null;
+  }
+
   return (
     <main className="max-w-screen-md mx-auto p-4 space-y-6">
       <header className="flex items-center justify-between">
@@ -63,9 +86,11 @@ export default async function BranchDashboard({
             {tenant.slug} · {branch.slug}
           </p>
         </div>
-        <Link href={paths.admin(tenant.slug)} className="text-sm underline">
-          Admin del tenant
-        </Link>
+        {role === "owner" && (
+          <Link href={paths.admin(tenant.slug)} className="text-sm underline">
+            Admin del tenant
+          </Link>
+        )}
       </header>
 
       <section className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -91,16 +116,34 @@ export default async function BranchDashboard({
   );
 }
 
-function CardKpi({ label, value, href }: { label: string; value: number | string; href: string }) {
-  return (
-    <Link
-      href={href}
-      className="block rounded-xl border p-4 hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-black/30"
-    >
+function CardKpi({
+  label,
+  value,
+  href,
+}: {
+  label: string;
+  value: number | string;
+  href?: string;
+}) {
+  const className =
+    "block rounded-xl border p-4 hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-black/30";
+
+  const content = (
+    <>
       <div className="text-xs text-neutral-500">{label}</div>
       <div className="text-2xl font-semibold mt-1">{value}</div>
-    </Link>
+    </>
   );
+
+  if (href) {
+    return (
+      <Link href={href} className={className}>
+        {content}
+      </Link>
+    );
+  }
+
+  return <div className={className}>{content}</div>;
 }
 
 function QuickLink({ href, children }: { href: string; children: React.ReactNode }) {

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import clsx from "clsx";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
@@ -22,6 +23,14 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel,
   AlertDialogAction, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
 } from "@/components/ui/sheet";
@@ -327,6 +336,51 @@ type SnapshotRow = {
   id: string; order_id: string; title: string; snapshot: SnapshotPayload; created_at: string;
 };
 
+type OrderExportFormat = "xlsx" | "json";
+
+const ORDER_EXPORT_KIND = "gestock-order" as const;
+const ORDER_EXPORT_VERSION = 1;
+
+type OrderExportJsonItem = {
+  id: string;
+  productName: string;
+  displayName: string | null;
+  qty: number;
+  unitPrice: number;
+  groupName: string | null;
+  packSize: number | null;
+  stockQty: number | null;
+  stockUpdatedAt: string | null;
+  previousQty: number | null;
+  previousQtyUpdatedAt: string | null;
+  priceUpdatedAt: string | null;
+  tenantId: string | null;
+  branchId: string | null;
+};
+
+type OrderExportJsonPayload = {
+  kind: typeof ORDER_EXPORT_KIND;
+  version: number;
+  generatedAt: string;
+  order: {
+    id: string;
+    tenantId: string | null;
+    branchId: string | null;
+    status?: Status;
+    notes?: string | null;
+  };
+  provider: {
+    id: string;
+    name: string | null;
+  };
+  items: OrderExportJsonItem[];
+  groupOrder: string[];
+  checkedMap: Record<string, boolean>;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 /* ========= Drag & Drop de grupos (HTML5 nativo) ========= */
 import { GripVertical } from "lucide-react";
 
@@ -518,6 +572,7 @@ const nowLocalIso = () => {
   const offsetMs = now.getTimezoneOffset() * 60000;
   return new Date(now.getTime() - offsetMs).toISOString().slice(0, 16);
 };
+
 const excelSerialToUTC = (s: number) => Date.UTC(1899, 11, 30) + Math.round(s * 86400000);
 function parseDateCell(v: unknown): number | null {
   if (v == null) return null;
@@ -533,6 +588,14 @@ function parseDateCell(v: unknown): number | null {
 const startOfDayUTC = (t: number) => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); };
 const fmtMoney = (n: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n || 0);
 const fmtInt = (n: number) => new Intl.NumberFormat("es-AR").format(n || 0);
+const round2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+const parseNumberInput = (value: string): number => {
+  if (!value) return 0;
+  const normalized = value.replace(/\s+/g, "").replace(/,/g, ".");
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : NaN;
+};
 const isoToday = () => new Date().toISOString().slice(0, 10);
 
 /* =================== Ventas.xlsx y métricas =================== */
@@ -690,9 +753,17 @@ export default function ProviderOrderPage() {
   const [batchSalesModalOpen, setBatchSalesModalOpen] = React.useState(false);
   const [batchSalesInput, setBatchSalesInput] = React.useState(() => nowLocalIso());
   const [batchApplying, setBatchApplying] = React.useState(false);
+  const [sumStockLoading, setSumStockLoading] = React.useState(false);
+  const [batchError, setBatchError] = React.useState<string | null>(null);
+  const [sumModalOpen, setSumModalOpen] = React.useState(false);
+  const [sumAdjustments, setSumAdjustments] = React.useState<Record<string, string>>({});
+  const [sumError, setSumError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    if (batchSalesModalOpen) setBatchSalesInput(nowLocalIso());
+    if (batchSalesModalOpen) {
+      setBatchSalesInput(nowLocalIso());
+      setBatchError(null);
+    }
   }, [batchSalesModalOpen]);
 
   const salesByProduct = React.useMemo(() => {
@@ -704,6 +775,11 @@ export default function ProviderOrderPage() {
     });
     return map;
   }, [sales]);
+
+  const actionableItems = React.useMemo(
+    () => items.filter((item) => item.product_name !== GROUP_PLACEHOLDER),
+    [items]
+  );
 
   const computeSalesSinceStock = React.useCallback(
     (productName: string, fromTs: number | null) => {
@@ -718,39 +794,135 @@ export default function ProviderOrderPage() {
     [salesByProduct]
   );
 
+  const qtyFormatter = React.useMemo(
+    () => new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }),
+    []
+  );
+
+  const applyTimestampMs = React.useMemo(() => {
+    const ts = new Date(batchSalesInput);
+    if (Number.isNaN(ts.getTime())) return null;
+    return Math.min(ts.getTime(), Date.now());
+  }, [batchSalesInput]);
+
+  const batchPreviewRows = React.useMemo(() => {
+    return actionableItems.map((item) => {
+      const qtyOrdered = round2(Number(item.qty ?? 0));
+      const stockPrev = round2(Number(item.stock_qty ?? 0));
+      const productLabel = (item.display_name?.trim() || item.product_name).trim();
+      const salesQty =
+        applyTimestampMs == null
+          ? 0
+          : round2(computeSalesSinceStock(productLabel, applyTimestampMs));
+      const stockResult = Math.max(0, round2(stockPrev - salesQty));
+      return { item, qtyOrdered, stockPrev, salesQty, stockResult };
+    });
+  }, [actionableItems, applyTimestampMs, computeSalesSinceStock]);
+
+  const batchTotals = React.useMemo(() => {
+    return batchPreviewRows.reduce(
+      (acc, row) => ({
+        qtyOrdered: round2(acc.qtyOrdered + row.qtyOrdered),
+        stockPrev: round2(acc.stockPrev + row.stockPrev),
+        salesQty: round2(acc.salesQty + row.salesQty),
+        stockResult: round2(acc.stockResult + row.stockResult),
+      }),
+      { qtyOrdered: 0, stockPrev: 0, salesQty: 0, stockResult: 0 }
+    );
+  }, [batchPreviewRows]);
+
+  const sumPreviewRows = React.useMemo(() => {
+    return actionableItems.map((item) => {
+      const stockPrev = round2(Number(item.stock_qty ?? 0));
+      const qtyOrdered = round2(Number(item.qty ?? 0));
+      const storedRaw = sumAdjustments[item.id];
+      const raw = storedRaw ?? String(qtyOrdered);
+      const trimmed = raw.trim();
+      const parsed = trimmed === "" ? 0 : parseNumberInput(trimmed);
+      const isValid = !Number.isNaN(parsed) && parsed >= 0;
+      const addition = isValid ? round2(parsed) : 0;
+      const stockResult = round2(stockPrev + addition);
+      return {
+        item,
+        qtyOrdered,
+        raw,
+        addition,
+        stockPrev,
+        stockResult,
+        isValid,
+      };
+    });
+  }, [actionableItems, sumAdjustments]);
+
+  const sumTotals = React.useMemo(() => {
+    return sumPreviewRows.reduce(
+      (acc, row) => ({
+        qtyOrdered: round2(acc.qtyOrdered + row.qtyOrdered),
+        addition: round2(acc.addition + (row.isValid ? row.addition : 0)),
+        stockPrev: round2(acc.stockPrev + row.stockPrev),
+        stockResult: round2(acc.stockResult + (row.isValid ? row.stockResult : row.stockPrev)),
+      }),
+      { qtyOrdered: 0, addition: 0, stockPrev: 0, stockResult: 0 }
+    );
+  }, [sumPreviewRows]);
+
+  const previewDateLabel = React.useMemo(() => {
+    if (applyTimestampMs == null) return "";
+    return new Date(applyTimestampMs).toLocaleString("es-AR");
+  }, [applyTimestampMs]);
+
+  React.useEffect(() => {
+    if (batchError && applyTimestampMs != null) setBatchError(null);
+  }, [applyTimestampMs, batchError]);
+
+  const sumHasInvalid = React.useMemo(
+    () => sumPreviewRows.some((row) => !row.isValid),
+    [sumPreviewRows]
+  );
+
+  const sumHasChanges = React.useMemo(
+    () => sumPreviewRows.some((row) => row.addition !== 0),
+    [sumPreviewRows]
+  );
+
+  const sumConfirmDisabled = sumStockLoading || sumHasInvalid || !sumHasChanges;
+
   const applySalesToAll = React.useCallback(async () => {
+    if (!actionableItems.length) {
+      alert("No hay productos para actualizar.");
+      return;
+    }
+
     const ts = new Date(batchSalesInput);
     if (Number.isNaN(ts.getTime())) {
-      alert("Ingresá una fecha y hora válidas.");
+      setBatchError("Ingresá una fecha y hora válidas.");
       return;
     }
 
-    const fromMs = ts.getTime();
+    const fromMs = Math.min(ts.getTime(), Date.now());
+    const fromIso = new Date(fromMs).toISOString();
     const nowIso = new Date().toISOString();
 
-    const selection = items
-      .filter((item) => item.stock_qty != null && item.stock_updated_at)
-      .map((item) => {
-        const productLabel = (item.display_name?.trim() || item.product_name).trim();
-        const salesQty = computeSalesSinceStock(productLabel, fromMs);
-        const stockPrev = Math.round((Number(item.stock_qty ?? 0) || 0) * 100) / 100;
-        const stockApplied = Math.max(0, Math.round((stockPrev - salesQty) * 100) / 100);
-        return { item, salesQty: Math.round(salesQty * 100) / 100, stockPrev, stockApplied };
-      });
-
-    if (!selection.length) {
-      alert("No encontramos productos con stock registrado para ajustar.");
-      return;
-    }
+    const selection = actionableItems.map((item) => {
+      const productLabel = (item.display_name?.trim() || item.product_name).trim();
+      const stockPrev = round2(Number(item.stock_qty ?? 0));
+      const qtyOrdered = round2(Number(item.qty ?? 0));
+      const salesQty = round2(computeSalesSinceStock(productLabel, fromMs));
+      const stockApplied = Math.max(0, round2(stockPrev - salesQty));
+      return { item, stockPrev, qtyOrdered, salesQty, stockApplied };
+    });
 
     setBatchApplying(true);
+    setBatchError(null);
     try {
       for (const row of selection) {
-        const { item, stockApplied } = row;
-        const { error } = await supabase
-          .from(itemsTable)
-          .update({ stock_qty: stockApplied, stock_updated_at: nowIso })
-          .eq("id", item.id);
+        const payload = {
+          stock_qty: row.stockApplied,
+          stock_updated_at: nowIso,
+          previous_qty: row.qtyOrdered,
+          previous_qty_updated_at: fromIso,
+        };
+        const { error } = await supabase.from(itemsTable).update(payload).eq("id", row.item.id);
         if (error) throw error;
       }
 
@@ -766,27 +938,129 @@ export default function ProviderOrderPage() {
         branch_id: row.item.branch_id ?? branchId ?? null,
       }));
 
-      const { error: logError } = await supabase.from(TABLE_STOCK_LOGS).insert(logsPayload);
-      if (logError && logError.code !== "42P01") {
-        console.warn("stock log insert error", logError);
+      if (logsPayload.length) {
+        const { error: logError } = await supabase.from(TABLE_STOCK_LOGS).insert(logsPayload);
+        if (logError && logError.code !== "42P01") {
+          console.warn("stock log insert error", logError);
+        }
       }
 
       setItems((prev) =>
         prev.map((item) => {
           const next = selection.find((row) => row.item.id === item.id);
           if (!next) return item;
-          return { ...item, stock_qty: next.stockApplied, stock_updated_at: nowIso };
+          return {
+            ...item,
+            stock_qty: next.stockApplied,
+            stock_updated_at: nowIso,
+            previous_qty: next.qtyOrdered,
+            previous_qty_updated_at: fromIso,
+          };
         })
       );
 
+      setBatchError(null);
       setBatchSalesModalOpen(false);
     } catch (err: any) {
       console.error("apply sales batch error", err);
-      alert(err?.message ?? "No se pudo aplicar las ventas.");
+      setBatchError(err?.message ?? "No se pudo aplicar las ventas.");
     } finally {
       setBatchApplying(false);
     }
-  }, [batchSalesInput, items, itemsTable, supabase, computeSalesSinceStock, tenantId, branchId]);
+  }, [actionableItems, batchSalesInput, computeSalesSinceStock, itemsTable, supabase, tenantId, branchId, setItems, setBatchError]);
+
+  const applySumAdjustments = React.useCallback(async () => {
+    if (!actionableItems.length) {
+      alert("No hay productos para actualizar.");
+      return;
+    }
+
+    if (sumHasInvalid) {
+      setSumError("Revisá las cantidades: sólo se permiten números iguales o mayores a 0.");
+      return;
+    }
+
+    if (!sumHasChanges) {
+      setSumError("Ingresá alguna cantidad a sumar antes de confirmar.");
+      return;
+    }
+
+    setSumError(null);
+    setSumStockLoading(true);
+    const nowIso = new Date().toISOString();
+
+    try {
+      const rows = actionableItems.map((item) => {
+        const current = Number(item.stock_qty ?? 0) || 0;
+        const storedRaw = sumAdjustments[item.id] ?? String(round2(Number(item.qty ?? 0)));
+        const trimmed = storedRaw.trim();
+        const parsed = trimmed === "" ? 0 : parseNumberInput(trimmed);
+        if (Number.isNaN(parsed) || parsed < 0) {
+          throw new Error("Revisá las cantidades: hay valores inválidos.");
+        }
+        const addition = round2(parsed);
+        const nextStock = round2(current + addition);
+        return { item, addition, nextStock };
+      });
+
+      const updates = rows.filter((row) => row.addition !== 0);
+
+      if (updates.length) {
+        const results = await Promise.all(
+          updates.map(({ item, nextStock }) =>
+            supabase
+              .from(itemsTable)
+              .update({ stock_qty: nextStock, stock_updated_at: nowIso })
+              .eq("id", item.id)
+          )
+        );
+        const failure = results.find((res: any) => res?.error);
+        if (failure?.error) throw failure.error;
+      }
+
+      setItems((prev) =>
+        prev.map((item) => {
+          const match = rows.find((row) => row.item.id === item.id);
+          if (!match) return item;
+          return { ...item, stock_qty: match.nextStock, stock_updated_at: nowIso };
+        })
+      );
+
+      setSumError(null);
+      setSumModalOpen(false);
+      setSumAdjustments({});
+    } catch (err: any) {
+      console.error("sum stock error", err);
+      setSumError(err?.message ?? "No se pudo sumar el stock.");
+    } finally {
+      setSumStockLoading(false);
+    }
+  }, [actionableItems, sumAdjustments, sumHasInvalid, sumHasChanges, supabase, itemsTable, setItems]);
+
+  const handleOpenSumModal = React.useCallback(() => {
+    if (!actionableItems.length) {
+      alert("No hay productos para actualizar.");
+      return;
+    }
+    const defaults = actionableItems.reduce<Record<string, string>>((acc, item) => {
+      const base = round2(Number(item.qty ?? 0));
+      acc[item.id] = base ? String(base) : "0";
+      return acc;
+    }, {});
+    setSumAdjustments(defaults);
+    setSumError(null);
+    setSumModalOpen(true);
+  }, [actionableItems]);
+
+  const handleOpenApplyModal = React.useCallback(() => {
+    if (!actionableItems.length) {
+      alert("No hay productos para actualizar.");
+      return;
+    }
+    setBatchError(null);
+    setBatchSalesInput(nowLocalIso());
+    setBatchSalesModalOpen(true);
+  }, [actionableItems, setBatchSalesInput, setBatchError, setBatchSalesModalOpen]);
 
   // UI persistente (Supabase)
   const [groupOrder, setGroupOrder] = React.useState<string[]>([]);
@@ -876,8 +1150,24 @@ const rootStyle: React.CSSProperties = {
   // Historial
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const [snapshots, setSnapshots] = React.useState<SnapshotRow[]>([]);
+  const [editingSnapshotId, setEditingSnapshotId] = React.useState<string | null>(null);
+  const [snapshotTitleDraft, setSnapshotTitleDraft] = React.useState("");
+  const [renamingSnapshotId, setRenamingSnapshotId] = React.useState<string | null>(null);
+  const snapshotTitleInputRef = React.useRef<HTMLInputElement | null>(null);
   const fileRef = React.useRef<HTMLInputElement | null>(null);
   const [importing, setImporting] = React.useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = React.useState(false);
+  const [exportFormat, setExportFormat] = React.useState<OrderExportFormat>("xlsx");
+  const [exportingOrder, setExportingOrder] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!editingSnapshotId) return;
+    const timer = window.setTimeout(() => {
+      snapshotTitleInputRef.current?.focus();
+      snapshotTitleInputRef.current?.select();
+    }, 20);
+    return () => window.clearTimeout(timer);
+  }, [editingSnapshotId]);
 
   /** NUEVO: cargar ventas desde la fuente activa en DB (o por defecto) */
   React.useEffect(() => {
@@ -1357,6 +1647,24 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       if (error) console.error("saveUIState error", error);
     } catch (e) {
       console.error("saveUIState exception", e);
+    }
+  }
+
+  function applyImportedUIState(opts: {
+    groupOrder?: string[];
+    checkedMap?: Record<string, boolean>;
+  }) {
+    const patch: { group_order?: string[]; checked_map?: Record<string, boolean> } = {};
+    if (opts.groupOrder !== undefined) {
+      setGroupOrder(opts.groupOrder);
+      patch.group_order = opts.groupOrder;
+    }
+    if (opts.checkedMap !== undefined) {
+      setCheckedMap(opts.checkedMap);
+      patch.checked_map = opts.checkedMap;
+    }
+    if (order?.id && (patch.group_order !== undefined || patch.checked_map !== undefined)) {
+      void saveUIState(order.id, patch);
     }
   }
 
@@ -1943,7 +2251,8 @@ async function handleCopySimpleList() {
 // ✅ SAME lógica que tu versión estable (estadísticas OK)
 // ✅ "Últ. venta" = día (ES) + fecha en UNA SOLA columna (fecha real Excel)
 // ✅ Encabezado lila + zebra gris por columnas
-async function handleExport() {
+async function exportOrderAsXlsx() {
+  if (!order) throw new Error("El pedido todavía no está listo para exportar.");
   // Estilos si están; si no, cae a xlsx puro (sin romper)
   let XLSX: any;
   try { XLSX = await import("xlsx-js-style"); }
@@ -2111,53 +2420,252 @@ async function handleExport() {
   XLSX.writeFile(wb, `pedido_${safeProv}_${isoToday()}.xlsx`);
 }
 
+  function buildOrderExportJsonPayload(): OrderExportJsonPayload {
+    const effectiveOrderId = order?.id ?? "";
+    const fallbackTenant = order?.tenant_id ?? tenantId ?? tenantIdFromQuery ?? null;
+    const fallbackBranch = order?.branch_id ?? branchId ?? branchIdFromQuery ?? null;
+
+    const realItems = items.filter((it) => it.product_name !== GROUP_PLACEHOLDER);
+    const validIds = new Set(realItems.map((it) => it.id));
+    const cleanedCheckedMap = Object.fromEntries(
+      Object.entries(checkedMap).filter(([id]) => validIds.has(id)).map(([id, val]) => [id, Boolean(val)])
+    );
+
+    return {
+      kind: ORDER_EXPORT_KIND,
+      version: ORDER_EXPORT_VERSION,
+      generatedAt: new Date().toISOString(),
+      order: {
+        id: effectiveOrderId,
+        tenantId: fallbackTenant ?? null,
+        branchId: fallbackBranch ?? null,
+        status: order?.status,
+        notes: order?.notes ?? null,
+      },
+      provider: {
+        id: order?.provider_id ?? provId ?? "",
+        name: providerName ?? null,
+      },
+      items: realItems.map<OrderExportJsonItem>((it) => ({
+        id: it.id,
+        productName: it.product_name,
+        displayName: it.display_name ?? null,
+        qty: it.qty ?? 0,
+        unitPrice: it.unit_price ?? 0,
+        groupName: it.group_name ?? null,
+        packSize: it.pack_size ?? null,
+        stockQty: it.stock_qty ?? null,
+        stockUpdatedAt: it.stock_updated_at ?? null,
+        previousQty: it.previous_qty ?? null,
+        previousQtyUpdatedAt: it.previous_qty_updated_at ?? null,
+        priceUpdatedAt: it.price_updated_at ?? null,
+        tenantId: it.tenant_id ?? fallbackTenant ?? null,
+        branchId: it.branch_id ?? fallbackBranch ?? null,
+      })),
+      groupOrder: [...groupOrder],
+      checkedMap: cleanedCheckedMap,
+    };
+  }
+
+  async function exportOrderAsJson() {
+    if (!order) throw new Error("El pedido todavía no está listo para exportar.");
+    const payload = buildOrderExportJsonPayload();
+    const safeProv = (providerName || "Proveedor").replace(/[\\/:*?"<>|]+/g, "_");
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `pedido_${safeProv}_${isoToday()}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleExport(format: OrderExportFormat) {
+    if (format === "json") {
+      await exportOrderAsJson();
+      return;
+    }
+    await exportOrderAsXlsx();
+  }
 
 
 
 
 
 
+
+
+  async function importOrderFromXlsx(buffer: ArrayBuffer) {
+    if (!order) throw new Error("No hay un pedido activo en este momento.");
+    const XLSX = await import("xlsx");
+    const wb = XLSX.read(buffer, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const aoa: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    const head = (aoa[0] || []).map((x) => String(x || "").toLowerCase());
+    const hasHeader = head.join("|").includes("grupo") && head.join("|").includes("producto");
+    const body = hasHeader ? aoa.slice(1) : aoa;
+
+    const parsed = body
+      .map((row) => {
+        const [g, p, q, u] = row;
+        const product_name = p ? String(p).trim() : "";
+        if (!product_name) return null;
+        const qty = Number(q ?? 0) || 0;
+        const unit_price = Number(u ?? 0) || 0;
+        const group_name = g != null && String(g).trim() ? String(g).trim() : null;
+        return { product_name, qty, unit_price, group_name };
+      })
+      .filter(Boolean) as SnapshotPayload["items"];
+
+    const { error: delErr } = await supabase.from(itemsTable).delete().eq("order_id", order.id);
+    if (delErr) throw delErr;
+
+    const { data: inserted, error: insErr } = await supabase
+      .from(itemsTable)
+      .insert(parsed.map((r) => ({ order_id: order.id, ...r })))
+      .select("*");
+    if (insErr) throw insErr;
+
+    const newItems = (inserted as ItemRow[]) ?? [];
+    setItems(newItems);
+    await recomputeOrderTotal(newItems);
+    applyImportedUIState({ checkedMap: {} });
+    alert("Archivo importado correctamente ✅");
+  }
+
+  async function importOrderFromJson(text: string) {
+    if (!order) throw new Error("No hay un pedido activo en este momento.");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      throw new Error("El archivo JSON no tiene un formato válido.");
+    }
+    if (!isRecord(parsed)) throw new Error("Formato de backup inválido.");
+    if (typeof parsed.kind === "string" && parsed.kind !== ORDER_EXPORT_KIND) {
+      throw new Error("El archivo JSON no corresponde a un backup de pedidos de Gestock.");
+    }
+    const version = typeof parsed.version === "number" ? parsed.version : 0;
+    if (version < 1) throw new Error("Versión de backup no soportada.");
+
+    const itemsRaw = Array.isArray(parsed.items) ? parsed.items : [];
+    if (!itemsRaw.length) throw new Error("El archivo no contiene productos.");
+
+    const toNullableString = (val: unknown): string | null => {
+      if (val === null || val === undefined) return null;
+      const str = String(val).trim();
+      return str.length ? str : null;
+    };
+    const toNullableNumber = (val: unknown): number | null => {
+      if (val === null || val === undefined || val === "") return null;
+      const num = Number(val);
+      return Number.isFinite(num) ? num : null;
+    };
+    const toNumber = (val: unknown, fallback = 0) => {
+      const num = Number(val);
+      return Number.isFinite(num) ? num : fallback;
+    };
+    const normalizeGroupName = (val: unknown): string | null => {
+      if (val === null || val === undefined) return null;
+      const str = String(val).trim();
+      return str.length ? str : null;
+    };
+
+    const fallbackTenant = order?.tenant_id ?? tenantId ?? tenantIdFromQuery ?? null;
+    const fallbackBranch = order?.branch_id ?? branchId ?? branchIdFromQuery ?? null;
+
+    const rows = itemsRaw
+      .map((entry) => {
+        if (!isRecord(entry)) return null;
+        const productRaw = entry.productName ?? entry.product_name;
+        if (typeof productRaw !== "string") return null;
+        const productName = productRaw.trim();
+        if (!productName) return null;
+
+        const row: Record<string, any> = {
+          order_id: order.id,
+          product_name: productName,
+          display_name: toNullableString(entry.displayName ?? entry.display_name),
+          qty: toNumber(entry.qty ?? entry.quantity ?? 0, 0),
+          unit_price: toNumber(entry.unitPrice ?? entry.unit_price ?? 0, 0),
+          group_name: normalizeGroupName(entry.groupName ?? entry.group_name),
+          pack_size: toNullableNumber(entry.packSize ?? entry.pack_size),
+          stock_qty: toNullableNumber(entry.stockQty ?? entry.stock_qty),
+          stock_updated_at: toNullableString(entry.stockUpdatedAt ?? entry.stock_updated_at),
+          previous_qty: toNullableNumber(entry.previousQty ?? entry.previous_qty),
+          previous_qty_updated_at: toNullableString(entry.previousQtyUpdatedAt ?? entry.previous_qty_updated_at),
+          price_updated_at: toNullableString(entry.priceUpdatedAt ?? entry.price_updated_at),
+        };
+
+        if (typeof entry.id === "string" && entry.id.trim()) row.id = entry.id.trim();
+
+        const tenantValue = entry.tenantId ?? entry.tenant_id ?? fallbackTenant;
+        if (tenantValue !== undefined) row.tenant_id = toNullableString(tenantValue) ?? null;
+
+        const branchValue = entry.branchId ?? entry.branch_id ?? fallbackBranch;
+        if (branchValue !== undefined) row.branch_id = toNullableString(branchValue) ?? null;
+
+        return row;
+      })
+      .filter((row): row is Record<string, any> => Boolean(row));
+
+    if (!rows.length) throw new Error("No se encontraron productos válidos en el archivo.");
+
+    const { error: delErr } = await supabase.from(itemsTable).delete().eq("order_id", order.id);
+    if (delErr) throw delErr;
+
+    const { data: inserted, error: insErr } = await supabase
+      .from(itemsTable)
+      .insert(rows)
+      .select("*");
+    if (insErr) throw insErr;
+
+    const newItems = (inserted as ItemRow[]) ?? [];
+    setItems(newItems);
+    await recomputeOrderTotal(newItems);
+
+    const validIds = new Set(newItems.map((it) => it.id));
+    const groupOrderRaw = (parsed.groupOrder ?? parsed.group_order) as unknown;
+    const sanitizedGroupOrder = Array.isArray(groupOrderRaw)
+      ? groupOrderRaw.filter((val): val is string => typeof val === "string").map((val) => val.trim())
+      : undefined;
+
+    const checkedMapRaw = (parsed.checkedMap ?? parsed.checked_map) as unknown;
+    const sanitizedCheckedMap = isRecord(checkedMapRaw)
+      ? Object.entries(checkedMapRaw).reduce<Record<string, boolean>>((acc, [id, val]) => {
+          if (validIds.has(id)) acc[id] = Boolean(val);
+          return acc;
+        }, {})
+      : {};
+
+    const uiPatch: { groupOrder?: string[]; checkedMap?: Record<string, boolean> } = {
+      checkedMap: sanitizedCheckedMap,
+    };
+    if (sanitizedGroupOrder !== undefined) uiPatch.groupOrder = sanitizedGroupOrder;
+    applyImportedUIState(uiPatch);
+
+    alert("Pedido importado correctamente ✅");
+  }
 
   async function handleImportFile(file: File) {
     if (!order) return;
     setImporting(true);
     try {
-      const ab = await file.arrayBuffer();
-      const XLSX = await import("xlsx");
-      const wb = XLSX.read(ab, { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const aoa: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-      const head = (aoa[0] || []).map((x) => String(x || "").toLowerCase());
-      const hasHeader = head.join("|").includes("grupo") && head.join("|").includes("producto");
-      const body = hasHeader ? aoa.slice(1) : aoa;
-
-      const parsed = body
-        .map((row) => {
-          const [g, p, q, u] = row;
-          const product_name = p ? String(p).trim() : "";
-          if (!product_name) return null;
-          const qty = Number(q ?? 0) || 0;
-          const unit_price = Number(u ?? 0) || 0;
-          const group_name = g != null && String(g).trim() ? String(g).trim() : null;
-          return { product_name, qty, unit_price, group_name };
-        })
-        .filter(Boolean) as SnapshotPayload["items"];
-
-      const { error: delErr } = await supabase.from(itemsTable).delete().eq("order_id", order.id);
-      if (delErr) throw delErr;
-      const { data: inserted, error: insErr } = await supabase
-        .from(itemsTable)
-        .insert(parsed.map((r) => ({ order_id: order.id, ...r })))
-        
-        .select("*");
-      if (insErr) throw insErr;
-
-      const newItems = (inserted as ItemRow[]) ?? [];
-      setItems(newItems);
-      await recomputeOrderTotal(newItems);
+      const extension = file.name.toLowerCase().split(".").pop();
+      if (extension === "json" || file.type === "application/json" || file.type === "text/json") {
+        const text = await file.text();
+        await importOrderFromJson(text);
+      } else {
+        const buffer = await file.arrayBuffer();
+        await importOrderFromXlsx(buffer);
+      }
     } catch (e: any) {
       console.error("import error", e);
-      alert(`No se pudo importar el archivo. ¿Tiene columnas: Grupo, Producto, Cant., Precio?\n${e?.message ?? ""}`);
+      alert(`No se pudo importar el archivo.\n${e?.message ?? ""}`);
     } finally {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -2298,6 +2806,16 @@ async function handleExport() {
     }
   }
 
+  const startEditingSnapshot = React.useCallback((snap: SnapshotRow) => {
+    setEditingSnapshotId(snap.id);
+    setSnapshotTitleDraft(snap.title);
+  }, []);
+
+  const cancelEditingSnapshot = React.useCallback(() => {
+    setEditingSnapshotId(null);
+    setSnapshotTitleDraft("");
+  }, []);
+
   /* ===== Historial ===== */
   async function loadSnapshots() {
     if (!order) return;
@@ -2309,6 +2827,48 @@ async function handleExport() {
       .limit(200);
     if (error) { console.error(error); alert(`No se pudo cargar el historial: ${error.message}`); return; }
     setSnapshots((data ?? []) as SnapshotRow[]);
+  }
+
+  async function commitSnapshotTitle() {
+    if (!editingSnapshotId) return;
+    const trimmed = snapshotTitleDraft.trim();
+    if (!trimmed) {
+      alert("El nombre no puede estar vacío.");
+      snapshotTitleInputRef.current?.focus();
+      return;
+    }
+
+    const currentSnapshot = snapshots.find((snap) => snap.id === editingSnapshotId);
+    if (!currentSnapshot) {
+      cancelEditingSnapshot();
+      return;
+    }
+
+    if (currentSnapshot.title === trimmed) {
+      cancelEditingSnapshot();
+      return;
+    }
+
+    setRenamingSnapshotId(editingSnapshotId);
+    try {
+      const { error } = await supabase
+        .from(TABLE_SNAPSHOTS)
+        .update({ title: trimmed })
+        .eq("id", editingSnapshotId);
+      if (error) throw error;
+
+      setSnapshots((prev) =>
+        prev.map((snap) => (snap.id === editingSnapshotId ? { ...snap, title: trimmed } : snap))
+      );
+
+      cancelEditingSnapshot();
+    } catch (err: any) {
+      console.error(err);
+      alert(`No se pudo renombrar la versión.\n${err?.message ?? ""}`);
+      snapshotTitleInputRef.current?.focus();
+    } finally {
+      setRenamingSnapshotId(null);
+    }
   }
 
   async function saveSnapshot() {
@@ -2384,15 +2944,75 @@ const { data: inserted, error: insErr } = await supabase
     await loadSnapshots();
   }
 
+  async function confirmExport() {
+    try {
+      setExportingOrder(true);
+      await handleExport(exportFormat);
+      setExportDialogOpen(false);
+    } catch (err: any) {
+      console.error("export error", err);
+      alert(`No se pudo exportar el pedido.\n${err?.message ?? ""}`);
+    } finally {
+      setExportingOrder(false);
+    }
+  }
+
     /* ===== Render ===== */
   if (!order) return null;
 
   // Ajuste global de alturas: --bottom-nav-h se comparte con el footer
   return (
-    <main
-      className="mx-auto max-w-md px-3 pb-[calc(156px+env(safe-area-inset-bottom)+var(--bottom-nav-h))]"
-      style={rootStyle}
-    >
+    <>
+      <Dialog
+        open={exportDialogOpen}
+        onOpenChange={(open) => {
+          if (exportingOrder) return;
+          setExportDialogOpen(open);
+        }}
+      >
+        <DialogContent showCloseButton={!exportingOrder} className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Exportar pedido</DialogTitle>
+            <DialogDescription>
+              Elegí el formato para descargar el pedido actual.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs font-medium uppercase text-muted-foreground">Formato</label>
+              <Select
+                value={exportFormat}
+                onValueChange={(value) => setExportFormat(value as OrderExportFormat)}
+                disabled={exportingOrder}
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Seleccionar formato" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="xlsx">Excel (.xlsx)</SelectItem>
+                  <SelectItem value="json">Backup (.json)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              El backup JSON incluye nombres, grupos, paquetes, stock y estados de verificación para restaurar este pedido más adelante.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExportDialogOpen(false)} disabled={exportingOrder}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void confirmExport()} disabled={exportingOrder}>
+              {exportingOrder ? <Loader2 className="h-4 w-4 animate-spin" /> : "Descargar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <main
+        className="mx-auto max-w-md px-3 pb-[calc(156px+env(safe-area-inset-bottom)+var(--bottom-nav-h))]"
+        style={rootStyle}
+      >
      {/* Header */}
 <div
   data-hidden={barsHidden}
@@ -2427,7 +3047,11 @@ const { data: inserted, error: insErr } = await supabase
         open={historyOpen}
         onOpenChange={(v) => {
           setHistoryOpen(v);
-          if (v) void loadSnapshots();
+          if (v) {
+            void loadSnapshots();
+          } else {
+            cancelEditingSnapshot();
+          }
         }}
       >
         <SheetTrigger asChild>
@@ -2435,55 +3059,126 @@ const { data: inserted, error: insErr } = await supabase
             <History className="h-4 w-4" />
           </Button>
         </SheetTrigger>
-        <SheetContent side="right" className="w-[85vw]">
+        <SheetContent side="right" className="flex w-[85vw] max-w-sm flex-col">
           <SheetHeader>
             <SheetTitle>Historial</SheetTitle>
           </SheetHeader>
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-2">
             {snapshots.length === 0 && (
               <div className="text-sm text-muted-foreground">Aún no hay versiones guardadas.</div>
             )}
-            {snapshots.map((s) => (
-              <Card key={s.id}>
-                <CardContent className="p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{s.title}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {new Date(s.created_at).toLocaleString()}
+            {snapshots.map((s) => {
+              const isEditing = editingSnapshotId === s.id;
+              const isRenaming = renamingSnapshotId === s.id;
+              return (
+                <Card key={s.id}>
+                  <CardContent className="p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        {isEditing ? (
+                          <Input
+                            ref={isEditing ? snapshotTitleInputRef : undefined}
+                            value={snapshotTitleDraft}
+                            onChange={(e) => setSnapshotTitleDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                void commitSnapshotTitle();
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                cancelEditingSnapshot();
+                              }
+                            }}
+                            onBlur={() => void commitSnapshotTitle()}
+                            disabled={isRenaming}
+                            className="h-8"
+                          />
+                        ) : (
+                          <div className="font-medium truncate" title={s.title}>
+                            {s.title}
+                          </div>
+                        )}
+                        <div className="text-xs text-muted-foreground">
+                          {new Date(s.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {isEditing ? (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Guardar nombre"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => void commitSnapshotTitle()}
+                              disabled={isRenaming}
+                            >
+                              {isRenaming ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Check className="h-4 w-4" />
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Cancelar edición"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => cancelEditingSnapshot()}
+                              disabled={isRenaming}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Renombrar versión"
+                            onClick={() => startEditingSnapshot(s)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <Button size="sm" onClick={() => void openSnapshot(s)} disabled={isRenaming}>
+                          Abrir
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              aria-label="Eliminar"
+                              disabled={isRenaming}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Eliminar versión</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                ¿Seguro querés eliminar esta versión del historial?
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-red-600 hover:bg-red-700"
+                                onClick={() => void deleteSnapshot(s.id)}
+                              >
+                                Eliminar
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={() => void openSnapshot(s)}>Abrir</Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="icon" className="text-destructive" aria-label="Eliminar">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Eliminar versión</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              ¿Seguro querés eliminar esta versión del historial?
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                            <AlertDialogAction
-                              className="bg-red-600 hover:bg-red-700"
-                              onClick={() => void deleteSnapshot(s.id)}
-                            >
-                              Eliminar
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         </SheetContent>
       </Sheet>
@@ -2644,69 +3339,281 @@ const { data: inserted, error: insErr } = await supabase
         <GroupCreator onCreate={(name) => { if (name.trim()) void createGroup(name.trim()); }} />
       </div>
 
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleOpenSumModal}
+          disabled={sumStockLoading || batchApplying || actionableItems.length === 0}
+        >
+          {sumStockLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+          Sumar stock
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleOpenApplyModal}
+          disabled={batchApplying || sumStockLoading || actionableItems.length === 0}
+        >
+          Aplicar ventas
+        </Button>
+        {actionableItems.length === 0 && (
+          <span className="text-xs text-muted-foreground">
+            Agregá productos al pedido para habilitar estas acciones.
+          </span>
+        )}
+      </div>
+
       {/* Ordenar items + Casilla maestra */}
-<div className="mt-2">
-  <label className="text-xs text-muted-foreground">Ordenar items</label>
-  <div className="mt-1 flex items-center gap-2">
-    {/* Select de orden, ocupa el espacio */}
-    <div className="flex-1">
-      <Select value={sortMode} onValueChange={(v) => setSortMode(v as SortMode)}>
-        <SelectTrigger className="h-9">
-          <SelectValue placeholder="Ordenar por..." />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="alpha_asc">Alfabético A→Z</SelectItem>
-          <SelectItem value="alpha_desc">Alfabético Z→A</SelectItem>
-          <SelectItem value="avg_desc">Prom/sem ↓</SelectItem>
-          <SelectItem value="avg_asc">Prom/sem ↑</SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
+      <div className="mt-2">
+        <label className="text-xs text-muted-foreground">Ordenar items</label>
+        <div className="mt-1 flex items-center gap-2">
+          {/* Select de orden, ocupa el espacio */}
+          <div className="flex-1">
+            <Select value={sortMode} onValueChange={(v) => setSortMode(v as SortMode)}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="Ordenar por..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="alpha_asc">Alfabético A→Z</SelectItem>
+                <SelectItem value="alpha_desc">Alfabético Z→A</SelectItem>
+                <SelectItem value="avg_desc">Prom/sem ↓</SelectItem>
+                <SelectItem value="avg_asc">Prom/sem ↑</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
-    <div className="flex items-center gap-2">
-      {/* Casilla maestra a la derecha */}
-      <label
-        className="inline-flex items-center gap-2 px-2 py-1 rounded-md border hover:bg-muted cursor-pointer"
-        title={allChecked ? "Desmarcar todos" : "Marcar todos"}
+          <div className="flex items-center gap-2">
+            {/* Casilla maestra a la derecha */}
+            <label
+              className="inline-flex items-center gap-2 px-2 py-1 rounded-md border hover:bg-muted cursor-pointer"
+              title={allChecked ? "Desmarcar todos" : "Marcar todos"}
+            >
+              <Checkbox
+                checked={bulkState}
+                onCheckedChange={(v) => setAllChecked(v === true)}
+                aria-label={allChecked ? "Desmarcar todos" : "Marcar todos"}
+              />
+              <span className="text-sm select-none hidden sm:inline">
+                {allChecked ? "Todos" : "Marcar todos"}
+              </span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <AlertDialog
+        open={sumModalOpen}
+        onOpenChange={(open) => {
+          if (sumStockLoading) return;
+          setSumModalOpen(open);
+          if (!open) {
+            setSumError(null);
+          }
+        }}
       >
-        <Checkbox
-          checked={bulkState}
-          onCheckedChange={(v) => setAllChecked(v === true)}
-          aria-label={allChecked ? "Desmarcar todos" : "Marcar todos"}
-        />
-        <span className="text-sm select-none hidden sm:inline">
-          {allChecked ? "Todos" : "Marcar todos"}
-        </span>
-      </label>
+        <AlertDialogContent className="max-w-3xl w-[min(100vw-2rem,720px)]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Sumar stock a todos los productos</AlertDialogTitle>
+            <AlertDialogDescription>
+              Ajustá las cantidades que se sumarán al stock actual antes de confirmar.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
 
-      <Button variant="outline" size="sm" onClick={() => setBatchSalesModalOpen(true)}>
-        Aplicar ventas
-      </Button>
-    </div>
-  </div>
-</div>
+          <div className="mt-3 space-y-4">
+            <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-md border">
+              <table className="w-full table-fixed border-collapse text-sm">
+                <colgroup>
+                  <col className="w-[48%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[15%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[12%]" />
+                </colgroup>
+                <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Producto</th>
+                    <th className="px-3 py-2 text-right">Pedido</th>
+                    <th className="px-3 py-2 text-right">Sumar</th>
+                    <th className="px-3 py-2 text-right">Stock actual</th>
+                    <th className="px-3 py-2 text-right">Stock final</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sumPreviewRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                        No hay productos en este pedido.
+                      </td>
+                    </tr>
+                  ) : (
+                    sumPreviewRows.map(({ item, qtyOrdered, raw, addition, stockPrev, stockResult, isValid }) => (
+                      <tr key={item.id} className="border-t">
+                        <td className="px-3 py-2">
+                          <div className="font-medium break-words leading-tight">
+                            {item.display_name || item.product_name}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">{item.product_name}</div>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(qtyOrdered)}</td>
+                        <td className="px-3 py-2 text-right">
+                          <Input
+                            value={raw}
+                            onChange={(event) =>
+                              setSumAdjustments((prev) => ({ ...prev, [item.id]: event.target.value }))
+                            }
+                            disabled={sumStockLoading}
+                            className={clsx(
+                              "h-8 w-20 text-right tabular-nums",
+                              !isValid && "border-destructive text-destructive focus-visible:ring-destructive"
+                            )}
+                            inputMode="decimal"
+                            aria-label={`Cantidad a sumar para ${item.display_name || item.product_name}`}
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(stockPrev)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                          {qtyFormatter.format(stockResult)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {sumPreviewRows.length > 0 && (
+                  <tfoot className="border-t bg-muted/40 text-sm font-medium">
+                    <tr>
+                      <td className="px-3 py-2 text-right">Totales</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(sumTotals.qtyOrdered)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(sumTotals.addition)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(sumTotals.stockPrev)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(sumTotals.stockResult)}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
 
-      <AlertDialog open={batchSalesModalOpen} onOpenChange={setBatchSalesModalOpen}>
-        <AlertDialogContent>
+            {sumHasInvalid && (
+              <p className="text-xs text-destructive">
+                Revisá las cantidades: sólo se permiten números iguales o mayores a 0.
+              </p>
+            )}
+
+            {sumError && <p className="text-sm text-destructive">{sumError}</p>}
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={sumStockLoading}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={sumConfirmDisabled}
+              onClick={() => void applySumAdjustments()}
+            >
+              {sumStockLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sumar stock"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={batchSalesModalOpen}
+        onOpenChange={(open) => {
+          setBatchSalesModalOpen(open);
+          if (!open) setBatchError(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-4xl w-[min(100vw-2rem,820px)]">
           <AlertDialogHeader>
             <AlertDialogTitle>Aplicar ventas a todos los productos</AlertDialogTitle>
             <AlertDialogDescription>
-              Seleccioná desde qué fecha y hora querés descontar las ventas registradas. Aplicaremos la resta a todos los productos que tengan stock confirmado desde ese momento hasta ahora.
+              Seleccioná la fecha y hora desde la que querés descontar ventas para todo el pedido. Revisá el resumen antes de confirmar.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 space-y-4">
             <label className="flex flex-col gap-1 text-sm">
               <span className="text-muted-foreground">Fecha y hora inicial</span>
               <Input
                 type="datetime-local"
                 value={batchSalesInput}
                 onChange={(event) => setBatchSalesInput(event.target.value)}
+                disabled={batchApplying}
+                className="max-w-xs"
               />
             </label>
+
+            <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-md border">
+              <table className="w-full table-fixed border-collapse text-sm">
+                <colgroup>
+                  <col className="w-[48%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[13%]" />
+                </colgroup>
+                <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Producto</th>
+                    <th className="px-3 py-2 text-right">Pedido</th>
+                    <th className="px-3 py-2 text-right">Stock base</th>
+                    <th className="px-3 py-2 text-right">Ventas</th>
+                    <th className="px-3 py-2 text-right">Stock final</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batchPreviewRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                        No hay productos en este pedido.
+                      </td>
+                    </tr>
+                  ) : (
+                    batchPreviewRows.map(({ item, qtyOrdered, stockPrev, salesQty, stockResult }) => (
+                      <tr key={item.id} className="border-t">
+                        <td className="px-3 py-2">
+                          <div className="font-medium break-words leading-tight">
+                            {item.display_name || item.product_name}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">{item.product_name}</div>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(qtyOrdered)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(stockPrev)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(salesQty)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold">{qtyFormatter.format(stockResult)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {batchPreviewRows.length > 0 && (
+                  <tfoot className="border-t bg-muted/40 text-sm font-medium">
+                    <tr>
+                      <td className="px-3 py-2 text-right">Totales</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(batchTotals.qtyOrdered)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(batchTotals.stockPrev)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(batchTotals.salesQty)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(batchTotals.stockResult)}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+
+            <div className="text-xs text-muted-foreground">
+              {applyTimestampMs == null
+                ? "Ingresá una fecha válida para calcular las ventas a descontar."
+                : `Ventas descontadas desde ${previewDateLabel}.`}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Se copiará la cantidad pedida a "Pedido anterior" y se registrará un log de stock por cada producto.
+            </p>
+
+            {batchError && <p className="text-sm text-destructive">{batchError}</p>}
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={batchApplying}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction disabled={batchApplying} onClick={() => void applySalesToAll()}>
+            <AlertDialogAction
+              disabled={batchApplying || applyTimestampMs == null || !batchPreviewRows.length}
+              onClick={() => void applySalesToAll()}
+            >
               {batchApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Aplicar ventas"}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -2789,13 +3696,13 @@ const { data: inserted, error: insErr } = await supabase
 <div className="mt-2 flex gap-2">
   {/* Importar */}
   <div className="relative flex-1">
-    <input
-      ref={fileRef}
-      type="file"
-      accept=".xlsx,.xls,.csv"
-      className="hidden"
-      onChange={(e) => {
-        const f = e.currentTarget.files?.[0];
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".xlsx,.xls,.csv,.json"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.currentTarget.files?.[0];
         if (f) void handleImportFile(f);
       }}
     />
@@ -2821,7 +3728,10 @@ const { data: inserted, error: insErr } = await supabase
   {/* Exportar */}
   <Button
     variant="outline"
-    onClick={() => void handleExport()}
+    onClick={() => {
+      setExportFormat("xlsx");
+      setExportDialogOpen(true);
+    }}
     className="flex-1 w-full text-sm"
   >
     <Download className="h-4 w-4 mr-1" /> Exportar
@@ -2839,6 +3749,7 @@ const { data: inserted, error: insErr } = await supabase
         </div>
       </div>
     </main>
+    </>
   );
 }
 
@@ -3068,19 +3979,15 @@ function PriceEditor({
 function StockEditor({
   value,
   updatedAt,
+  previousUpdatedAt,
   onCommit,
   salesSince,
-  onApplySales,
-  applying = false,
-  applyDisabled = false,
 }: {
   value?: number | null;
   updatedAt?: string | null;
+  previousUpdatedAt?: string | null;
   onCommit: (n: number | null) => Promise<void> | void;
   salesSince?: number;
-  onApplySales?: () => Promise<void> | void;
-  applying?: boolean;
-  applyDisabled?: boolean;
 }) {
   const [val, setVal] = React.useState<string>(value == null ? "" : String(value));
   const [dirty, setDirty] = React.useState(false);
@@ -3090,9 +3997,16 @@ function StockEditor({
     setDirty(false);
   }, [value]);
 
-  const normalize = (s: string) => {
-    const n = Number(String(s).replace(/[^\d]/g, ""));
+  const toNumber = React.useCallback((input: string): number => {
+    if (!input) return 0;
+    const normalized = input.replace(/\s+/g, "").replace(/,/g, ".");
+    const n = Number(normalized);
     return Number.isFinite(n) ? n : 0;
+  }, []);
+
+  const normalize = (s: string) => {
+    const n = toNumber(s);
+    return Number.isFinite(n) ? round2(n) : 0;
   };
 
   const commit = async () => {
@@ -3120,6 +4034,18 @@ function StockEditor({
   }
 
   const since = sinceText(updatedAt);
+  let appliedFrom: { absolute: string; relative: string; title: string } | null = null;
+  if (previousUpdatedAt) {
+    const date = new Date(previousUpdatedAt);
+    if (!Number.isNaN(date.getTime())) {
+      const rel = sinceText(previousUpdatedAt);
+      appliedFrom = {
+        absolute: date.toLocaleString("es-AR"),
+        relative: rel.text,
+        title: rel.title,
+      };
+    }
+  }
   const qtyFormatter = React.useMemo(() => new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }), []);
 
   return (
@@ -3165,23 +4091,20 @@ function StockEditor({
 
       <div className="flex flex-col items-end gap-1">
         <div className="text-[11px] text-muted-foreground text-right" title={since.title}>
-          {updatedAt ? `act. ${since.text}` : "sin firma"}
+          {updatedAt ? `Aplicado ${since.text}` : "sin aplicación"}
         </div>
+        {appliedFrom && (
+          <div className="text-[11px] text-muted-foreground text-right" title={appliedFrom.title}>
+            Ventas descontadas desde {appliedFrom.absolute} ({appliedFrom.relative})
+          </div>
+        )}
 
-        {onApplySales && (
-          <div className="flex w-full items-center justify-between gap-2 text-[11px]">
-            <span className="text-muted-foreground">
-              Ventas pendientes: {qtyFormatter.format(Math.max(0, salesSince ?? 0))}
+        {typeof salesSince === "number" && (
+          <div className="flex w-full items-center justify-between gap-2 text-[11px] text-muted-foreground">
+            <span>Ventas pendientes:</span>
+            <span className="font-medium text-foreground">
+              {qtyFormatter.format(Math.max(0, salesSince))}
             </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7"
-              disabled={applyDisabled || applying}
-              onClick={() => void onApplySales()}
-            >
-              {applying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Aplicar ventas"}
-            </Button>
           </div>
         )}
       </div>
@@ -3340,6 +4263,10 @@ function GroupSection(props: {
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const sectionRef = React.useRef<HTMLDivElement | null>(null);
   const [showFloater, setShowFloater] = React.useState(false);
+  const qtyFormatter = React.useMemo(
+    () => new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }),
+    []
+  );
 
   React.useEffect(() => setEditValue(groupName || "Sin grupo"), [groupName]);
 
@@ -3391,6 +4318,7 @@ const confirmedCount = React.useMemo(
   function scrollInputToTop() {
     ensureInputVisible();
   }
+
 const mergedClassName = [
   "border rounded mb-3 overflow-visible",
   props.containerProps?.className || "",
@@ -3738,6 +4666,7 @@ const mergedClassName = [
     <StockEditor
       value={it.stock_qty ?? null}
       updatedAt={it.stock_updated_at}
+      previousUpdatedAt={it.previous_qty_updated_at}
       onCommit={(n) => onUpdateStock(it.id, n)}
       salesSince={pendingSales}
     />

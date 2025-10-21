@@ -11,7 +11,6 @@ import {
   Truck,
   LineChart,
   BadgePercent,
-  Boxes,
   LogOut,
 } from "lucide-react";
 import React from "react";
@@ -92,13 +91,6 @@ export default function BottomNav() {
       requiresBranch: true,
       buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
         tenantSlug && b ? `/t/${tenantSlug}/b/${b}/stats` : null,
-    },
-    {
-      label: "Stock",
-      icon: Boxes,
-      requiresBranch: true,
-      buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
-        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/stock` : null,
     },
     { label: "Salir", icon: LogOut, onClick: logout },
   ];
