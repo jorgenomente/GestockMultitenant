@@ -17,8 +17,8 @@ import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 const VENTAS_URL = "/ventas.xlsx";
 
 const SALES_LS_KEY_LEGACY_BASE = "gestock:sales:last";
-const SALES_META_LS_KEY_BASE = "gestock:sales:meta:v2";
-const IDB_SALES_KEY_BASE = "sales:last";
+const SALES_META_LS_KEY_BASE = "gestock:sales:meta:v3";
+const IDB_SALES_KEY_BASE = "sales:last:v2";
 const SALES_BC_NAME_BASE = "gestock:sales:bc";
 const UI_LS_KEY_BASE = "gestock:stats:ui:v1";
 const WEIGHT_SETTINGS_KEY_BASE = "gestock:stats:weight:v1";
@@ -134,7 +134,10 @@ function toEpochMs(v: any): number | null {
   if (typeof v === "number") {
     const d = XLSX.SSF.parse_date_code(v);
     if (!d) return null;
-    return Date.UTC(d.y, d.m - 1, d.d);
+    const hour = Number.isFinite(d.H) ? d.H : 12;
+    const minute = Number.isFinite(d.M) ? d.M : 0;
+    const second = Number.isFinite(d.S) ? Math.floor(d.S) : 0;
+    return Date.UTC(d.y, d.m - 1, d.d, hour, minute, second);
   }
   if (typeof v === "string") {
     const t = Date.parse(v);
@@ -145,7 +148,7 @@ function toEpochMs(v: any): number | null {
       let [_, dd, mm, yyyy] = m;
       let year = parseInt(yyyy, 10);
       if (year < 100) year += 2000;
-      return Date.UTC(year, parseInt(mm, 10) - 1, parseInt(dd, 10));
+      return Date.UTC(year, parseInt(mm, 10) - 1, parseInt(dd, 10), 12);
     }
     return null;
   }
@@ -164,14 +167,12 @@ function b642ab(b64: string) {
   return bytes.buffer;
 }
 
-const toLocalDate = (ts: number) => {
-  const date = new Date(ts);
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-};
-const dateShort = (ts: number) => toLocalDate(ts).toLocaleDateString("es-AR");
-const weekdayFmt = new Intl.DateTimeFormat("es-AR", { weekday: "long" });
-const dateFmt = new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
-const formatLastSale = (ts?: number) => (!ts ? "—" : `${weekdayFmt.format(toLocalDate(ts))} ${dateFmt.format(toLocalDate(ts))}`);
+const TIMEZONE = "America/Argentina/Buenos_Aires";
+const dateShortFmt = new Intl.DateTimeFormat("es-AR", { timeZone: TIMEZONE, day: "2-digit", month: "2-digit", year: "numeric" });
+const weekdayFmt = new Intl.DateTimeFormat("es-AR", { weekday: "long", timeZone: TIMEZONE });
+const dateFmt = new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: TIMEZONE });
+const dateShort = (ts: number) => dateShortFmt.format(new Date(ts));
+const formatLastSale = (ts?: number) => (!ts ? "—" : `${weekdayFmt.format(new Date(ts))} ${dateFmt.format(new Date(ts))}`);
 const formatKg = (value: number) => {
   if (!Number.isFinite(value)) return "—";
   return value.toLocaleString("es-AR", {

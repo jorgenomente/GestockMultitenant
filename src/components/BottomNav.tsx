@@ -11,6 +11,7 @@ import {
   Truck,
   LineChart,
   BadgePercent,
+  Wallet,
   LogOut,
 } from "lucide-react";
 import React from "react";
@@ -23,7 +24,7 @@ type NavItem = {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   testId?: string;
   onClick?: () => void;
-  buildHref?: (ctx: { slug: string; branchSlug: string | null }) => string | null;
+  buildHref?: (_ctx: { slug: string; branchSlug: string | null }) => string | null;
   requiresBranch?: boolean;
 };
 
@@ -63,6 +64,13 @@ export default function BottomNav() {
       requiresBranch: true,
       buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
         tenantSlug && b ? `/t/${tenantSlug}/b/${b}/proveedores` : null,
+    },
+    {
+      label: "Pagos",
+      icon: Wallet,
+      requiresBranch: true,
+      buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
+        tenantSlug && b ? `/t/${tenantSlug}/b/${b}/payments` : null,
     },
     {
       label: "Clientes",
