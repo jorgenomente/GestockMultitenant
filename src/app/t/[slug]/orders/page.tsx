@@ -267,6 +267,7 @@ function useSharedSales() {
   // Broadcast entre pestañas
   const bcRef = React.useRef<BroadcastChannel | null>(null);
   React.useEffect(() => {
+    if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") return undefined;
     bcRef.current = new BroadcastChannel(SALES_BC_NAME);
     const bc = bcRef.current;
     bc.onmessage = async (ev) => {

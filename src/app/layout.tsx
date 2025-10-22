@@ -9,7 +9,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"], dis
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
-  title: "GeStock V2",
+  title: "Gestock Multitenant",
   description: "Gestión interna de precios, vencimientos y pedidos.",
 };
 

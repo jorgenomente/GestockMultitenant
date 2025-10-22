@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Upload } from "lucide-react";
 import { useBranch } from "@/components/branch/BranchProvider";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
@@ -19,6 +21,7 @@ const SALES_META_LS_KEY_BASE = "gestock:sales:meta:v2";
 const IDB_SALES_KEY_BASE = "sales:last";
 const SALES_BC_NAME_BASE = "gestock:sales:bc";
 const UI_LS_KEY_BASE = "gestock:stats:ui:v1";
+const WEIGHT_SETTINGS_KEY_BASE = "gestock:stats:weight:v1";
 
 /* ========= Tipos ========= */
 type SalesRow = {
@@ -56,6 +59,49 @@ type SalesPersistMeta = {
   branch_id?: string | null;
   scope_key?: string;
 };
+
+type WeightProductInfo = {
+  key: string;
+  name: string;
+  searchKey: string;
+  rows: SalesRow[];
+  stats: Stats;
+  unitKg: number | null;
+};
+
+const DRY_FRUIT_KEYWORDS = [
+  "almendra",
+  "nuez",
+  "nueces",
+  "pistacho",
+  "avellana",
+  "mani",
+  "manies",
+  "caju",
+  "anacardo",
+  "pecan",
+  "pasas",
+  "fruto seco",
+  "frutos secos",
+  "mix frutos",
+  "mix seco",
+  "mix semillas",
+  "semilla",
+  "chia",
+  "sesamo",
+  "lino",
+  "girasol",
+  "calabaza",
+  "pepita",
+  "cranberry",
+  "arandano",
+  "datil",
+  "ciruela",
+  "higo",
+  "coco rallado",
+];
+
+const WEIGHT_AMOUNT_REGEX = /(^|\s)\d+([.,]\d+)?\s*(kg|kilo|kilogram|gr|g|gram)\b/;
 
 const SALES_KEY_ROOT = "sales_url";
 const salesKeyForScope = (tenantId?: string | null, branchId?: string | null) => {
@@ -118,10 +164,89 @@ function b642ab(b64: string) {
   return bytes.buffer;
 }
 
-const dateShort = (ts: number) => new Date(ts).toLocaleDateString("es-AR");
+const toLocalDate = (ts: number) => {
+  const date = new Date(ts);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+};
+const dateShort = (ts: number) => toLocalDate(ts).toLocaleDateString("es-AR");
 const weekdayFmt = new Intl.DateTimeFormat("es-AR", { weekday: "long" });
 const dateFmt = new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
-const formatLastSale = (ts?: number) => (!ts ? "—" : `${weekdayFmt.format(new Date(ts))} ${dateFmt.format(new Date(ts))}`);
+const formatLastSale = (ts?: number) => (!ts ? "—" : `${weekdayFmt.format(toLocalDate(ts))} ${dateFmt.format(toLocalDate(ts))}`);
+const formatKg = (value: number) => {
+  if (!Number.isFinite(value)) return "—";
+  return value.toLocaleString("es-AR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 3,
+  });
+};
+const formatQuantity = (value: number) => {
+  if (!Number.isFinite(value)) return "—";
+  const isInteger = Math.abs(value - Math.round(value)) < 1e-3;
+  return value.toLocaleString("es-AR", {
+    minimumFractionDigits: isInteger ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+};
+const formatCurrency = (value: number) => {
+  if (!Number.isFinite(value)) return "—";
+  return `$${value.toLocaleString("es-AR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
+const FRACTION_THRESHOLD = 1e-3;
+const isFractionalQuantity = (qty: number) => Math.abs(qty - Math.round(qty)) > FRACTION_THRESHOLD;
+
+function parseFraction(text: string): number | null {
+  const fractionMatch = text.match(/^(\d+)\/(\d+)$/);
+  if (!fractionMatch) return null;
+  const num = parseFloat(fractionMatch[1]);
+  const den = parseFloat(fractionMatch[2]);
+  if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0) return null;
+  return num / den;
+}
+
+function extractUnitKgFromName(name: string): number | null {
+  const cleaned = name.replace(/\s+/g, " ");
+  const match = cleaned.match(/(\d+(?:\/\d+)?|\d*(?:[.,]\d+)?)(?:\s*x\s*(\d+(?:[.,]\d+)?))?\s*(kg|kilo|kilogramos?|gr|g|gramos?|mg|miligramos?)\b/i);
+  if (!match) return null;
+  const [, firstPart, multiplierRaw, unitRaw] = match;
+  let value: number | null = null;
+  if (firstPart?.includes("/")) {
+    value = parseFraction(firstPart);
+  } else {
+    const parsed = parseFloat(firstPart?.replace(",", ".") ?? "");
+    value = Number.isFinite(parsed) ? parsed : null;
+  }
+  if (value == null) return null;
+  let multiplier = 1;
+  if (multiplierRaw) {
+    const parsedMult = parseFloat(multiplierRaw.replace(",", "."));
+    if (Number.isFinite(parsedMult)) multiplier = parsedMult;
+  }
+  const unit = (unitRaw ?? "").toLowerCase();
+  let kg = value;
+  if (unit.startsWith("mg") || unit.includes("milig")) {
+    kg = value / 1_000_000;
+  } else if (unit.startsWith("g")) {
+    kg = value / 1000;
+  } else if (unit.startsWith("kg") || unit.startsWith("kilo")) {
+    kg = value;
+  } else {
+    return null;
+  }
+  return kg * multiplier;
+}
+
+function looksLikeWeightProduct(nameKey: string, rows: SalesRow[]): boolean {
+  if (rows.some((r) => r.qty > 0 && isFractionalQuantity(r.qty))) return true;
+  if (extractUnitKgFromName(nameKey)) return true;
+  if (WEIGHT_AMOUNT_REGEX.test(nameKey)) return true;
+  for (const keyword of DRY_FRUIT_KEYWORDS) {
+    if (nameKey.includes(keyword)) return true;
+  }
+  return false;
+}
 
 /* ========= IndexedDB helpers ========= */
 const IDB_DB_NAME = "gestock";
@@ -343,7 +468,7 @@ function useSharedSales(
   const bcRef = React.useRef<BroadcastChannel | null>(null);
 
   React.useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") return;
     const channel = new BroadcastChannel(bcName);
     bcRef.current = channel;
     channel.onmessage = async (ev) => {
@@ -529,6 +654,7 @@ export default function EstadisticaPage() {
   const { currentBranch, tenantId } = useBranch();
   const branchId = currentBranch?.id ?? null;
   const storageSuffix = tenantId && branchId ? `${tenantId}:${branchId}` : null;
+  const weightSettingsKey = makeKey(WEIGHT_SETTINGS_KEY_BASE, storageSuffix);
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
   const { loading, error, byProduct, importVentas, clearVentas, source } = useSharedSales(storageSuffix, {
     supabase,
@@ -565,18 +691,6 @@ export default function EstadisticaPage() {
       window.prompt("Copiá el mensaje de error:", error);
     }
   }, [error]);
-
-  if (!tenantId || !currentBranch) {
-    return (
-      <main className="p-4 max-w-screen-lg mx-auto">
-        <Card>
-          <CardContent className="p-4 text-sm text-muted-foreground">
-            Seleccioná una sucursal para ver las estadísticas de ventas.
-          </CardContent>
-        </Card>
-      </main>
-    );
-  }
 
   type UiState = {
     selectedName: string;
@@ -664,6 +778,301 @@ export default function EstadisticaPage() {
       })
       .slice(0, 200);
   }, [query, productOptions]);
+
+  const [weightQuery, setWeightQuery] = React.useState("");
+  const [weightSelectedIds, setWeightSelectedIds] = React.useState<string[]>([]);
+
+  const todayIso = React.useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const defaultFromIso = React.useMemo(
+    () => new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10),
+    []
+  );
+
+  const [weightFrom, setWeightFrom] = React.useState(defaultFromIso);
+  const [weightTo, setWeightTo] = React.useState(todayIso);
+  const [weightHydrated, setWeightHydrated] = React.useState(false);
+  const weightPersistRef = React.useRef<string | null>(null);
+
+  const weightProducts = React.useMemo<WeightProductInfo[]>(() => {
+    const entries: WeightProductInfo[] = [];
+    for (const [key, arr] of byProduct.entries()) {
+      if (!arr.length) continue;
+      const name = arr[0].product;
+      const searchKey = normKey(name);
+      const unitKg = extractUnitKgFromName(name) ?? null;
+      if (!looksLikeWeightProduct(searchKey, arr) && unitKg == null) continue;
+      entries.push({
+        key,
+        name,
+        searchKey,
+        rows: arr,
+        stats: computeStats(arr),
+        unitKg,
+      });
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    return entries;
+  }, [byProduct]);
+
+  React.useEffect(() => {
+    setWeightSelectedIds((prev) => {
+      if (!prev.length) return prev;
+      if (!weightProducts.length) return prev;
+      const allowed = new Set(weightProducts.map((p) => p.key));
+      const filteredIds = prev.filter((id) => allowed.has(id));
+      return filteredIds.length === prev.length ? prev : filteredIds;
+    });
+  }, [weightProducts]);
+
+  React.useEffect(() => {
+    if (!tenantId || !branchId || !supabase) {
+      setWeightSelectedIds([]);
+      setWeightFrom(defaultFromIso);
+      setWeightTo(todayIso);
+      setWeightHydrated(false);
+      weightPersistRef.current = null;
+      return;
+    }
+
+    setWeightHydrated(false);
+    weightPersistRef.current = null;
+
+    let alive = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("app_settings")
+          .select("value")
+          .eq("tenant_id", tenantId)
+          .eq("branch_id", branchId)
+          .eq("key", weightSettingsKey)
+          .maybeSingle();
+        if (!alive) return;
+        if (error && error.code !== "PGRST116") throw error;
+
+        const raw = (data?.value ?? null) as { selectedIds?: unknown; from?: unknown; to?: unknown } | null;
+        const nextSelected = Array.isArray(raw?.selectedIds)
+          ? raw!.selectedIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+          : [];
+        const parsedFrom = typeof raw?.from === "string" && raw.from ? raw.from : defaultFromIso;
+        const parsedTo = typeof raw?.to === "string" && raw.to ? raw.to : todayIso;
+        const normalizedTo = parsedTo;
+        const normalizedFrom = parsedFrom > normalizedTo ? normalizedTo : parsedFrom;
+
+        setWeightSelectedIds(nextSelected);
+        setWeightFrom(normalizedFrom);
+        setWeightTo(normalizedTo);
+        weightPersistRef.current = JSON.stringify({ selectedIds: nextSelected, from: normalizedFrom, to: normalizedTo });
+        setWeightHydrated(true);
+      } catch (err) {
+        if (!alive) return;
+        console.warn("[stats] weight settings load:", err instanceof Error ? err.message : String(err));
+        setWeightSelectedIds([]);
+        setWeightFrom(defaultFromIso);
+        setWeightTo(todayIso);
+        weightPersistRef.current = null;
+        setWeightHydrated(true);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [tenantId, branchId, supabase, weightSettingsKey, defaultFromIso, todayIso]);
+
+  const weightProductByKey = React.useMemo(() => {
+    const map = new Map<string, WeightProductInfo>();
+    for (const item of weightProducts) map.set(item.key, item);
+    return map;
+  }, [weightProducts]);
+
+  const weightFiltered = React.useMemo(() => {
+    if (!weightProducts.length) return [];
+    const q = normKey(weightQuery);
+    const words = q
+      .split(/\s+/)
+      .map((w) => w.trim())
+      .filter(Boolean);
+    if (!words.length) return weightProducts.slice(0, 200);
+    return weightProducts
+      .filter((item) => words.every((word) => item.searchKey.includes(word)))
+      .slice(0, 200);
+  }, [weightQuery, weightProducts]);
+
+  const weightSelectedProducts = React.useMemo(() => {
+    const selected: WeightProductInfo[] = [];
+    for (const id of weightSelectedIds) {
+      const item = weightProductByKey.get(id);
+      if (item) selected.push(item);
+    }
+    return selected;
+  }, [weightSelectedIds, weightProductByKey]);
+
+  const selectVisibleWeights = React.useCallback(() => {
+    if (!weightFiltered.length) return;
+    setWeightSelectedIds((prev) => {
+      const nextSet = new Set(prev);
+      let changed = false;
+      for (const item of weightFiltered) {
+        if (!nextSet.has(item.key)) {
+          nextSet.add(item.key);
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      return weightProducts.filter((item) => nextSet.has(item.key)).map((item) => item.key);
+    });
+  }, [weightFiltered, weightProducts]);
+
+  const deselectVisibleWeights = React.useCallback(() => {
+    if (!weightFiltered.length) return;
+    const visible = new Set(weightFiltered.map((item) => item.key));
+    setWeightSelectedIds((prev) => {
+      if (!prev.length) return prev;
+      const filteredIds = prev.filter((id) => !visible.has(id));
+      return filteredIds.length === prev.length ? prev : filteredIds;
+    });
+  }, [weightFiltered]);
+
+  const toggleWeightSelection = React.useCallback(
+    (key: string, checked: boolean) => {
+      setWeightSelectedIds((prev) => {
+        const has = prev.includes(key);
+        if (checked) {
+          if (has) return prev;
+          const withKey = new Set([...prev, key]);
+          return weightProducts.filter((item) => withKey.has(item.key)).map((item) => item.key);
+        }
+        if (!has) return prev;
+        return prev.filter((id) => id !== key);
+      });
+    },
+    [weightProducts]
+  );
+
+  React.useEffect(() => {
+    if (weightFrom && weightTo && weightFrom > weightTo) {
+      setWeightFrom(weightTo);
+    }
+  }, [weightFrom, weightTo]);
+
+  const weightRange = React.useMemo(() => {
+    if (!weightFrom || !weightTo) return null;
+    const start = new Date(weightFrom + "T00:00:00Z").getTime();
+    const end = new Date(weightTo + "T00:00:00Z").getTime() + 24 * 3600 * 1000;
+    return { start, end };
+  }, [weightFrom, weightTo]);
+
+  const computeWeightSummary = React.useCallback(
+    (item: WeightProductInfo) => {
+      if (!weightRange) {
+        return { units: 0, kg: 0, subtotal: 0, usedFractional: false };
+      }
+      let totalUnits = 0;
+      let totalKg = 0;
+      let totalSubtotal = 0;
+      let usedFractional = false;
+      for (const row of item.rows) {
+        if (row.date < weightRange.start || row.date >= weightRange.end) continue;
+        if (row.qty <= 0) continue;
+        const qty = row.qty;
+        const fractional = isFractionalQuantity(qty);
+        if (row.subtotal != null && Number.isFinite(row.subtotal)) {
+          totalSubtotal += row.subtotal;
+        }
+        if (fractional) usedFractional = true;
+        totalUnits += qty;
+        if (fractional) {
+          totalKg += qty;
+        } else if (item.unitKg != null) {
+          totalKg += qty * item.unitKg;
+        } else {
+          totalKg += qty;
+        }
+      }
+      return { units: totalUnits, kg: totalKg, subtotal: totalSubtotal, usedFractional };
+    },
+    [weightRange]
+  );
+
+  const weightSummaries = React.useMemo(() => {
+    return weightSelectedProducts.map((item) => ({
+      item,
+      summary: computeWeightSummary(item),
+    }));
+  }, [weightSelectedProducts, computeWeightSummary]);
+
+  const weightTotals = React.useMemo(() => {
+    return weightSummaries.reduce(
+      (acc, { summary }) => {
+        acc.units += summary.units;
+        acc.kg += summary.kg;
+        acc.subtotal += summary.subtotal;
+        return acc;
+      },
+      { units: 0, kg: 0, subtotal: 0 }
+    );
+  }, [weightSummaries]);
+
+  const weightTotalsHaveFractional = React.useMemo(
+    () => weightSummaries.some(({ summary }) => summary.usedFractional),
+    [weightSummaries]
+  );
+
+  const setWeightQuick = React.useCallback(
+    (days: number) => {
+      if (!weightTo) return;
+      const end = new Date(weightTo + "T00:00:00");
+      const start = new Date(end.getTime() - days * 24 * 3600 * 1000);
+      setWeightFrom(start.toISOString().slice(0, 10));
+    },
+    [weightTo]
+  );
+
+  React.useEffect(() => {
+    if (!weightHydrated) return;
+    if (!tenantId || !branchId || !tenantSlug) return;
+
+    const payload = {
+      selectedIds: weightSelectedIds,
+      from: weightFrom,
+      to: weightTo,
+    };
+    const serialized = JSON.stringify(payload);
+    if (weightPersistRef.current === serialized) return;
+
+    if (typeof window === "undefined") return;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      fetch(`/api/t/${tenantSlug}/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: "branch",
+          key: weightSettingsKey,
+          branchId,
+          value: payload,
+        }),
+        signal: controller.signal,
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          weightPersistRef.current = serialized;
+        })
+        .catch((err) => {
+          if (controller.signal.aborted) return;
+          console.warn("[stats] weight settings save:", err instanceof Error ? err.message : String(err));
+        });
+    }, 500);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [weightHydrated, tenantId, branchId, tenantSlug, weightSettingsKey, weightSelectedIds, weightFrom, weightTo]);
+
+  const canShowStats = Boolean(tenantId && currentBranch);
 
   const selectedId = normKey(selectedName);
   const rows = byProduct.get(selectedId) ?? [];
@@ -762,46 +1171,54 @@ export default function EstadisticaPage() {
 
   return (
     <main className="p-3 max-w-screen-lg mx-auto space-y-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold">Estadística</h1>
-        <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
-          <div className="text-xs text-muted-foreground break-words">
-            Fuente ventas: <span className="font-medium">{metaLabel}</span>
+      {!canShowStats ? (
+        <Card>
+          <CardContent className="p-4 text-sm text-muted-foreground">
+            Seleccioná una sucursal para ver las estadísticas de ventas.
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h1 className="text-xl font-semibold">Estadística</h1>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
+              <div className="text-xs text-muted-foreground break-words">
+                Fuente ventas: <span className="font-medium">{metaLabel}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  ref={ventasInputRef}
+                  type="file"
+                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const input = e.currentTarget;
+                    const f = input.files?.[0];
+                    if (!f) {
+                      input.value = "";
+                      return;
+                    }
+                    try {
+                      await importVentas(f);
+                    } finally {
+                      input.value = "";
+                    }
+                  }}
+                />
+                <Button variant="outline" onClick={() => ventasInputRef.current?.click()} disabled={loading}>
+                  {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
+                  Importar ventas
+                </Button>
+                <Button variant="ghost" onClick={clearVentas} disabled={loading}>
+                  Borrar fuente
+                </Button>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <input
-              ref={ventasInputRef}
-              type="file"
-              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              className="hidden"
-              onChange={async (e) => {
-                const input = e.currentTarget;
-                const f = input.files?.[0];
-                if (!f) {
-                  input.value = "";
-                  return;
-                }
-                try {
-                  await importVentas(f);
-                } finally {
-                  input.value = "";
-                }
-              }}
-            />
-            <Button variant="outline" onClick={() => ventasInputRef.current?.click()} disabled={loading}>
-              {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
-              Importar ventas
-            </Button>
-            <Button variant="ghost" onClick={clearVentas} disabled={loading}>
-              Borrar fuente
-            </Button>
-          </div>
-        </div>
-      </div>
 
-      <Card>
-        <CardContent className="p-3 space-y-4">
-          <div className="grid gap-3 lg:grid-cols-12 lg:items-end">
+          <Card>
+            <CardContent className="p-3 space-y-4">
+              <div className="grid gap-3 lg:grid-cols-12 lg:items-end">
             <div className="relative lg:col-span-4 min-w-0">
               <label className="text-sm font-medium">Elegí un artículo</label>
               <Input
@@ -979,8 +1396,207 @@ export default function EstadisticaPage() {
               </Button>
             </div>
           )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+
+        <Accordion type="single" collapsible className="rounded-xl border bg-card text-card-foreground">
+          <AccordionItem value="peso">
+            <AccordionTrigger className="px-4 py-3 text-left hover:no-underline">
+            <div className="flex w-full items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">Artículos por peso</p>
+                <p className="text-xs text-muted-foreground">
+                  {weightProducts.length === 0
+                    ? "Sin artículos identificados en la fuente actual"
+                    : `Seleccionados ${weightSelectedIds.length} · Kg en rango ${formatKg(weightTotals.kg)} · Coincidencias ${weightFiltered.length}/${weightProducts.length}`}
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-4 pb-4 space-y-4">
+            <div className="space-y-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="flex-1 min-w-0">
+                  <label className="text-sm font-medium" htmlFor="weight-search">
+                    Buscar artículo
+                  </label>
+                  <Input
+                    id="weight-search"
+                    placeholder="Buscar producto por peso…"
+                    value={weightQuery}
+                    onChange={(e) => setWeightQuery(e.target.value)}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={selectVisibleWeights}
+                    disabled={!weightFiltered.length}
+                  >
+                    Seleccionar visibles
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={deselectVisibleWeights}
+                    disabled={!weightFiltered.length}
+                  >
+                    Deseleccionar visibles
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">Rango rápido</span>
+                  <Button type="button" size="sm" variant="secondary" onClick={() => setWeightQuick(7)}>
+                    7d
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setWeightQuick(14)}>
+                    14d
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setWeightQuick(30)}>
+                    30d
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium" htmlFor="weight-from">
+                    Desde
+                  </label>
+                  <Input
+                    id="weight-from"
+                    type="date"
+                    value={weightFrom}
+                    max={weightTo}
+                    onChange={(e) => setWeightFrom(e.target.value)}
+                    className="w-40"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium" htmlFor="weight-to">
+                    Hasta
+                  </label>
+                  <Input
+                    id="weight-to"
+                    type="date"
+                    value={weightTo}
+                    min={weightFrom}
+                    max={todayIso}
+                    onChange={(e) => setWeightTo(e.target.value)}
+                    className="w-40"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-md border">
+              {weightProducts.length === 0 ? (
+                <div className="p-3 text-sm text-muted-foreground">
+                  No encontramos artículos que parezcan venderse por peso en la fuente actual.
+                </div>
+              ) : weightFiltered.length === 0 ? (
+                <div className="p-3 text-sm text-muted-foreground">Sin coincidencias para este filtro.</div>
+              ) : (
+                <div className="max-h-64 overflow-auto divide-y">
+                  {weightFiltered.map((item) => {
+                    const checked = weightSelectedIds.includes(item.key);
+                    const lastDateLabel = formatLastSale(item.stats.lastDate);
+                    const safeId = `weight-${item.key.replace(/[^a-z0-9_-]/g, "-")}`;
+                    return (
+                      <div key={item.key} className="flex items-start gap-3 px-3 py-2 text-sm hover:bg-muted/60">
+                        <Checkbox
+                          id={safeId}
+                          checked={checked}
+                          onCheckedChange={(state) => toggleWeightSelection(item.key, state === true)}
+                        />
+                        <label htmlFor={safeId} className="flex-1 cursor-pointer select-none">
+                          <p className="font-medium leading-tight">{item.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Última venta: {lastDateLabel}
+                            {item.unitKg != null ? ` · ${formatKg(item.unitKg)} kg/unidad` : ""}
+                          </p>
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {weightSummaries.length > 0 && (
+              <div className="rounded-md border">
+                <div className="px-3 py-2 border-b text-sm font-semibold">
+                  Artículos seleccionados ({weightSummaries.length})
+                </div>
+                <div className="overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-background">
+                      <tr className="border-b text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                        <th className="px-3 py-2 text-left">Producto</th>
+                        <th className="px-3 py-2 text-left">Última venta</th>
+                        <th className="px-3 py-2 text-right">Kg vendidos</th>
+                        <th className="px-3 py-2 text-right">Unidades registradas</th>
+                        <th className="px-3 py-2 text-right">Kg / unidad</th>
+                        <th className="px-3 py-2 text-right">Subtotal</th>
+                        <th className="px-3 py-2 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {weightSummaries.map(({ item, summary }) => (
+                        <tr key={`selected-${item.key}`} className="border-b [&>td]:py-2">
+                          <td className="px-3 font-medium">{item.name}</td>
+                          <td className="px-3 text-xs text-muted-foreground">{formatLastSale(item.stats.lastDate)}</td>
+                          <td className="px-3 text-right tabular-nums">{formatKg(summary.kg)}</td>
+                          <td className="px-3 text-right tabular-nums">{formatQuantity(summary.units)}</td>
+                          <td className="px-3 text-right tabular-nums">
+                            {item.unitKg != null
+                              ? formatKg(item.unitKg)
+                              : summary.usedFractional || summary.units <= 0
+                                ? "—"
+                                : formatKg(summary.kg / summary.units)}
+                          </td>
+                          <td className="px-3 text-right tabular-nums">{formatCurrency(summary.subtotal)}</td>
+                          <td className="px-3 text-right">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => toggleWeightSelection(item.key, false)}
+                            >
+                              Quitar
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-semibold">
+                        <td className="px-3 py-2 text-left">Totales</td>
+                        <td className="px-3 py-2"></td>
+                        <td className="px-3 py-2 text-right tabular-nums">{formatKg(weightTotals.kg)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{formatQuantity(weightTotals.units)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {weightTotalsHaveFractional || weightTotals.units <= 0
+                            ? "—"
+                            : formatKg(weightTotals.kg / weightTotals.units)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(weightTotals.subtotal)}</td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+        </>
+      )}
     </main>
   );
 }
