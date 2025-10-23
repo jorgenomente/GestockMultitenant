@@ -4,6 +4,7 @@ import {
   getSupabaseUserServerClient,
   getSupabaseServiceRoleClient,
 } from "@/lib/supabaseServer";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -13,12 +14,14 @@ type MembershipRow = {
   tenant_id: string;
   role: Role;
   tenant_slug: string | null;
+  branch_ids: string[] | null;
 };
 
 type MembershipQueryRow = {
   tenant_id: string;
   role: Role;
   tenants?: { slug?: string | null } | null;
+  branch_ids?: string[] | null;
 };
 
 const ROLE_PRIORITY: Role[] = ["owner", "admin", "staff"];
@@ -29,6 +32,7 @@ function normalizeMembershipRows(rows: MembershipQueryRow[] | null | undefined):
     tenant_id: row.tenant_id,
     role: (row.role ?? "staff") as Role,
     tenant_slug: row.tenants?.slug ?? null,
+    branch_ids: Array.isArray(row.branch_ids) ? row.branch_ids : row.branch_ids ?? null,
   }));
 }
 
@@ -40,6 +44,35 @@ function pickPreferredMembership(rows: MembershipRow[] | null | undefined) {
     return (aIdx === -1 ? ROLE_PRIORITY.length : aIdx) -
       (bIdx === -1 ? ROLE_PRIORITY.length : bIdx);
   })[0];
+}
+
+async function resolvePreferredBranchSlug(
+  client: SupabaseClient,
+  tenantId: string,
+  allowedBranchIds: string[] | null | undefined
+): Promise<string | null> {
+  try {
+    let query = client
+      .from("branches")
+      .select("slug")
+      .eq("tenant_id", tenantId)
+      .order("name", { ascending: true })
+      .limit(1);
+
+    if (Array.isArray(allowedBranchIds) && allowedBranchIds.length > 0) {
+      query = query.in("id", allowedBranchIds);
+    }
+
+    const { data, error } = await query.maybeSingle<{ slug: string }>();
+    if (error) {
+      console.error("resolvePreferredBranchSlug", error);
+      return null;
+    }
+    return data?.slug ?? null;
+  } catch (err) {
+    console.error("resolvePreferredBranchSlug unexpected", err);
+    return null;
+  }
 }
 
 export default async function Home() {
@@ -55,7 +88,7 @@ export default async function Home() {
   // 2) Intento A: memberships visibles con el cliente del usuario (RLS)
   const { data: memUserRows } = await supa
     .from("memberships")
-    .select("tenant_id, role, tenants(slug)")
+    .select("tenant_id, role, branch_ids, tenants(slug)")
     .eq("user_id", user.id);
 
   let membership = pickPreferredMembership(normalizeMembershipRows(memUserRows as MembershipQueryRow[] | null));
@@ -67,7 +100,7 @@ export default async function Home() {
       adminClient = getSupabaseServiceRoleClient();
       const { data: memAdminRows } = await adminClient
         .from("memberships")
-        .select("tenant_id, role, tenants(slug)")
+        .select("tenant_id, role, branch_ids, tenants(slug)")
         .eq("user_id", user.id);
       membership = pickPreferredMembership(
         normalizeMembershipRows(memAdminRows as MembershipQueryRow[] | null),
@@ -91,11 +124,21 @@ export default async function Home() {
   }
 
   if (membership?.tenant_id && tenantSlug) {
+    const branchSlug = await resolvePreferredBranchSlug(
+      tenantClient,
+      membership.tenant_id,
+      membership.branch_ids
+    );
+
+    if (branchSlug) {
+      redirect(`/t/${tenantSlug}/b/${branchSlug}`);
+    }
+
     const role = membership.role;
-    const target = role === "owner" || role === "admin"
+    const fallbackTarget = role === "owner" || role === "admin"
       ? `/t/${tenantSlug}/admin`
       : `/t/${tenantSlug}/prices`;
-    redirect(target);
+    redirect(fallbackTarget);
   }
 
   // 5) Último recurso: slug por defecto (crea membership staff si no existe)
@@ -125,6 +168,10 @@ export default async function Home() {
             },
             { onConflict: "tenant_id,user_id" }
           );
+        const defaultBranchSlug = await resolvePreferredBranchSlug(admin, fallbackTenant.id, null);
+        if (defaultBranchSlug) {
+          redirect(`/t/${fallbackTenant.slug}/b/${defaultBranchSlug}`);
+        }
         redirect(`/t/${fallbackTenant.slug}/prices`);
       }
     } catch {

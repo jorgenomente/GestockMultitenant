@@ -6,6 +6,7 @@ datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+  schemas   = ["public", "auth"]
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -40,6 +41,7 @@ model branches {
   order_summaries_week    order_summaries_week[]
   order_ui_state          order_ui_state[]
   orders                  orders[]
+  branch_messages         branch_messages[]
   payment_providers       payment_providers[]
   payments                payments[]
   products                products[]
@@ -482,6 +484,23 @@ model providers {
   @@index([tenant_id], map: "providers_tenant_idx")
 }
 
+model branch_messages {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id   String   @db.Uuid
+  branch_id   String   @db.Uuid
+  author_id   String   @db.Uuid
+  author_name String?
+  message     String
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+  branches    branches @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants     tenants  @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branch_id], map: "branch_messages_branch_idx")
+  @@index([tenant_id], map: "branch_messages_tenant_idx")
+  @@index([tenant_id, branch_id, created_at(sort: Desc)], map: "branch_messages_tenant_branch_idx")
+}
+
 model stock_logs {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   order_item_id String      @db.Uuid
@@ -529,6 +548,7 @@ model tenants {
   provider_week_states    provider_week_states[]
   provider_weeks          provider_weeks[]
   providers               providers[]
+  branch_messages         branch_messages[]
 }
 
 enum client_order_status {

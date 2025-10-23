@@ -572,6 +572,13 @@ const nowLocalIso = () => {
   const offsetMs = now.getTimezoneOffset() * 60000;
   return new Date(now.getTime() - offsetMs).toISOString().slice(0, 16);
 };
+const toLocalInputFromISO = (iso: string | null | undefined) => {
+  if (!iso) return nowLocalIso();
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return nowLocalIso();
+  const offsetMs = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+};
 
 const excelSerialToUTC = (s: number) => Date.UTC(1899, 11, 30) + Math.round(s * 86400000);
 function parseDateCell(v: unknown): number | null {
@@ -750,21 +757,13 @@ export default function ProviderOrderPage() {
   const [margin, setMargin] = React.useState<number>(48);
   const [filter, setFilter] = React.useState("");
   const [sortMode, setSortMode] = React.useState<SortMode>("alpha_asc");
-  const [batchSalesModalOpen, setBatchSalesModalOpen] = React.useState(false);
-  const [batchSalesInput, setBatchSalesInput] = React.useState(() => nowLocalIso());
-  const [batchApplying, setBatchApplying] = React.useState(false);
-  const [sumStockLoading, setSumStockLoading] = React.useState(false);
-  const [batchError, setBatchError] = React.useState<string | null>(null);
-  const [sumModalOpen, setSumModalOpen] = React.useState(false);
-  const [sumAdjustments, setSumAdjustments] = React.useState<Record<string, string>>({});
-  const [sumError, setSumError] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    if (batchSalesModalOpen) {
-      setBatchSalesInput(nowLocalIso());
-      setBatchError(null);
-    }
-  }, [batchSalesModalOpen]);
+  const [stockModalOpen, setStockModalOpen] = React.useState(false);
+  const [stockProcessing, setStockProcessing] = React.useState(false);
+  const [stockAdjustments, setStockAdjustments] = React.useState<Record<string, string>>({});
+  const [stockError, setStockError] = React.useState<string | null>(null);
+  const [stockSalesInput, setStockSalesInput] = React.useState(() => nowLocalIso());
+  const [lastStockFromInput, setLastStockFromInput] = React.useState<string | null>(null);
+  const [lastStockAppliedAt, setLastStockAppliedAt] = React.useState<string | null>(null);
 
   const salesByProduct = React.useMemo(() => {
     const map = new Map<string, SalesRow[]>();
@@ -800,145 +799,138 @@ export default function ProviderOrderPage() {
   );
 
   const applyTimestampMs = React.useMemo(() => {
-    const ts = new Date(batchSalesInput);
+    const ts = new Date(stockSalesInput);
     if (Number.isNaN(ts.getTime())) return null;
     return Math.min(ts.getTime(), Date.now());
-  }, [batchSalesInput]);
+  }, [stockSalesInput]);
 
-  const batchPreviewRows = React.useMemo(() => {
+  const stockPreviewRows = React.useMemo(() => {
     return actionableItems.map((item) => {
-      const qtyOrdered = round2(Number(item.qty ?? 0));
       const stockPrev = round2(Number(item.stock_qty ?? 0));
+      const qtyOrdered = round2(Number(item.qty ?? 0));
       const productLabel = (item.display_name?.trim() || item.product_name).trim();
+      const storedRaw = stockAdjustments[item.id];
+      const raw = storedRaw ?? String(qtyOrdered);
+      const trimmed = raw.trim();
+      const parsed = trimmed === "" ? 0 : parseNumberInput(trimmed);
+      const additionIsValid = !Number.isNaN(parsed) && parsed >= 0;
+      const addition = additionIsValid ? round2(parsed) : 0;
       const salesQty =
         applyTimestampMs == null
           ? 0
           : round2(computeSalesSinceStock(productLabel, applyTimestampMs));
-      const stockResult = Math.max(0, round2(stockPrev - salesQty));
-      return { item, qtyOrdered, stockPrev, salesQty, stockResult };
-    });
-  }, [actionableItems, applyTimestampMs, computeSalesSinceStock]);
-
-  const batchTotals = React.useMemo(() => {
-    return batchPreviewRows.reduce(
-      (acc, row) => ({
-        qtyOrdered: round2(acc.qtyOrdered + row.qtyOrdered),
-        stockPrev: round2(acc.stockPrev + row.stockPrev),
-        salesQty: round2(acc.salesQty + row.salesQty),
-        stockResult: round2(acc.stockResult + row.stockResult),
-      }),
-      { qtyOrdered: 0, stockPrev: 0, salesQty: 0, stockResult: 0 }
-    );
-  }, [batchPreviewRows]);
-
-  const sumPreviewRows = React.useMemo(() => {
-    return actionableItems.map((item) => {
-      const stockPrev = round2(Number(item.stock_qty ?? 0));
-      const qtyOrdered = round2(Number(item.qty ?? 0));
-      const storedRaw = sumAdjustments[item.id];
-      const raw = storedRaw ?? String(qtyOrdered);
-      const trimmed = raw.trim();
-      const parsed = trimmed === "" ? 0 : parseNumberInput(trimmed);
-      const isValid = !Number.isNaN(parsed) && parsed >= 0;
-      const addition = isValid ? round2(parsed) : 0;
-      const stockResult = round2(stockPrev + addition);
+      const stockResult = Math.max(0, round2(stockPrev + addition - salesQty));
       return {
         item,
         qtyOrdered,
         raw,
         addition,
+        additionIsValid,
         stockPrev,
+        salesQty,
         stockResult,
-        isValid,
       };
     });
-  }, [actionableItems, sumAdjustments]);
+  }, [actionableItems, stockAdjustments, applyTimestampMs, computeSalesSinceStock]);
 
-  const sumTotals = React.useMemo(() => {
-    return sumPreviewRows.reduce(
+  const stockTotals = React.useMemo(() => {
+    return stockPreviewRows.reduce(
       (acc, row) => ({
-        qtyOrdered: round2(acc.qtyOrdered + row.qtyOrdered),
-        addition: round2(acc.addition + (row.isValid ? row.addition : 0)),
         stockPrev: round2(acc.stockPrev + row.stockPrev),
-        stockResult: round2(acc.stockResult + (row.isValid ? row.stockResult : row.stockPrev)),
+        addition: round2(acc.addition + (row.additionIsValid ? row.addition : 0)),
+        salesQty: round2(acc.salesQty + row.salesQty),
+        stockResult: round2(
+          acc.stockResult + (row.additionIsValid ? row.stockResult : row.stockPrev)
+        ),
       }),
-      { qtyOrdered: 0, addition: 0, stockPrev: 0, stockResult: 0 }
+      { stockPrev: 0, addition: 0, salesQty: 0, stockResult: 0 }
     );
-  }, [sumPreviewRows]);
+  }, [stockPreviewRows]);
 
   const previewDateLabel = React.useMemo(() => {
     if (applyTimestampMs == null) return "";
     return new Date(applyTimestampMs).toLocaleString("es-AR");
   }, [applyTimestampMs]);
 
-  React.useEffect(() => {
-    if (batchError && applyTimestampMs != null) setBatchError(null);
-  }, [applyTimestampMs, batchError]);
-
-  const sumHasInvalid = React.useMemo(
-    () => sumPreviewRows.some((row) => !row.isValid),
-    [sumPreviewRows]
+  const lastStockAppliedLabel = React.useMemo(
+    () => (lastStockAppliedAt ? new Date(lastStockAppliedAt).toLocaleString("es-AR") : null),
+    [lastStockAppliedAt]
   );
 
-  const sumHasChanges = React.useMemo(
-    () => sumPreviewRows.some((row) => row.addition !== 0),
-    [sumPreviewRows]
+  const hasInvalidAddition = React.useMemo(
+    () => stockPreviewRows.some((row) => !row.additionIsValid),
+    [stockPreviewRows]
   );
 
-  const sumConfirmDisabled = sumStockLoading || sumHasInvalid || !sumHasChanges;
+  const hasAnyChange = React.useMemo(
+    () =>
+      stockPreviewRows.some((row) => {
+        if (!row.additionIsValid) return false;
+        return row.addition !== 0 || row.salesQty !== 0;
+      }),
+    [stockPreviewRows]
+  );
 
-  const applySalesToAll = React.useCallback(async () => {
+  const stockConfirmDisabled =
+    stockProcessing || hasInvalidAddition || applyTimestampMs == null || !hasAnyChange;
+
+  const applyStockChanges = React.useCallback(async () => {
     if (!actionableItems.length) {
       alert("No hay productos para actualizar.");
       return;
     }
 
-    const ts = new Date(batchSalesInput);
-    if (Number.isNaN(ts.getTime())) {
-      setBatchError("Ingresá una fecha y hora válidas.");
+    if (hasInvalidAddition) {
+      setStockError("Revisá las cantidades: sólo se permiten números iguales o mayores a 0.");
       return;
     }
 
-    const fromMs = Math.min(ts.getTime(), Date.now());
-    const fromIso = new Date(fromMs).toISOString();
+    if (applyTimestampMs == null) {
+      setStockError("Ingresá una fecha y hora válidas para calcular las ventas.");
+      return;
+    }
+
+    const rowsToPersist = stockPreviewRows.filter(
+      (row) => row.additionIsValid && (row.addition !== 0 || row.salesQty !== 0)
+    );
+
+    if (!rowsToPersist.length) {
+      setStockError("No hay cambios para aplicar.");
+      return;
+    }
+
+    setStockProcessing(true);
+    setStockError(null);
+
+    const fromIso = new Date(applyTimestampMs).toISOString();
+    const fromLocalInput = toLocalInputFromISO(fromIso);
     const nowIso = new Date().toISOString();
 
-    const selection = actionableItems.map((item) => {
-      const productLabel = (item.display_name?.trim() || item.product_name).trim();
-      const stockPrev = round2(Number(item.stock_qty ?? 0));
-      const qtyOrdered = round2(Number(item.qty ?? 0));
-      const salesQty = round2(computeSalesSinceStock(productLabel, fromMs));
-      const stockApplied = Math.max(0, round2(stockPrev - salesQty));
-      return { item, stockPrev, qtyOrdered, salesQty, stockApplied };
-    });
-
-    setBatchApplying(true);
-    setBatchError(null);
     try {
-      for (const row of selection) {
+      for (const row of rowsToPersist) {
         const payload = {
-          stock_qty: row.stockApplied,
+          stock_qty: row.stockResult,
           stock_updated_at: nowIso,
-          previous_qty: row.qtyOrdered,
+          previous_qty: row.addition,
           previous_qty_updated_at: fromIso,
         };
         const { error } = await supabase.from(itemsTable).update(payload).eq("id", row.item.id);
         if (error) throw error;
       }
 
-      const logsPayload = selection.map((row) => ({
-        order_item_id: row.item.id,
-        stock_prev: row.stockPrev,
-        stock_in: 0,
-        stock_out: row.salesQty,
-        stock_applied: row.stockApplied,
-        sales_since: row.salesQty,
-        applied_at: nowIso,
-        tenant_id: row.item.tenant_id ?? tenantId ?? null,
-        branch_id: row.item.branch_id ?? branchId ?? null,
-      }));
+      if (rowsToPersist.length) {
+        const logsPayload = rowsToPersist.map((row) => ({
+          order_item_id: row.item.id,
+          stock_prev: row.stockPrev,
+          stock_in: row.addition,
+          stock_out: row.salesQty,
+          stock_applied: row.stockResult,
+          sales_since: row.salesQty,
+          applied_at: nowIso,
+          tenant_id: row.item.tenant_id ?? tenantId ?? null,
+          branch_id: row.item.branch_id ?? branchId ?? null,
+        }));
 
-      if (logsPayload.length) {
         const { error: logError } = await supabase.from(TABLE_STOCK_LOGS).insert(logsPayload);
         if (logError && logError.code !== "42P01") {
           console.warn("stock log insert error", logError);
@@ -947,120 +939,61 @@ export default function ProviderOrderPage() {
 
       setItems((prev) =>
         prev.map((item) => {
-          const next = selection.find((row) => row.item.id === item.id);
-          if (!next) return item;
+          const match = rowsToPersist.find((row) => row.item.id === item.id);
+          if (!match) return item;
           return {
             ...item,
-            stock_qty: next.stockApplied,
+            stock_qty: match.stockResult,
             stock_updated_at: nowIso,
-            previous_qty: next.qtyOrdered,
+            previous_qty: match.addition,
             previous_qty_updated_at: fromIso,
           };
         })
       );
 
-      setBatchError(null);
-      setBatchSalesModalOpen(false);
-    } catch (err: any) {
-      console.error("apply sales batch error", err);
-      setBatchError(err?.message ?? "No se pudo aplicar las ventas.");
-    } finally {
-      setBatchApplying(false);
-    }
-  }, [actionableItems, batchSalesInput, computeSalesSinceStock, itemsTable, supabase, tenantId, branchId, setItems, setBatchError]);
+      setLastStockFromInput(fromLocalInput);
+      setStockSalesInput(fromLocalInput);
+      setLastStockAppliedAt(nowIso);
 
-  const applySumAdjustments = React.useCallback(async () => {
+      setStockModalOpen(false);
+      setStockAdjustments({});
+      setStockError(null);
+    } catch (err: any) {
+      console.error("apply stock error", err);
+      setStockError(err?.message ?? "No se pudo actualizar el stock.");
+    } finally {
+      setStockProcessing(false);
+    }
+  }, [
+    actionableItems,
+    hasInvalidAddition,
+    applyTimestampMs,
+    stockPreviewRows,
+    supabase,
+    itemsTable,
+    tenantId,
+    branchId,
+    setItems,
+  ]);
+
+  const handleOpenStockModal = React.useCallback(() => {
     if (!actionableItems.length) {
       alert("No hay productos para actualizar.");
       return;
     }
 
-    if (sumHasInvalid) {
-      setSumError("Revisá las cantidades: sólo se permiten números iguales o mayores a 0.");
-      return;
-    }
-
-    if (!sumHasChanges) {
-      setSumError("Ingresá alguna cantidad a sumar antes de confirmar.");
-      return;
-    }
-
-    setSumError(null);
-    setSumStockLoading(true);
-    const nowIso = new Date().toISOString();
-
-    try {
-      const rows = actionableItems.map((item) => {
-        const current = Number(item.stock_qty ?? 0) || 0;
-        const storedRaw = sumAdjustments[item.id] ?? String(round2(Number(item.qty ?? 0)));
-        const trimmed = storedRaw.trim();
-        const parsed = trimmed === "" ? 0 : parseNumberInput(trimmed);
-        if (Number.isNaN(parsed) || parsed < 0) {
-          throw new Error("Revisá las cantidades: hay valores inválidos.");
-        }
-        const addition = round2(parsed);
-        const nextStock = round2(current + addition);
-        return { item, addition, nextStock };
-      });
-
-      const updates = rows.filter((row) => row.addition !== 0);
-
-      if (updates.length) {
-        const results = await Promise.all(
-          updates.map(({ item, nextStock }) =>
-            supabase
-              .from(itemsTable)
-              .update({ stock_qty: nextStock, stock_updated_at: nowIso })
-              .eq("id", item.id)
-          )
-        );
-        const failure = results.find((res: any) => res?.error);
-        if (failure?.error) throw failure.error;
-      }
-
-      setItems((prev) =>
-        prev.map((item) => {
-          const match = rows.find((row) => row.item.id === item.id);
-          if (!match) return item;
-          return { ...item, stock_qty: match.nextStock, stock_updated_at: nowIso };
-        })
-      );
-
-      setSumError(null);
-      setSumModalOpen(false);
-      setSumAdjustments({});
-    } catch (err: any) {
-      console.error("sum stock error", err);
-      setSumError(err?.message ?? "No se pudo sumar el stock.");
-    } finally {
-      setSumStockLoading(false);
-    }
-  }, [actionableItems, sumAdjustments, sumHasInvalid, sumHasChanges, supabase, itemsTable, setItems]);
-
-  const handleOpenSumModal = React.useCallback(() => {
-    if (!actionableItems.length) {
-      alert("No hay productos para actualizar.");
-      return;
-    }
     const defaults = actionableItems.reduce<Record<string, string>>((acc, item) => {
       const base = round2(Number(item.qty ?? 0));
       acc[item.id] = base ? String(base) : "0";
       return acc;
     }, {});
-    setSumAdjustments(defaults);
-    setSumError(null);
-    setSumModalOpen(true);
-  }, [actionableItems]);
 
-  const handleOpenApplyModal = React.useCallback(() => {
-    if (!actionableItems.length) {
-      alert("No hay productos para actualizar.");
-      return;
-    }
-    setBatchError(null);
-    setBatchSalesInput(nowLocalIso());
-    setBatchSalesModalOpen(true);
-  }, [actionableItems, setBatchSalesInput, setBatchError, setBatchSalesModalOpen]);
+    setStockAdjustments(defaults);
+    const suggestedFrom = lastStockFromInput ?? nowLocalIso();
+    setStockSalesInput(suggestedFrom);
+    setStockError(null);
+    setStockModalOpen(true);
+  }, [actionableItems, lastStockFromInput]);
 
   // UI persistente (Supabase)
   const [groupOrder, setGroupOrder] = React.useState<string[]>([]);
@@ -1427,6 +1360,38 @@ React.useEffect(() => {
       rows = [];
     }
     setItems(rows);
+
+    if (rows.length) {
+      const latestFromTs = rows.reduce<number | null>((acc, row) => {
+        const raw = row.previous_qty_updated_at;
+        if (!raw) return acc;
+        const ts = Date.parse(raw);
+        if (Number.isNaN(ts)) return acc;
+        return acc == null || ts > acc ? ts : acc;
+      }, null);
+      if (latestFromTs != null) {
+        const iso = new Date(latestFromTs).toISOString();
+        setLastStockFromInput(toLocalInputFromISO(iso));
+      } else {
+        setLastStockFromInput(null);
+      }
+
+      const latestAppliedTs = rows.reduce<number | null>((acc, row) => {
+        const raw = row.stock_updated_at;
+        if (!raw) return acc;
+        const ts = Date.parse(raw);
+        if (Number.isNaN(ts)) return acc;
+        return acc == null || ts > acc ? ts : acc;
+      }, null);
+      if (latestAppliedTs != null) {
+        setLastStockAppliedAt(new Date(latestAppliedTs).toISOString());
+      } else {
+        setLastStockAppliedAt(null);
+      }
+    } else {
+      setLastStockFromInput(null);
+      setLastStockAppliedAt(null);
+    }
     if (rows.length && (shouldPatchTenant || shouldPatchBranch)) {
       const pendingPatchIds = rows
         .filter((r) =>
@@ -3343,19 +3308,11 @@ const { data: inserted, error: insErr } = await supabase
         <Button
           variant="secondary"
           size="sm"
-          onClick={handleOpenSumModal}
-          disabled={sumStockLoading || batchApplying || actionableItems.length === 0}
+          onClick={handleOpenStockModal}
+          disabled={stockProcessing || actionableItems.length === 0}
         >
-          {sumStockLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
-          Sumar stock
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleOpenApplyModal}
-          disabled={batchApplying || sumStockLoading || actionableItems.length === 0}
-        >
-          Aplicar ventas
+          {stockProcessing ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+          Obtener stock
         </Button>
         {actionableItems.length === 0 && (
           <span className="text-xs text-muted-foreground">
@@ -3403,51 +3360,70 @@ const { data: inserted, error: insErr } = await supabase
       </div>
 
       <AlertDialog
-        open={sumModalOpen}
+        open={stockModalOpen}
         onOpenChange={(open) => {
-          if (sumStockLoading) return;
-          setSumModalOpen(open);
+          if (stockProcessing) return;
+          setStockModalOpen(open);
           if (!open) {
-            setSumError(null);
+            setStockError(null);
+            setStockAdjustments({});
           }
         }}
       >
-        <AlertDialogContent className="max-w-3xl w-[min(100vw-2rem,720px)]">
+        <AlertDialogContent className="max-w-4xl w-[min(100vw-2rem,820px)]">
           <AlertDialogHeader>
-            <AlertDialogTitle>Sumar stock a todos los productos</AlertDialogTitle>
+            <AlertDialogTitle>Obtener stock real</AlertDialogTitle>
             <AlertDialogDescription>
-              Ajustá las cantidades que se sumarán al stock actual antes de confirmar.
+              Sumá el stock recibido y descontá las ventas desde la fecha seleccionada antes de confirmar.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <div className="mt-3 space-y-4">
+          <div className="mt-4 space-y-4">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted-foreground">Fecha y hora inicial</span>
+              <Input
+                type="datetime-local"
+                value={stockSalesInput}
+                onChange={(event) => {
+                  setStockSalesInput(event.target.value);
+                  if (stockError) setStockError(null);
+                }}
+                disabled={stockProcessing}
+                className="max-w-xs"
+              />
+            </label>
+
+            <div className="text-xs text-muted-foreground">
+              Stock aplicado última vez: {lastStockAppliedLabel ?? "—"}
+            </div>
+
             <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-md border">
               <table className="w-full table-fixed border-collapse text-sm">
                 <colgroup>
-                  <col className="w-[48%]" />
-                  <col className="w-[13%]" />
-                  <col className="w-[15%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[12%]" />
+                  <col className="w-[44%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[14%]" />
                 </colgroup>
                 <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2 text-left">Producto</th>
-                    <th className="px-3 py-2 text-right">Pedido</th>
-                    <th className="px-3 py-2 text-right">Sumar</th>
                     <th className="px-3 py-2 text-right">Stock actual</th>
+                    <th className="px-3 py-2 text-right">Artículos a sumar</th>
+                    <th className="px-3 py-2 text-right">Ventas</th>
                     <th className="px-3 py-2 text-right">Stock final</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sumPreviewRows.length === 0 ? (
+                  {stockPreviewRows.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
                         No hay productos en este pedido.
                       </td>
                     </tr>
                   ) : (
-                    sumPreviewRows.map(({ item, qtyOrdered, raw, addition, stockPrev, stockResult, isValid }) => (
+                    stockPreviewRows.map(({ item, raw, stockPrev, salesQty, stockResult, additionIsValid }) => (
                       <tr key={item.id} className="border-t">
                         <td className="px-3 py-2">
                           <div className="font-medium break-words leading-tight">
@@ -3455,23 +3431,24 @@ const { data: inserted, error: insErr } = await supabase
                           </div>
                           <div className="text-[11px] text-muted-foreground">{item.product_name}</div>
                         </td>
-                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(qtyOrdered)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(stockPrev)}</td>
                         <td className="px-3 py-2 text-right">
                           <Input
                             value={raw}
-                            onChange={(event) =>
-                              setSumAdjustments((prev) => ({ ...prev, [item.id]: event.target.value }))
-                            }
-                            disabled={sumStockLoading}
+                            onChange={(event) => {
+                              setStockAdjustments((prev) => ({ ...prev, [item.id]: event.target.value }));
+                              if (stockError) setStockError(null);
+                            }}
+                            disabled={stockProcessing}
                             className={clsx(
                               "h-8 w-20 text-right tabular-nums",
-                              !isValid && "border-destructive text-destructive focus-visible:ring-destructive"
+                              !additionIsValid && "border-destructive text-destructive focus-visible:ring-destructive"
                             )}
                             inputMode="decimal"
                             aria-label={`Cantidad a sumar para ${item.display_name || item.product_name}`}
                           />
                         </td>
-                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(stockPrev)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(salesQty)}</td>
                         <td className="px-3 py-2 text-right tabular-nums font-semibold">
                           {qtyFormatter.format(stockResult)}
                         </td>
@@ -3479,117 +3456,14 @@ const { data: inserted, error: insErr } = await supabase
                     ))
                   )}
                 </tbody>
-                {sumPreviewRows.length > 0 && (
+                {stockPreviewRows.length > 0 && (
                   <tfoot className="border-t bg-muted/40 text-sm font-medium">
                     <tr>
                       <td className="px-3 py-2 text-right">Totales</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(sumTotals.qtyOrdered)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(sumTotals.addition)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(sumTotals.stockPrev)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(sumTotals.stockResult)}</td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
-
-            {sumHasInvalid && (
-              <p className="text-xs text-destructive">
-                Revisá las cantidades: sólo se permiten números iguales o mayores a 0.
-              </p>
-            )}
-
-            {sumError && <p className="text-sm text-destructive">{sumError}</p>}
-          </div>
-
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={sumStockLoading}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={sumConfirmDisabled}
-              onClick={() => void applySumAdjustments()}
-            >
-              {sumStockLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sumar stock"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog
-        open={batchSalesModalOpen}
-        onOpenChange={(open) => {
-          setBatchSalesModalOpen(open);
-          if (!open) setBatchError(null);
-        }}
-      >
-        <AlertDialogContent className="max-w-4xl w-[min(100vw-2rem,820px)]">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Aplicar ventas a todos los productos</AlertDialogTitle>
-            <AlertDialogDescription>
-              Seleccioná la fecha y hora desde la que querés descontar ventas para todo el pedido. Revisá el resumen antes de confirmar.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="mt-4 space-y-4">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-muted-foreground">Fecha y hora inicial</span>
-              <Input
-                type="datetime-local"
-                value={batchSalesInput}
-                onChange={(event) => setBatchSalesInput(event.target.value)}
-                disabled={batchApplying}
-                className="max-w-xs"
-              />
-            </label>
-
-            <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-md border">
-              <table className="w-full table-fixed border-collapse text-sm">
-                <colgroup>
-                  <col className="w-[48%]" />
-                  <col className="w-[13%]" />
-                  <col className="w-[13%]" />
-                  <col className="w-[13%]" />
-                  <col className="w-[13%]" />
-                </colgroup>
-                <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Producto</th>
-                    <th className="px-3 py-2 text-right">Pedido</th>
-                    <th className="px-3 py-2 text-right">Stock base</th>
-                    <th className="px-3 py-2 text-right">Ventas</th>
-                    <th className="px-3 py-2 text-right">Stock final</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {batchPreviewRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
-                        No hay productos en este pedido.
-                      </td>
-                    </tr>
-                  ) : (
-                    batchPreviewRows.map(({ item, qtyOrdered, stockPrev, salesQty, stockResult }) => (
-                      <tr key={item.id} className="border-t">
-                        <td className="px-3 py-2">
-                          <div className="font-medium break-words leading-tight">
-                            {item.display_name || item.product_name}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground">{item.product_name}</div>
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(qtyOrdered)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(stockPrev)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(salesQty)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-semibold">{qtyFormatter.format(stockResult)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-                {batchPreviewRows.length > 0 && (
-                  <tfoot className="border-t bg-muted/40 text-sm font-medium">
-                    <tr>
-                      <td className="px-3 py-2 text-right">Totales</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(batchTotals.qtyOrdered)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(batchTotals.stockPrev)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(batchTotals.salesQty)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(batchTotals.stockResult)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(stockTotals.stockPrev)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(stockTotals.addition)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(stockTotals.salesQty)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qtyFormatter.format(stockTotals.stockResult)}</td>
                     </tr>
                   </tfoot>
                 )}
@@ -3602,19 +3476,22 @@ const { data: inserted, error: insErr } = await supabase
                 : `Ventas descontadas desde ${previewDateLabel}.`}
             </div>
 
-            <p className="text-xs text-muted-foreground">
-              Se copiará la cantidad pedida a "Pedido anterior" y se registrará un log de stock por cada producto.
-            </p>
+            {hasInvalidAddition && (
+              <p className="text-xs text-destructive">
+                Revisá las cantidades: sólo se permiten números iguales o mayores a 0.
+              </p>
+            )}
 
-            {batchError && <p className="text-sm text-destructive">{batchError}</p>}
+            {stockError && <p className="text-sm text-destructive">{stockError}</p>}
           </div>
+
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={batchApplying}>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel disabled={stockProcessing}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              disabled={batchApplying || applyTimestampMs == null || !batchPreviewRows.length}
-              onClick={() => void applySalesToAll()}
+              disabled={stockConfirmDisabled}
+              onClick={() => void applyStockChanges()}
             >
-              {batchApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Aplicar ventas"}
+              {stockProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Obtener stock"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

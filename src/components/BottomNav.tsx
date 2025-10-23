@@ -13,6 +13,7 @@ import {
   BadgePercent,
   Wallet,
   LogOut,
+  Home,
 } from "lucide-react";
 import React from "react";
 import clsx from "clsx";
@@ -24,7 +25,7 @@ type NavItem = {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   testId?: string;
   onClick?: () => void;
-  buildHref?: (_ctx: { slug: string; branchSlug: string | null }) => string | null;
+  buildHref?: (params: { slug: string; branchSlug: string | null }) => string | null;
   requiresBranch?: boolean;
 };
 
@@ -44,6 +45,13 @@ export default function BottomNav() {
   const branchSlug = currentBranch?.slug ?? null;
 
   const NAV_ITEMS: NavItem[] = [
+    {
+      label: "Inicio",
+      icon: Home,
+      requiresBranch: true,
+      buildHref: ({ slug: tenantSlug, branchSlug: b }) =>
+        tenantSlug && b ? `/t/${tenantSlug}/b/${b}` : null,
+    },
     {
       label: "Precios",
       icon: Tag,
