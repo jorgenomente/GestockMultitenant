@@ -639,7 +639,7 @@ export default function PriceSearch({ slug }: { slug: string }) {
         row: "flex items-start justify-between gap-3",
         name: "text-[14px] font-medium leading-tight text-foreground line-clamp-2",
         meta: "mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground",
-        price: "text-base font-semibold tabular-nums text-secondary-foreground",
+        price: "text-base font-semibold tabular-nums text-black dark:text-white",
         priceSub: "text-[10px] text-muted-foreground",
         listSpace: "mt-3 space-y-2 pb-24",
       }
@@ -649,7 +649,7 @@ export default function PriceSearch({ slug }: { slug: string }) {
         row: "flex items-start justify-between gap-4",
         name: "text-[15px] font-semibold leading-snug text-foreground line-clamp-2 break-words",
         meta: "mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
-        price: "text-lg font-semibold tabular-nums text-secondary-foreground",
+        price: "text-lg font-semibold tabular-nums text-black dark:text-white",
         priceSub: "text-[11px] text-muted-foreground",
         listSpace: "mt-3 space-y-3 pb-28",
       };
