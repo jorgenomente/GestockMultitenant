@@ -53,18 +53,18 @@ export default function BranchSelector() {
   };
 
   return (
-    <div className="border-b border-neutral-200 bg-white/80 backdrop-blur supports-[backdrop-filter]:backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/80">
-      <div className="mx-auto flex w-full max-w-screen-lg items-center justify-end px-4 py-2">
-        <label className="mr-3 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-300">
+    <div className="border-b border-border/60 bg-card/95 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+      <div className="mx-auto flex w-full max-w-6xl items-center justify-end gap-3 px-4 py-3">
+        <label className="text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
           Sucursal
         </label>
         <Select value={currentValue} onValueChange={handleChange}>
-          <SelectTrigger className="w-48 text-sm">
+          <SelectTrigger className="w-52 rounded-lg border border-border/70 bg-card text-sm font-medium text-foreground shadow-[0_8px_20px_-16px_rgba(31,31,31,0.4)] focus:border-ring focus:ring-2 focus:ring-ring/30 focus:ring-offset-2 focus:ring-offset-card">
             <SelectValue placeholder="Seleccionar sucursal" />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="rounded-xl border border-border bg-card text-foreground shadow-[0_20px_45px_-30px_rgba(31,31,31,0.55)]">
             {branches.map((branch) => (
-              <SelectItem key={branch.id} value={branch.slug}>
+              <SelectItem key={branch.id} value={branch.slug} className="text-sm">
                 {branch.name}
               </SelectItem>
             ))}

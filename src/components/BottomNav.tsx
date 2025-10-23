@@ -109,9 +109,9 @@ export default function BottomNav() {
       aria-label="Navegación inferior"
       className={clsx(
         "fixed inset-x-0 bottom-0 z-40",
-        "border-t border-neutral-200/70 dark:border-neutral-800/70",
-        "bg-white/85 dark:bg-neutral-900/80 backdrop-blur supports-[backdrop-filter]:backdrop-blur",
-        "shadow-[0_-6px_20px_-12px_rgba(0,0,0,0.25)]"
+        "border-t border-border/70",
+        "bg-card/95 backdrop-blur supports-[backdrop-filter]:backdrop-blur",
+        "shadow-[0_-18px_36px_-28px_rgba(31,31,31,0.48)]"
       )}
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}
     >
@@ -157,13 +157,13 @@ export default function BottomNav() {
                     onClick={item.onClick}
                     className={clsx(
                       "group mx-auto flex w-full flex-col items-center justify-center rounded-2xl px-3 py-2 md:px-4 md:py-3",
-                      "text-neutral-600 hover:bg-neutral-50 dark:text-neutral-300 dark:hover:bg-neutral-800/70",
-                      "outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900"
+                      "text-primary/80 hover:bg-muted/30",
+                      "transition-all outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
                     )}
                     aria-label={item.label}
                   >
-                    <Icon className="h-6 w-6 transition-transform group-hover:scale-105" />
-                    <span className="mt-1 text-[11px] md:text-[12px] font-medium">
+                    <Icon className="h-6 w-6 transition-transform text-primary/80 group-hover:scale-105" />
+                    <span className="mt-1 text-[11px] md:text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
                       {item.label}
                     </span>
                   </button>
@@ -176,22 +176,27 @@ export default function BottomNav() {
                     aria-current={isActive ? "page" : undefined}
                     className={clsx(
                       "group mx-auto flex w-full flex-col items-center justify-center rounded-2xl px-3 py-2 md:px-4 md:py-3",
-                      "outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900",
+                      "transition-all outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card",
                       isActive
-                        ? "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
-                        : "text-neutral-600 hover:bg-neutral-50 dark:text-neutral-300 dark:hover:bg-neutral-800/70"
+                        ? "bg-destructive/15 text-destructive"
+                        : "text-primary/80 hover:bg-muted/30"
                     )}
                   >
                     <Icon
                       className={clsx(
                         "h-6 w-6 transition-transform",
-                        isActive ? "scale-110" : "scale-100 group-hover:scale-105"
+                        isActive
+                          ? "scale-110 text-destructive"
+                          : "scale-100 text-primary/80 group-hover:scale-105"
                       )}
+                      strokeWidth={isActive ? 2.2 : 1.6}
                     />
                     <span
                       className={clsx(
                         "mt-1 text-[11px] md:text-[12px]",
-                        isActive ? "font-semibold" : "font-medium"
+                        isActive
+                          ? "font-semibold uppercase tracking-wide text-destructive"
+                          : "font-medium uppercase tracking-wide text-muted-foreground"
                       )}
                     >
                       {item.label}
@@ -201,11 +206,11 @@ export default function BottomNav() {
                   // Deshabilitado (si faltara slug)
                   <div
                     aria-disabled="true"
-                    className="group mx-auto flex w-full flex-col items-center justify-center rounded-2xl px-3 py-2 md:px-4 md:py-3 text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
+                    className="group mx-auto flex w-full flex-col items-center justify-center rounded-2xl px-3 py-2 md:px-4 md:py-3 cursor-not-allowed bg-muted/20 text-muted-foreground/70"
                     title={disabledTitle}
                   >
-                    <Icon className="h-6 w-6 opacity-60" />
-                    <span className="mt-1 text-[11px] md:text-[12px] font-medium">
+                    <Icon className="h-6 w-6" />
+                    <span className="mt-1 text-[11px] md:text-[12px] font-medium uppercase tracking-wide">
                       {item.label}
                     </span>
                   </div>

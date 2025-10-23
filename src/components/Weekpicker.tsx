@@ -32,7 +32,7 @@ export default function WeekPicker({
   return (
     <div className="flex items-center gap-2">
       <Select value={current} onValueChange={setWeek}>
-        <SelectTrigger className="h-10 w-[min(92vw,520px)]">
+        <SelectTrigger className="h-11 w-[min(92vw,520px)] rounded-xl">
           <SelectValue placeholder="Elegir semana…" />
         </SelectTrigger>
         <SelectContent>

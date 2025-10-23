@@ -640,42 +640,55 @@ export default function EstadisticaPage() {
       : `Default ${VENTAS_URL}`;
 
   return (
-    <main className="p-3 max-w-screen-lg mx-auto space-y-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-  <h1 className="text-xl font-semibold">Estadística</h1>
+    <main className="mx-auto w-full max-w-5xl space-y-4 px-4 pb-16 pt-6">
+      <section className="space-y-3 rounded-2xl border border-border/60 bg-card/95 px-4 py-4 shadow-[var(--shadow-card)] backdrop-blur supports-[backdrop-filter]:bg-card/80">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Estadística</h1>
+            <p className="text-xs text-muted-foreground">
+              Fuente ventas: <span className="font-medium text-foreground">{metaLabel}</span>
+            </p>
+          </div>
 
-  <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
-    <div className="text-xs text-muted-foreground break-words">
-      Fuente ventas: <span className="font-medium">{metaLabel}</span>
-    </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+            <input
+              ref={ventasInputRef}
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              onChange={async (e) => {
+                const input = e.currentTarget;
+                const f = input.files?.[0];
+                if (!f) { input.value = ""; return; }
+                try { await importVentas(f); } finally { input.value = ""; }
+              }}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-lg"
+              onClick={() => ventasInputRef.current?.click()}
+              disabled={loading}
+            >
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+              Importar ventas
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="rounded-lg text-muted-foreground hover:bg-muted/30"
+              onClick={clearVentas}
+              disabled={loading}
+            >
+              Borrar fuente
+            </Button>
+          </div>
+        </div>
+      </section>
 
-    <div className="flex items-center gap-2">
-      <input
-        ref={ventasInputRef}
-        type="file"
-        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        className="hidden"
-        onChange={async (e) => {
-          const input = e.currentTarget;
-          const f = input.files?.[0];
-          if (!f) { input.value = ""; return; }
-          try { await importVentas(f); } finally { input.value = ""; }
-        }}
-      />
-      <Button variant="outline" onClick={() => ventasInputRef.current?.click()} disabled={loading}>
-        {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
-        Importar ventas
-      </Button>
-      <Button variant="ghost" onClick={clearVentas} disabled={loading}>
-        Borrar fuente
-      </Button>
-    </div>
-  </div>
-</div>
 
-
-      <Card>
-        <CardContent className="p-3 space-y-4">
+      <Card className="border border-border/60 bg-card/95">
+        <CardContent className="space-y-4 p-4">
           {/* Filtros: producto, quick ranges, fechas */}
 <div className="grid gap-3 lg:grid-cols-12 lg:items-end">
   {/* Autocomplete (siempre ocupa la fila completa en mobile) */}
@@ -694,7 +707,7 @@ export default function EstadisticaPage() {
     />
     {openDropdown && (query.trim().length > 0 || !selectedName) && (
       <div
-        className="absolute z-50 mt-1 w-full max-h-72 overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md"
+        className="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-border/60 bg-card/98 text-foreground shadow-[var(--shadow-elevated)]"
         onMouseLeave={() => setOpenDropdown(false)}
       >
         {filtered.length === 0 ? (
@@ -703,7 +716,7 @@ export default function EstadisticaPage() {
           filtered.map((name) => (
             <button
               key={name}
-              className="w-full text-left p-2 text-sm hover:bg-muted"
+              className="w-full rounded-lg p-2 text-left text-sm text-foreground hover:bg-muted/40"
               onClick={() => {
                 setSelectedName(name);
                 setQuery("");
@@ -721,12 +734,12 @@ export default function EstadisticaPage() {
   {/* Quick ranges: envuelven y no desbordan en mobile */}
   <div className="lg:col-span-4">
     <div className="flex flex-wrap gap-2">
-      <Button variant="outline" onClick={() => setQuick(7)}>7d</Button>
-      <Button variant="outline" onClick={() => setQuick(14)}>14d</Button>
-      <Button variant="outline" onClick={() => setQuick(30)}>30d</Button>
-      <Button variant="outline" onClick={() => setQuick(60)}>60d</Button>
-      <Button variant="outline" onClick={() => setQuick(90)}>90d</Button>
-      <Button variant="outline" onClick={() => setQuick(180)}>180d</Button>
+      <Button variant="outline" size="sm" className="rounded-lg" onClick={() => setQuick(7)}>7d</Button>
+      <Button variant="outline" size="sm" className="rounded-lg" onClick={() => setQuick(14)}>14d</Button>
+      <Button variant="outline" size="sm" className="rounded-lg" onClick={() => setQuick(30)}>30d</Button>
+      <Button variant="outline" size="sm" className="rounded-lg" onClick={() => setQuick(60)}>60d</Button>
+      <Button variant="outline" size="sm" className="rounded-lg" onClick={() => setQuick(90)}>90d</Button>
+      <Button variant="outline" size="sm" className="rounded-lg" onClick={() => setQuick(180)}>180d</Button>
     </div>
   </div>
 
@@ -749,7 +762,7 @@ export default function EstadisticaPage() {
   <div className="flex items-center gap-2">
     <label className="text-sm font-medium">Granularidad</label>
     <select
-      className="border rounded-md p-2 text-sm bg-background"
+      className="rounded-lg border border-border/60 bg-card px-3 py-2 text-sm text-foreground shadow-[var(--shadow-card)]"
       value={gran}
       onChange={(e) => setGran(e.target.value as Granularity)}
     >
@@ -777,10 +790,10 @@ export default function EstadisticaPage() {
 
           {/* Tabla dinámica */}
           {selectedName && (
-            <div className="rounded-md border overflow-x-auto">
+            <div className="overflow-x-auto rounded-2xl border border-border/60 bg-card">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="[&>th]:px-3 [&>th]:py-2 border-b">
+                  <tr className="border-b [&>th]:px-3 [&>th]:py-2">
                     <th className="w-[220px] min-w-[220px] text-left">Período</th>
                     {bins.map((b) => (
                       <th key={b.key} className="text-center min-w-[90px] w-[90px] px-2"
@@ -804,12 +817,12 @@ export default function EstadisticaPage() {
 
           {/* Lista de ventas + subtotal cantidades */}
           {selectedName && (
-            <div className="rounded-md border">
-              <div className="px-3 py-2 border-b font-semibold">Ventas en el período</div>
+            <div className="overflow-hidden rounded-2xl border border-border/60">
+              <div className="border-b bg-muted/25 px-3 py-2 text-sm font-semibold text-foreground">Ventas en el período</div>
               <div className="max-h-[50vh] overflow-auto">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-background">
-                    <tr className="[&>th]:px-3 [&>th]:py-2 border-b">
+                  <thead className="sticky top-0 bg-card">
+                    <tr className="border-b [&>th]:px-3 [&>th]:py-2">
                       <th className="text-left">Fecha</th>
                       <th className="text-right">Cantidad</th>
                       <th className="text-right">Subtotal</th>
@@ -821,7 +834,7 @@ export default function EstadisticaPage() {
                       <tr><td colSpan={4} className="p-3 text-center text-muted-foreground">No hay ventas en el período seleccionado.</td></tr>
                     ) : (
                       rangeRows.map((r, i) => (
-                        <tr key={i} className="[&>td]:px-3 [&>td]:py-2 border-b">
+                        <tr key={i} className="border-b [&>td]:px-3 [&>td]:py-2">
                           <td>{dateShort(r.date)}</td>
                           <td className="text-right tabular-nums">{r.qty}</td>
                           <td className="text-right tabular-nums">{r.subtotal != null ? `$${r.subtotal.toFixed(2)}` : "—"}</td>
@@ -831,7 +844,7 @@ export default function EstadisticaPage() {
                     )}
                   </tbody>
                   <tfoot>
-                    <tr className="font-semibold">
+                    <tr className="font-semibold text-foreground">
                       <td className="px-3 py-2">Total del período</td>
                       <td className="px-3 py-2 text-right tabular-nums">{sumQtyInRange}</td>
                       <td></td><td></td>
@@ -843,14 +856,14 @@ export default function EstadisticaPage() {
           )}
 
           {error && (
-            <div className="flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <div className="flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               <p className="flex-1 whitespace-pre-wrap break-words">{error}</p>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={handleCopyError}
-                className="shrink-0 border-amber-400 text-amber-900 hover:bg-amber-100"
+                className="shrink-0 rounded-lg border border-destructive/40 text-destructive hover:bg-destructive/10"
               >
                 Copiar
               </Button>

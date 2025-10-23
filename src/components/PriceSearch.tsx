@@ -1,10 +1,12 @@
 "use client";
 
 import React from "react";
+import BarcodeScanner from "@/components/BarcodeScanner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Upload } from "lucide-react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Camera, Upload } from "lucide-react";
 
 /** ===================== Config ===================== */
 const DENSITY_COMPACT = true;
@@ -12,6 +14,7 @@ const LS_KEY = "gestock:prices:v6"; // bump cache
 const PRECIOS_FILENAME = "precios.xlsx";
 const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
 const PRECIOS_URL = `${BASE_PATH ? BASE_PATH : ""}/${PRECIOS_FILENAME}`;
+const INPUT_ID = "price-search-input";
 
 /** ===================== Tipos ===================== */
 export type PriceItem = {
@@ -553,7 +556,7 @@ function Highlight({ text, q }: { text: string; q: string }) {
     <>
       {parts.map((part, i) =>
         re.test(part) ? (
-          <mark key={i} className="bg-yellow-200 text-black px-0.5 rounded">
+          <mark key={i} className="rounded bg-accent/40 px-1 text-foreground">
             {part}
           </mark>
         ) : (
@@ -572,6 +575,37 @@ export default function PriceSearch({ slug }: { slug: string }) {
   const LIMIT = 10;
 
   const fileRef = React.useRef<HTMLInputElement | null>(null);
+  const [scannerOpen, setScannerOpen] = React.useState(false);
+
+  const focusSearchInput = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      const node = document.getElementById(INPUT_ID) as HTMLInputElement | null;
+      if (!node) return;
+      node.focus();
+      try {
+        const len = node.value.length;
+        node.setSelectionRange(len, len);
+      } catch {}
+    });
+  }, []);
+
+  const handleScannerClose = React.useCallback(() => {
+    setScannerOpen(false);
+    focusSearchInput();
+  }, [focusSearchInput]);
+
+  const handleScan = React.useCallback(
+    (value: string) => {
+      const trimmed = stripInvisibles(value).trim();
+      const normalized = barcodeKeyValue(value) || trimmed;
+      if (normalized) {
+        setQ(normalized);
+      }
+      handleScannerClose();
+    },
+    [handleScannerClose]
+  );
 
   const filtered = React.useMemo(() => {
     if (!qDebounced) return [];
@@ -600,24 +634,24 @@ export default function PriceSearch({ slug }: { slug: string }) {
 
   const styles = DENSITY_COMPACT
     ? {
-        card: "rounded-xl shadow-sm",
-        content: "p-2.5",
-        row: "flex items-start justify-between gap-2.5",
-        name: "text-[14px] font-medium leading-tight line-clamp-2",
-        meta: "mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground",
-        price: "text-base font-semibold tabular-nums",
-        priceSub: "text-[10px] text-muted-foreground",
-        listSpace: "mt-3 space-y-1.5 pb-20",
-      }
-    : {
-        card: "rounded-2xl shadow-sm",
+        card: "transition-transform hover:-translate-y-0.5",
         content: "p-3",
         row: "flex items-start justify-between gap-3",
-        name: "text-[15px] font-medium leading-snug line-clamp-2 break-words",
+        name: "text-[14px] font-medium leading-tight text-foreground line-clamp-2",
+        meta: "mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground",
+        price: "text-base font-semibold tabular-nums text-secondary-foreground",
+        priceSub: "text-[10px] text-muted-foreground",
+        listSpace: "mt-3 space-y-2 pb-24",
+      }
+    : {
+        card: "transition-transform hover:-translate-y-0.5",
+        content: "p-4",
+        row: "flex items-start justify-between gap-4",
+        name: "text-[15px] font-semibold leading-snug text-foreground line-clamp-2 break-words",
         meta: "mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
-        price: "text-lg font-semibold tabular-nums",
+        price: "text-lg font-semibold tabular-nums text-secondary-foreground",
         priceSub: "text-[11px] text-muted-foreground",
-        listSpace: "mt-3 space-y-2 pb-20",
+        listSpace: "mt-3 space-y-3 pb-28",
       };
 
   const lastLabel =
@@ -645,9 +679,10 @@ export default function PriceSearch({ slug }: { slug: string }) {
   const infoToShow = notice || (hasData ? error : null);
 
   return (
-    <div className="w-full">
-      <div className="mx-auto max-w-screen-sm px-3 sm:px-4 md:max-w-2xl">
-        <div className="sticky top-0 z-20 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 pt-3 pb-2">
+    <>
+      <div className="w-full">
+        <div className="mx-auto max-w-screen-sm px-3 sm:px-4 md:max-w-2xl">
+        <div className="sticky top-0 z-20 border-b border-border/60 bg-card/90 pt-3 pb-2 backdrop-blur supports-[backdrop-filter]:bg-card/70">
           <div className="flex items-center justify-between gap-2">
             <h1 className="text-lg font-semibold">Buscador de Precios</h1>
             <div className="text-right">
@@ -660,13 +695,14 @@ export default function PriceSearch({ slug }: { slug: string }) {
             </div>
           </div>
 
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-3 flex items-center gap-2">
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Buscar por nombre, código o barras…"
-              className="h-11 text-base"
+              className="h-11 rounded-xl bg-inputBackground/90 text-base shadow-[var(--shadow-card)]"
               inputMode="search"
+              id={INPUT_ID}
             />
 
             {/* Input file oculto */}
@@ -694,7 +730,17 @@ export default function PriceSearch({ slug }: { slug: string }) {
 
             <Button
               variant="outline"
-              className="h-11 px-3"
+              className="h-11 rounded-xl px-4"
+              title="Escanear código de barras"
+              onClick={() => setScannerOpen(true)}
+              aria-label="Escanear código de barras"
+            >
+              <Camera className="h-5 w-5" />
+            </Button>
+
+            <Button
+              variant="outline"
+              className="h-11 rounded-xl px-4"
               title="Actualizar precios (subir archivo)"
               onClick={() => fileRef.current?.click()}
               disabled={loading}
@@ -705,7 +751,9 @@ export default function PriceSearch({ slug }: { slug: string }) {
           </div>
 
           {infoToShow ? (
-            <div className="mt-2 text-xs text-amber-600">{infoToShow}</div>
+            <div className="mt-2 text-xs text-accent-foreground">
+              {infoToShow}
+            </div>
           ) : !q ? (
             <div className="mt-1 text-xs text-muted-foreground">
               Se cargaron {count.toLocaleString("es-AR")} ítems. Escribe para buscar (máx. {LIMIT} resultados).
@@ -713,7 +761,7 @@ export default function PriceSearch({ slug }: { slug: string }) {
           ) : null}
 
           {!hasData && error && (
-            <div className="mt-2 text-xs text-red-600">{error}</div>
+            <div className="mt-2 text-xs text-destructive">{error}</div>
           )}
         </div>
 
@@ -757,5 +805,29 @@ export default function PriceSearch({ slug }: { slug: string }) {
         </div>
       </div>
     </div>
+
+      <Dialog
+        open={scannerOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setScannerOpen(true);
+          } else {
+            handleScannerClose();
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl w-full border-none bg-transparent p-0 shadow-none" showCloseButton={false}>
+          <div className="mx-auto max-w-xl space-y-4 rounded-2xl bg-background/95 p-4 shadow-xl">
+            <div className="px-1">
+              <h2 className="text-base font-semibold">Escanear código de barras</h2>
+              <p className="text-sm text-muted-foreground">
+                Alineá el código dentro del recuadro. El resultado completa la búsqueda al instante.
+              </p>
+            </div>
+            <BarcodeScanner onDetected={handleScan} onClose={handleScannerClose} />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

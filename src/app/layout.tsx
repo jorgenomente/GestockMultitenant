@@ -1,12 +1,13 @@
 // src/app/layout.tsx
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Manrope, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import Providers from "@/lib/providers";
 import UserBranchIndicator from "@/components/UserBranchIndicator";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"], display: "swap" });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"], display: "swap" });
+const manrope = Manrope({ subsets: ["latin"], display: "swap", variable: "--font-family-heading" });
+const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-family-body" });
+const robotoMono = Roboto_Mono({ subsets: ["latin"], display: "swap", variable: "--font-family-mono" });
 
 export const metadata: Metadata = {
   title: "Gestock Multitenant",
@@ -16,7 +17,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-dvh bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100`}>
+      <body
+        className={`${manrope.variable} ${inter.variable} ${robotoMono.variable} antialiased min-h-dvh bg-background text-foreground`}
+      >
         <Providers>
           <div className="min-h-dvh">
             <UserBranchIndicator />

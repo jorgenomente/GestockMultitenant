@@ -2811,47 +2811,49 @@ const buildExportPayload = React.useCallback(async (
         </DialogContent>
       </Dialog>
 
-      <main className="mx-auto max-w-md px-4 pb-28 pt-4 sm:max-w-lg">
+      <main className="mx-auto w-full max-w-xl space-y-4 px-4 pb-36 pt-6 sm:max-w-2xl">
       {/* Header con semana */}
-      <div className="mb-2 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Proveedores</h1>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <HistoryIcon className="h-3.5 w-3.5" />
-            <span>{headerRange}</span>
+      <div className="sticky top-0 z-20 space-y-3 rounded-2xl border border-border/60 bg-card/95 px-4 py-3 shadow-[var(--shadow-card)] backdrop-blur supports-[backdrop-filter]:bg-card/80">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Proveedores</h1>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <HistoryIcon className="h-3.5 w-3.5" />
+              <span>{headerRange}</span>
+            </div>
           </div>
+
+          {/* Selector de semana */}
+          <Select
+            value={selectedWeek?.id ?? ""}
+            onValueChange={(id) => {
+              const wk = weeks.find(w => w.id === id) || null;
+              setSelectedWeek(wk);
+              if (wk) saveSelectedWeek(weekCacheKey, wk.id);
+            }}
+          >
+            <SelectTrigger className="h-9 w-[200px] rounded-xl text-xs">
+              <SelectValue placeholder="Elegir semana" />
+            </SelectTrigger>
+            <SelectContent>
+              {weeks.map(w => (
+                <SelectItem key={w.id} value={w.id}>
+                  {formatRange(w.week_start)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        {/* Selector de semana */}
-        <Select
-          value={selectedWeek?.id ?? ""}
-          onValueChange={(id) => {
-            const wk = weeks.find(w => w.id === id) || null;
-            setSelectedWeek(wk);
-            if (wk) saveSelectedWeek(weekCacheKey, wk.id);
-          }}
-        >
-          <SelectTrigger className="h-8 w-[180px] rounded-xl text-xs">
-            <SelectValue placeholder="Elegir semana" />
-          </SelectTrigger>
-          <SelectContent>
-            {weeks.map(w => (
-              <SelectItem key={w.id} value={w.id}>
-                {formatRange(w.week_start)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {/* Total visible */}
-      <div className="mb-2 flex items-center justify-between">
-        <Badge variant="secondary" className="rounded-md">Total: {totalProviders}</Badge>
+        {/* Total visible */}
+        <div className="flex items-center justify-between">
+          <Badge variant="muted" className="px-3">Total: {totalProviders}</Badge>
+        </div>
       </div>
 
       {isOwner && (
         <>
-          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <input
               ref={importInputRef}
               type="file"
@@ -2940,13 +2942,13 @@ const buildExportPayload = React.useCallback(async (
       )}
 
       {/* Tabs */}
-      <Tabs value={tab} onValueChange={(v) => setTab(v as ViewTab)} className="mb-2">
-        <TabsList className="grid w-full grid-cols-5 h-9 rounded-xl">
-          <TabsTrigger className="text-xs h-9 px-2" value="TODOS">Todos</TabsTrigger>
-          <TabsTrigger className="text-xs h-9 px-2" value="PENDIENTES">Pendientes</TabsTrigger>
-          <TabsTrigger className="text-xs h-9 px-2" value="SEMANAL">Semanal</TabsTrigger>
-          <TabsTrigger className="text-xs h-9 px-2" value="QUINCENAL">Quincenal</TabsTrigger>
-          <TabsTrigger className="text-xs h-9 px-2" value="MENSUAL">Mensual</TabsTrigger>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as ViewTab)} className="space-y-3">
+        <TabsList className="grid h-10 w-full grid-cols-5 rounded-2xl bg-muted/40 p-1">
+          <TabsTrigger className="h-9 rounded-xl px-2 text-xs" value="TODOS">Todos</TabsTrigger>
+          <TabsTrigger className="h-9 rounded-xl px-2 text-xs" value="PENDIENTES">Pendientes</TabsTrigger>
+          <TabsTrigger className="h-9 rounded-xl px-2 text-xs" value="SEMANAL">Semanal</TabsTrigger>
+          <TabsTrigger className="h-9 rounded-xl px-2 text-xs" value="QUINCENAL">Quincenal</TabsTrigger>
+          <TabsTrigger className="h-9 rounded-xl px-2 text-xs" value="MENSUAL">Mensual</TabsTrigger>
         </TabsList>
 
         {/* Panel “Agregar a esta semana” */}
@@ -2955,35 +2957,36 @@ const buildExportPayload = React.useCallback(async (
           const addedCount = candidates.filter(p => weekProviders.has(p.id)).length;
 
           return (
-            <Accordion type="single" collapsible className="mt-3">
-              <AccordionItem value="agregar-panel" className="rounded-xl border">
-                <AccordionTrigger className="px-3 py-2">
+            <div className="mt-3">
+              <Accordion type="single" collapsible>
+                <AccordionItem value="agregar-panel" className="rounded-2xl border border-border/60 bg-card/95 shadow-[var(--shadow-card)]">
+                <AccordionTrigger className="px-4 py-3">
                   <div className="flex w-full items-center justify-between gap-3">
                     <div className="text-left">
-                      <p className="text-sm font-medium">
+                      <p className="text-sm font-semibold text-foreground">
                         Agregar {tab.toLowerCase()}s a <span className="font-semibold">{headerRange}</span>
                       </p>
                       <p className="text-[11px] text-muted-foreground">
                         Agregados {addedCount} / {candidates.length}
                       </p>
                     </div>
-                    <Badge variant="secondary" className="rounded-md">
+                    <Badge variant="muted" className="px-3 text-xs">
                       {addedCount} / {candidates.length}
                     </Badge>
                   </div>
                 </AccordionTrigger>
 
                 <AccordionContent>
-                  <div className="space-y-2 px-3 pb-3 max-h-80 overflow-y-auto">
+                  <div className="max-h-80 space-y-2 overflow-y-auto px-4 pb-4">
                     {candidates.map((p) => {
                       const included = weekProviders.has(p.id);
                       const lastISO = lastAddedByProvider[p.id];
                       const last = lastISO ? new Date(lastISO) : null;
 
                       return (
-                        <div key={p.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
+                        <div key={p.id} className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-3 py-2">
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-medium">{p.name}</p>
+                            <p className="truncate text-sm font-semibold text-foreground">{p.name}</p>
                             <p className="text-xs text-muted-foreground">
                               Última vez agregado: {last ? last.toLocaleDateString("es-AR") : "—"}
                             </p>
@@ -2992,7 +2995,7 @@ const buildExportPayload = React.useCallback(async (
                           <div className="flex items-center gap-2">
                             {included ? (
                               <>
-                                <Badge className="h-6 rounded-md bg-emerald-600 text-white">Agregado</Badge>
+                                <Badge variant="secondary" className="h-6 px-3 text-[11px]">Agregado</Badge>
                                 <Button
                                   variant="outline" size="sm" className="h-8 rounded-lg"
                                   onClick={() => removeProviderFromCurrentWeek(p.id)}
@@ -3015,18 +3018,19 @@ const buildExportPayload = React.useCallback(async (
                   </div>
                 </AccordionContent>
               </AccordionItem>
-            </Accordion>
+              </Accordion>
+            </div>
           );
         })()}
       </Tabs>
 
       {/* Buscador */}
-      <div className="mb-3">
+      <div>
         <Input
           placeholder={loading ? "Cargando..." : "Buscar proveedor o responsable"}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="h-9 text-sm rounded-xl"
+          className="h-10 rounded-xl bg-inputBackground/90 text-sm shadow-[var(--shadow-card)]"
           aria-label="Buscar proveedor"
           disabled={loading}
         />
@@ -3039,19 +3043,23 @@ const buildExportPayload = React.useCallback(async (
           if (!list || list.length === 0) return null;
 
           return (
-            <AccordionItem key={`day-${idx}`} value={`day-${idx}`} className="border-b">
-              <AccordionTrigger className="py-3">
+            <AccordionItem
+              key={`day-${idx}`}
+              value={`day-${idx}`}
+              className="mt-3 overflow-hidden rounded-2xl border border-border/60 bg-card/95 shadow-[var(--shadow-card)] first:mt-0"
+            >
+              <AccordionTrigger className="px-4 py-3">
                 <div className="flex w-full items-center justify-between">
-                  <span className="text-left font-medium">{DAY_LABELS_EXT[idx]}</span>
-                  <Badge variant="outline" className="ml-2">
+                  <span className="text-left text-sm font-semibold text-foreground">{DAY_LABELS_EXT[idx]}</span>
+                  <Badge variant="muted" className="ml-2 px-3 text-xs">
                     {list.length} {list.length === 1 ? "proveedor" : "proveedores"}
                   </Badge>
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="space-y-2 pb-4">
+              <AccordionContent className="space-y-3 bg-card px-4 pb-4">
                 {list.map((p) => (
-                  <Card key={p.id} className="rounded-xl shadow-sm border border-border/70">
-                    <CardContent className="p-3">
+                  <Card key={p.id} className="transition-transform hover:-translate-y-0.5">
+                    <CardContent className="p-4">
                       {/* Chips */}
                       {(() => {
                         const s = weekSummaries[p.id];
@@ -3088,13 +3096,10 @@ const buildExportPayload = React.useCallback(async (
                         const st = statusFor(p.id);
                         return (
                           <div className="flex items-center gap-2">
-                            <p className="truncate text-sm font-semibold leading-none flex-1">{p.name}</p>
+                            <p className="flex-1 truncate text-sm font-semibold leading-none text-foreground">{p.name}</p>
                             <Badge
-                              className={
-                                st === "REALIZADO"
-                                  ? "h-5 text-[10px] bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                  : "h-5 text-[10px] bg-orange-500 hover:bg-orange-600 text-white rounded-md"
-                              }
+                              variant={st === "REALIZADO" ? "secondary" : "destructive"}
+                              className="h-6 px-3 text-[10px]"
                             >
                               {st === "REALIZADO" ? "Realizado" : "Pendiente"}
                             </Badge>
@@ -3152,39 +3157,41 @@ const buildExportPayload = React.useCallback(async (
                         </Button>
 
                         {(() => {
-                          const st = statusFor(p.id);
-                          const isPending = st === "PENDIENTE";
-                          return (
-                            <Button
-                              size="sm"
-                              onClick={() => toggleStatus(p)}
-                              className={
-                                "h-8 text-xs rounded-lg " +
-                                (isPending
-                                  ? "bg-orange-500 text-white hover:bg-orange-600"
-                                  : "bg-green-600 text-white hover:bg-green-700")
-                              }
-                              aria-label={isPending ? "Marcar realizado" : "Marcar pendiente"}
-                            >
-                              {isPending ? (
-                                <span className="inline-flex items-center gap-1">
-                                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Realizar
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1">
-                                  <Clock3 className="h-3.5 w-3.5" aria-hidden /> Pendiente
-                                </span>
-                              )}
-                            </Button>
-                          );
+                        const st = statusFor(p.id);
+                        const isPending = st === "PENDIENTE";
+                        return (
+                          <Button
+                            size="sm"
+                            variant={isPending ? "destructive" : "default"}
+                            onClick={() => toggleStatus(p)}
+                            className="h-8 rounded-lg px-3 text-xs"
+                            aria-label={isPending ? "Marcar realizado" : "Marcar pendiente"}
+                          >
+                            {isPending ? (
+                              <span className="inline-flex items-center gap-1">
+                                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Realizar
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1">
+                                <Clock3 className="h-3.5 w-3.5" aria-hidden /> Pendiente
+                              </span>
+                            )}
+                          </Button>
+                        );
                         })()}
 
                         <div className="col-span-2 -mt-1 flex justify-end gap-1.5">
-                          <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg border border-border"
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 rounded-lg border border-border/60 text-muted-foreground hover:bg-muted/30"
                             aria-label={`Editar ${p.name}`} onClick={() => openEdit(p)} title="Editar">
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg border border-border"
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 rounded-lg border border-border/60 text-muted-foreground hover:bg-muted/30"
                             aria-label={`Eliminar ${p.name}`}
                             onClick={() => setConfirmDelete({ open: true, id: p.id, name: p.name })}
                             title="Eliminar">
@@ -3211,7 +3218,7 @@ const buildExportPayload = React.useCallback(async (
       {/* FAB secundaria: Nueva semana */}
       <Button
         onClick={() => setConfirmNewWeek(true)}
-        className="fixed bottom-40 right-6 h-10 rounded-full px-4 shadow-lg"
+        className="fixed bottom-40 right-6 h-11 rounded-full px-5 shadow-[var(--shadow-elevated)]"
         variant="secondary"
         aria-label="Iniciar nueva semana"
         title="Iniciar nueva semana"
@@ -3248,7 +3255,7 @@ const buildExportPayload = React.useCallback(async (
       {/* FAB (+) */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogTrigger asChild>
-          <Button size="icon" className="fixed bottom-24 right-6 h-14 w-14 rounded-full shadow-lg" aria-label="Agregar proveedor">
+          <Button size="icon" className="fixed bottom-24 right-6 h-14 w-14 rounded-full shadow-[var(--shadow-elevated)]" aria-label="Agregar proveedor">
             <Plus className="h-6 w-6" />
           </Button>
         </DialogTrigger>

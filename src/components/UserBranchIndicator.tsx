@@ -43,15 +43,32 @@ export default function UserBranchIndicator() {
   }, [pathname]);
 
   return (
-    <div className="w-full border-b border-neutral-200 bg-neutral-50/80 px-4 py-2 text-xs text-neutral-600 backdrop-blur-sm dark:border-neutral-800 dark:bg-neutral-900/80 dark:text-neutral-300">
-      <div className="mx-auto flex max-w-screen-lg flex-wrap items-center justify-end gap-x-4 gap-y-1">
-        <span>
-          <strong className="font-medium text-neutral-700 dark:text-neutral-200">Usuario:</strong> {email || "—"}
-        </span>
-        <span>
-          <strong className="font-medium text-neutral-700 dark:text-neutral-200">Sucursal:</strong> {branchSlug || "—"}
-        </span>
+    <header className="border-b border-border/70 bg-card/90 shadow-[0_20px_45px_-35px_rgba(31,31,31,0.45)] backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary font-semibold text-primary-foreground shadow-sm">
+            G
+          </span>
+          <div className="leading-tight">
+            <p className="text-sm font-semibold tracking-tight text-foreground">GeStock</p>
+            <p className="text-xs text-muted-foreground">Gestión cálida para datos precisos</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs sm:text-sm">
+          <span className="flex items-center gap-1 text-muted-foreground">
+            <span className="text-foreground">Usuario</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="font-medium text-foreground/90">{email || "—"}</span>
+          </span>
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <span className="text-foreground">Sucursal</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[0.7rem] font-medium uppercase tracking-wide text-accent-foreground">
+              {branchSlug || "—"}
+            </span>
+          </span>
+        </div>
       </div>
-    </div>
+    </header>
   );
 }

@@ -1,26 +1,575 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
- provider  = "postgresql"
-  url       = env("DATABASE_URL")  // 6543 (transaction) - app runtime
-  directUrl = env("DIRECT_URL")    // 5432 (session) - prisma pull/migrate
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
-model StockLog {
-  id           String   @id @default(uuid())
-  orderItemId  String   @map("order_item_id")
-  stockPrev    Decimal  @map("stock_prev")
-  stockIn      Decimal  @map("stock_in")
-  stockOut     Decimal  @map("stock_out")
-  stockApplied Decimal  @map("stock_applied")
-  salesSince   Decimal  @map("sales_since")
-  appliedAt    DateTime @map("applied_at") @default(dbgenerated("timezone('utc', now())"))
-  committedAt  DateTime @map("committed_at") @default(dbgenerated("timezone('utc', now())"))
-  tenantId     String?  @map("tenant_id")
-  branchId     String?  @map("branch_id")
-  createdAt    DateTime @map("created_at") @default(dbgenerated("timezone('utc', now())"))
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model app_settings {
+  key        String
+  value      Json?
+  tenant_id  String?  @db.Uuid
+  branch_id  String?  @db.Uuid
+  created_at DateTime @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  updated_at DateTime @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  @@index([tenant_id, branch_id], map: "app_settings_tenant_branch_idx")
+  @@index([tenant_id], map: "app_settings_tenant_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model branches {
+  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id               String                    @db.Uuid
+  name                    String
+  slug                    String
+  created_at              DateTime?                 @default(now()) @db.Timestamptz(6)
+  tenants                 tenants                   @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  client_order_comments   client_order_comments[]
+  client_order_items      client_order_items[]
+  client_orders           client_orders[]
+  clients                 clients[]
+  expirations             expirations[]
+  expirations_archive     expirations_archive[]
+  order_summaries         order_summaries[]
+  order_summaries_week    order_summaries_week[]
+  order_ui_state          order_ui_state[]
+  orders                  orders[]
+  payment_providers       payment_providers[]
+  payments                payments[]
+  products                products[]
+  provider_week_providers provider_week_providers[]
+  provider_week_states    provider_week_states[]
+  provider_weeks          provider_weeks[]
+  providers               providers[]
+
+  @@unique([tenant_id, slug], map: "branches_tenant_slug_key")
+  @@unique([tenant_id, slug], map: "branches_tenant_slug_unique")
+  @@unique([tenant_id, slug], map: "uniq_branches_tenant_slug")
+  @@index([tenant_id])
+  @@index([tenant_id], map: "idx_branches_tenant")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model client_order_comments {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id     String        @db.Uuid
+  branch_id     String        @db.Uuid
+  order_id      String        @db.Uuid
+  comment       String
+  created_at    DateTime      @default(now()) @db.Timestamptz(6)
+  branches      branches      @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  client_orders client_orders @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants       tenants       @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model client_order_items {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id     String        @db.Uuid
+  branch_id     String        @db.Uuid
+  order_id      String        @db.Uuid
+  article       String
+  provider      String?
+  done          Boolean       @default(false)
+  created_at    DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime      @default(now()) @db.Timestamptz(6)
+  branches      branches      @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  client_orders client_orders @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants       tenants       @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model client_orders {
+  id                    String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id             String                  @db.Uuid
+  branch_id             String                  @db.Uuid
+  client_id             String                  @db.Uuid
+  status                client_order_status     @default(pendiente)
+  created_at            DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime                @default(now()) @db.Timestamptz(6)
+  client_order_comments client_order_comments[]
+  client_order_items    client_order_items[]
+  branches              branches                @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  clients               clients                 @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants               tenants                 @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([client_id], map: "client_orders_client_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model clients {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id     String          @db.Uuid
+  branch_id     String          @db.Uuid
+  name          String
+  phone         String?
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime        @default(now()) @db.Timestamptz(6)
+  client_orders client_orders[]
+  branches      branches        @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants       tenants         @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branch_id], map: "clients_branch_idx")
+  @@index([tenant_id], map: "clients_tenant_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model expirations {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String   @db.Uuid
+  branch_id  String   @db.Uuid
+  name       String
+  exp_date   String
+  qty        Int      @default(0)
+  confirmed  Boolean  @default(false)
+  freezer    Boolean  @default(false)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  branches   branches @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants    tenants  @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branch_id], map: "expirations_branch_idx")
+  @@index([tenant_id], map: "expirations_tenant_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model expirations_archive {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id   String   @db.Uuid
+  branch_id   String   @db.Uuid
+  source_id   String?  @db.Uuid
+  name        String
+  exp_date    String
+  qty         Int      @default(0)
+  confirmed   Boolean  @default(false)
+  freezer     Boolean  @default(false)
+  archived_at DateTime @default(now()) @db.Timestamptz(6)
+  branches    branches @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants     tenants  @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branch_id], map: "expirations_archive_branch_idx")
+  @@index([tenant_id], map: "expirations_archive_tenant_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model memberships {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String    @db.Uuid
+  user_id    String    @db.Uuid
+  role       String
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  branch_ids String[]  @db.Uuid
+  tenants    tenants   @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([tenant_id, user_id], map: "memberships_tenant_user_uk")
+  @@unique([user_id, tenant_id, role], map: "memberships_user_tenant_role_key")
+  @@index([user_id, tenant_id], map: "idx_memberships_user_tenant")
+  @@index([tenant_id, user_id])
+  @@index([user_id], map: "memberships_user_idx")
+}
+
+model order_items {
+  id                      String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id                String       @db.Uuid
+  product_name            String
+  display_name            String?
+  qty                     Decimal      @default(0) @db.Decimal(12, 2)
+  unit_price              Decimal      @default(0) @db.Decimal(12, 2)
+  group_name              String?
+  pack_size               Int?
+  stock_qty               Decimal?     @db.Decimal(12, 2)
+  stock_updated_at        DateTime?    @db.Timestamptz(6)
+  previous_qty            Decimal?     @db.Decimal(12, 2)
+  previous_qty_updated_at DateTime?    @db.Timestamptz(6)
+  price_updated_at        DateTime?    @db.Timestamptz(6)
+  tenant_id               String?      @db.Uuid
+  branch_id               String?      @db.Uuid
+  created_at              DateTime     @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  updated_at              DateTime     @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  orders                  orders       @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  stock_logs              stock_logs[]
+
+  @@index([order_id], map: "order_items_order_idx")
+  @@index([order_id, product_name], map: "order_items_order_product_idx")
+  @@index([tenant_id, branch_id], map: "order_items_tenant_branch_idx")
+}
+
+model order_snapshots {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id   String   @db.Uuid
+  title      String
+  snapshot   Json
+  created_at DateTime @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  orders     orders   @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([order_id], map: "order_snapshots_order_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model order_summaries {
+  provider_id String    @id @db.Uuid
+  tenant_id   String    @db.Uuid
+  branch_id   String    @db.Uuid
+  total       Decimal   @default(0) @db.Decimal(14, 2)
+  items       Int       @default(0)
+  updated_at  DateTime  @default(now()) @db.Timestamptz(6)
+  branches    branches  @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  providers   providers @relation(fields: [provider_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants     tenants   @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model order_summaries_week {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id      String         @db.Uuid
+  branch_id      String         @db.Uuid
+  week_id        String         @db.Uuid
+  provider_id    String         @db.Uuid
+  total          Decimal        @default(0) @db.Decimal(14, 2)
+  items          Int            @default(0)
+  updated_at     DateTime       @default(now()) @db.Timestamptz(6)
+  branches       branches       @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  providers      providers      @relation(fields: [provider_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants        tenants        @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  provider_weeks provider_weeks @relation(fields: [week_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([week_id, provider_id], map: "order_summaries_week_unique")
+  @@unique([week_id, provider_id], map: "order_summaries_week_unique_idx")
+  @@index([provider_id], map: "order_summaries_week_provider_idx")
+  @@index([week_id], map: "order_summaries_week_week_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model order_ui_state {
+  order_id    String   @id @db.Uuid
+  tenant_id   String   @db.Uuid
+  branch_id   String   @db.Uuid
+  group_order String[]
+  checked_map Json?
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+  branches    branches @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  orders      orders   @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants     tenants  @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([order_id], map: "order_ui_state_order_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model orders {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id       String            @db.Uuid
+  branch_id       String            @db.Uuid
+  provider_id     String?           @db.Uuid
+  status          order_status      @default(PENDIENTE)
+  notes           String?
+  total           Decimal           @default(0) @db.Decimal(14, 2)
+  payload         Json              @default("{}")
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime          @default(now()) @db.Timestamptz(6)
+  order_items     order_items[]
+  order_snapshots order_snapshots[]
+  order_ui_state  order_ui_state?
+  branches        branches          @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  providers       providers?        @relation(fields: [provider_id], references: [id], onUpdate: NoAction)
+  tenants         tenants           @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branch_id], map: "orders_branch_idx")
+  @@index([provider_id])
+  @@index([provider_id], map: "orders_provider_idx")
+  @@index([tenant_id, branch_id], map: "orders_tenant_branch_idx")
+  @@index([tenant_id], map: "orders_tenant_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model orders_store {
+  tenant_slug String   @id
+  data        Json     @default("{}")
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+  tenants     tenants  @relation(fields: [tenant_slug], references: [slug], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([updated_at(sort: Desc)], map: "orders_store_updated_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model payment_providers {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id     String     @db.Uuid
+  branch_id     String     @db.Uuid
+  name          String
+  alias         String?
+  payment_terms String?
+  payment_day   String?
+  contact_info  String?
+  created_at    DateTime   @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  updated_at    DateTime   @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  branches      branches   @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants       tenants    @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  payments      payments[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model payments {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id         String            @db.Uuid
+  branch_id         String            @db.Uuid
+  payment_date      DateTime          @db.Date
+  invoice_number    String
+  provider_name     String
+  payment_method    payment_method
+  note              String?
+  created_at        DateTime          @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  updated_at        DateTime          @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  provider_id       String            @db.Uuid
+  amount            Decimal           @default(0) @db.Decimal(14, 2)
+  branches          branches          @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  payment_providers payment_providers @relation(fields: [provider_id], references: [id], onUpdate: NoAction)
+  tenants           tenants           @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([provider_id], map: "payments_provider_idx")
+  @@index([tenant_id, branch_id, payment_date(sort: Desc), created_at(sort: Desc)], map: "payments_tenant_branch_date_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model prices_raw {
+  id          BigInt   @id @default(autoincrement())
+  tenant_id   String?  @db.Uuid
+  name        String?
+  code        String?
+  barcode     String?
+  price       Decimal  @default(0) @db.Decimal(14, 2)
+  ts          DateTime @db.Timestamptz(6)
+  imported_at DateTime @default(now()) @db.Timestamptz(6)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  tenants     tenants? @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([barcode])
+  @@index([tenant_id], map: "prices_raw_tenant_idx")
+  @@index([ts(sort: Desc)])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model products {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String   @db.Uuid
+  branch_id  String   @db.Uuid
+  name       String
+  sku        String?
+  pack_size  Int      @default(1)
+  price      Decimal  @default(0) @db.Decimal(12, 2)
+  stock      Int      @default(0)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  branches   branches @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants    tenants  @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branch_id], map: "products_branch_idx")
+  @@index([tenant_id], map: "products_tenant_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model products_test {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String   @db.Uuid
+  name       String
+  price      Decimal  @default(0) @db.Decimal(12, 2)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  tenants    tenants  @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([tenant_id], map: "products_test_tenant_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model profiles {
+  user_id    String    @id @db.Uuid
+  email      String?
+  full_name  String?
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model provider_week_providers {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id      String         @db.Uuid
+  branch_id      String         @db.Uuid
+  week_id        String         @db.Uuid
+  provider_id    String         @db.Uuid
+  added_at       DateTime       @default(now()) @db.Timestamptz(6)
+  branches       branches       @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  providers      providers      @relation(fields: [provider_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants        tenants        @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  provider_weeks provider_weeks @relation(fields: [week_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([week_id, provider_id], map: "provider_week_providers_unique")
+  @@index([provider_id], map: "provider_week_providers_provider_idx")
+  @@index([week_id], map: "provider_week_providers_week_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model provider_week_states {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id      String          @db.Uuid
+  branch_id      String          @db.Uuid
+  week_id        String          @db.Uuid
+  provider_id    String          @db.Uuid
+  status         provider_status @default(PENDIENTE)
+  updated_at     DateTime        @default(now()) @db.Timestamptz(6)
+  branches       branches        @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  providers      providers       @relation(fields: [provider_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants        tenants         @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  provider_weeks provider_weeks  @relation(fields: [week_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([week_id, provider_id], map: "provider_week_states_unique")
+  @@index([provider_id], map: "provider_week_states_provider_idx")
+  @@index([week_id], map: "provider_week_states_week_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model provider_weeks {
+  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id               String                    @db.Uuid
+  branch_id               String                    @db.Uuid
+  week_start              DateTime                  @db.Date
+  label                   String?
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  order_summaries_week    order_summaries_week[]
+  provider_week_providers provider_week_providers[]
+  provider_week_states    provider_week_states[]
+  branches                branches                  @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants                 tenants                   @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([tenant_id, branch_id, week_start], map: "provider_weeks_unique")
+  @@index([branch_id], map: "provider_weeks_branch_idx")
+  @@index([tenant_id], map: "provider_weeks_tenant_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model providers {
+  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id               String                    @db.Uuid
+  branch_id               String                    @db.Uuid
+  name                    String
+  freq                    provider_frequency
+  order_day               Int?                      @db.SmallInt
+  receive_day             Int?                      @db.SmallInt
+  responsible             String
+  status                  provider_status           @default(PENDIENTE)
+  payment_method          provider_payment_method   @default(EFECTIVO)
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  order_summaries         order_summaries?
+  order_summaries_week    order_summaries_week[]
+  orders                  orders[]
+  provider_week_providers provider_week_providers[]
+  provider_week_states    provider_week_states[]
+  branches                branches                  @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants                 tenants                   @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branch_id], map: "providers_branch_idx")
+  @@index([tenant_id], map: "providers_tenant_idx")
+}
+
+model stock_logs {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_item_id String      @db.Uuid
+  stock_prev    Decimal     @default(0) @db.Decimal(12, 2)
+  stock_in      Decimal     @default(0) @db.Decimal(12, 2)
+  stock_out     Decimal     @default(0) @db.Decimal(12, 2)
+  stock_applied Decimal     @default(0) @db.Decimal(12, 2)
+  sales_since   Decimal     @default(0) @db.Decimal(12, 2)
+  applied_at    DateTime    @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  committed_at  DateTime    @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  tenant_id     String?     @db.Uuid
+  branch_id     String?     @db.Uuid
+  created_at    DateTime    @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  order_items   order_items @relation(fields: [order_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "stock_logs_order_item_fkey")
+
+  @@index([order_item_id], map: "stock_logs_item_idx")
+  @@index([tenant_id, branch_id], map: "stock_logs_tenant_branch_idx")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model tenants {
+  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                    String
+  slug                    String                    @unique
+  created_at              DateTime?                 @default(now()) @db.Timestamptz(6)
+  branches                branches[]
+  client_order_comments   client_order_comments[]
+  client_order_items      client_order_items[]
+  client_orders           client_orders[]
+  clients                 clients[]
+  expirations             expirations[]
+  expirations_archive     expirations_archive[]
+  memberships             memberships[]
+  order_summaries         order_summaries[]
+  order_summaries_week    order_summaries_week[]
+  order_ui_state          order_ui_state[]
+  orders                  orders[]
+  orders_store            orders_store?
+  payment_providers       payment_providers[]
+  payments                payments[]
+  prices_raw              prices_raw[]
+  products                products[]
+  products_test           products_test[]
+  provider_week_providers provider_week_providers[]
+  provider_week_states    provider_week_states[]
+  provider_weeks          provider_weeks[]
+  providers               providers[]
+}
+
+enum client_order_status {
+  pendiente
+  guardado
+  entregado
+  cancelado
+}
+
+enum membership_role {
+  owner
+  admin
+  staff
+}
+
+enum order_status {
+  PENDIENTE
+  CONFIRMADO
+  ENVIADO
+  COMPLETADO
+  CANCELADO
+}
+
+enum payment_method {
+  EFECTIVO
+  TRANSFERENCIA
+  ECHEQ
+}
+
+enum provider_frequency {
+  SEMANAL
+  QUINCENAL
+  MENSUAL
+}
+
+enum provider_payment_method {
+  EFECTIVO
+  TRANSFERENCIA
+}
+
+enum provider_status {
+  PENDIENTE
+  REALIZADO
 }

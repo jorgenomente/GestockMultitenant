@@ -1,0 +1,176 @@
+:root {
+  /* Primary - Leaf Green */
+  --color-leaf-green-light: #5A8070;
+  --color-leaf-green: #47685C;
+  --color-leaf-green-dark: #3A5349;
+
+  /* Secondary - Petroleum Blue */
+  --color-petroleum-light: #3D5B6B;
+  --color-petroleum: #2C4653;
+  --color-petroleum-dark: #1F3340;
+
+  /* Complementary - Light Sand */
+  --color-sand-light: #F0E9D9;
+  --color-sand: #E6DDC5;
+  --color-sand-dark: #D4C9AC;
+
+  /* Neutral Light - Bone White */
+  --color-bone-lightest: #FAFAF9;
+  --color-bone: #F5F5F2;
+  --color-bone-dark: #E8E8E4;
+
+  /* Neutral Dark - Graphite */
+  --color-graphite-light: #3A3A3A;
+  --color-graphite: #1F1F1F;
+  --color-graphite-dark: #0F0F0F;
+
+  /* Accent - Soft Lime */
+  --color-lime-light: #C3DEC0;
+  --color-lime: #A9C9A4;
+  --color-lime-dark: #8FB88A;
+
+  /* Material - Natural Honey */
+  --color-honey-light: #D89072;
+  --color-honey: #C1643B;
+  --color-honey-dark: #B85535;
+
+  /* Derived Neutrals */
+  --color-neutral-line: #D8D8D3;
+  --color-neutral-subtle: #E5E5E0;
+
+  /* Chart Palette */
+  --chart-1: #47685C;
+  --chart-2: #A9C9A4;
+  --chart-3: #2C4653;
+  --chart-4: #C1643B;
+  --chart-5: #5A8070;
+
+  /* Typography */
+  --font-family-heading: Manrope, sans-serif;
+  --font-family-body: Inter, sans-serif;
+  --font-family-mono: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-size-root: 16px;
+  --text-2xl: 1.75rem;
+  --text-xl: 1.375rem;
+  --text-lg: 1.125rem;
+  --text-base: 1rem;
+  --text-sm: 0.875rem;
+  --text-xs: 0.8125rem;
+
+  /* Radii */
+  --radius-base: 0.5rem;
+  --radius: var(--radius-base);
+  --radius-sm: calc(var(--radius-base) - 4px);
+  --radius-md: calc(var(--radius-base) - 2px);
+  --radius-lg: var(--radius-base);
+  --radius-xl: calc(var(--radius-base) + 4px);
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px 0 rgba(31, 31, 31, 0.08), 0 1px 2px -1px rgba(31, 31, 31, 0.06);
+  --shadow-elevated: 0 10px 15px -3px rgba(31, 31, 31, 0.10), 0 4px 6px -4px rgba(31, 31, 31, 0.08);
+
+  /* System mappings */
+  --background: var(--color-bone);
+  --foreground: var(--color-graphite);
+  --card: var(--color-bone-lightest);
+  --card-foreground: var(--color-graphite);
+  --popover: var(--color-bone-lightest);
+  --popover-foreground: var(--color-graphite);
+  --primary: var(--color-leaf-green);
+  --primary-foreground: var(--color-bone);
+  --secondary: var(--color-petroleum);
+  --secondary-foreground: var(--color-bone);
+  --muted: var(--color-sand);
+  --muted-foreground: var(--color-leaf-green-light);
+  --accent: var(--color-lime);
+  --accent-foreground: var(--color-graphite);
+  --destructive: var(--color-honey-dark);
+  --destructive-foreground: var(--color-bone-lightest);
+  --border: var(--color-neutral-line);
+  --input: transparent;
+  --input-background: var(--color-bone-lightest);
+  --switch-background: var(--color-neutral-line);
+  --ring: var(--color-leaf-green);
+  --sidebar: var(--color-petroleum);
+  --sidebar-foreground: var(--color-bone);
+  --sidebar-primary: var(--color-leaf-green);
+  --sidebar-primary-foreground: var(--color-bone);
+  --sidebar-accent: var(--color-petroleum-light);
+  --sidebar-accent-foreground: var(--color-bone);
+  --sidebar-border: var(--color-petroleum-dark);
+  --sidebar-ring: var(--color-lime);
+
+  /* Legacy aliases (remove once unused) */
+  --leaf-light: var(--color-leaf-green-light);
+  --leaf-500: var(--color-leaf-green);
+  --leaf-dark: var(--color-leaf-green-dark);
+  --petroleum-light: var(--color-petroleum-light);
+  --petroleum-500: var(--color-petroleum);
+  --petroleum-dark: var(--color-petroleum-dark);
+  --sand-light: var(--color-sand-light);
+  --sand-500: var(--color-sand);
+  --sand-dark: var(--color-sand-dark);
+  --bone-lightest: var(--color-bone-lightest);
+  --bone-500: var(--color-bone);
+  --bone-dark: var(--color-bone-dark);
+  --graphite-light: var(--color-graphite-light);
+  --graphite-500: var(--color-graphite);
+  --graphite-dark: var(--color-graphite-dark);
+  --lime-light: var(--color-lime-light);
+  --lime-500: var(--color-lime);
+  --lime-dark: var(--color-lime-dark);
+  --honey-light: var(--color-honey-light);
+  --honey-500: var(--color-honey);
+  --honey-dark: var(--color-honey-dark);
+  --neutral-line: var(--color-neutral-line);
+  --neutral-subtle: var(--color-neutral-subtle);
+  --font-display: var(--font-family-heading);
+  --font-text: var(--font-family-body);
+  --font-mono: var(--font-family-mono);
+  --font-size-2xl: var(--text-2xl);
+  --font-size-xl: var(--text-xl);
+  --font-size-lg: var(--text-lg);
+  --font-size-base: var(--text-base);
+  --font-size-sm: var(--text-sm);
+  --font-size-xs: var(--text-xs);
+}
+
+.dark {
+  --background: #1F1F1F;
+  --foreground: #F5F5F2;
+  --card: #2A2A2A;
+  --card-foreground: #F5F5F2;
+  --popover: #2A2A2A;
+  --popover-foreground: #F5F5F2;
+  --primary: #5A8070;
+  --primary-foreground: #F5F5F2;
+  --secondary: #3D5B6B;
+  --secondary-foreground: #F5F5F2;
+  --muted: #3A3A3A;
+  --muted-foreground: #A9C9A4;
+  --accent: #A9C9A4;
+  --accent-foreground: #1F1F1F;
+  --destructive: #C1643B;
+  --destructive-foreground: #F5F5F2;
+  --border: rgba(255, 255, 255, 0.10);
+  --input: rgba(255, 255, 255, 0.10);
+  --input-background: #2A2A2A;
+  --switch-background: rgba(255, 255, 255, 0.10);
+  --ring: #A9C9A4;
+  --sidebar: #1F3340;
+  --sidebar-foreground: #F5F5F2;
+  --sidebar-primary: #5A8070;
+  --sidebar-primary-foreground: #F5F5F2;
+  --sidebar-accent: #2C4653;
+  --sidebar-accent-foreground: #F5F5F2;
+  --sidebar-border: rgba(255, 255, 255, 0.10);
+  --sidebar-ring: #A9C9A4;
+
+  --chart-1: #5A8070;
+  --chart-2: #A9C9A4;
+  --chart-3: #2C4653;
+  --chart-4: #C1643B;
+  --chart-5: #3D5B6B;
+}

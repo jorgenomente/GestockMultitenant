@@ -1,0 +1,376 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Roboto+Mono:wght@400;500&display=swap');
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* GeStock Design System - Natural Data Color Palette */
+  
+  /* Primary - Leaf Green */
+  --color-leaf-green-light: #5A8070;
+  --color-leaf-green: #47685C;
+  --color-leaf-green-dark: #3A5349;
+  
+  /* Secondary - Petroleum Blue */
+  --color-petroleum-light: #3D5B6B;
+  --color-petroleum: #2C4653;
+  --color-petroleum-dark: #1F3340;
+  
+  /* Complementary - Light Sand */
+  --color-sand-light: #F0E9D9;
+  --color-sand: #E6DDC5;
+  --color-sand-dark: #D4C9AC;
+  
+  /* Neutral Light - Bone White */
+  --color-bone-lightest: #FAFAF9;
+  --color-bone: #F5F5F2;
+  --color-bone-dark: #E8E8E4;
+  
+  /* Neutral Dark - Graphite */
+  --color-graphite-light: #3A3A3A;
+  --color-graphite: #1F1F1F;
+  --color-graphite-dark: #0F0F0F;
+  
+  /* Accent - Soft Lime Green */
+  --color-lime-light: #C3DEC0;
+  --color-lime: #A9C9A4;
+  --color-lime-dark: #8FB88A;
+  
+  /* Material - Natural Honey (Warm Copper Wood Tone) */
+  --color-honey-light: #D89072;
+  --color-honey: #C1643B;
+  --color-honey-dark: #B85535;
+  
+  /* Derived Neutrals */
+  --color-neutral-line: #D8D8D3;
+  --color-neutral-subtle: #E5E5E0;
+  
+  /* System Colors */
+  --font-size: 16px;
+  --background: #F5F5F2;
+  --foreground: #1F1F1F;
+  --card: #FAFAF9;
+  --card-foreground: #1F1F1F;
+  --popover: #FAFAF9;
+  --popover-foreground: #1F1F1F;
+  --primary: #47685C;
+  --primary-foreground: #F5F5F2;
+  --secondary: #2C4653;
+  --secondary-foreground: #F5F5F2;
+  --muted: #E6DDC5;
+  --muted-foreground: #5A8070;
+  --accent: #A9C9A4;
+  --accent-foreground: #1F1F1F;
+  --destructive: #B85535;
+  --destructive-foreground: #FAFAF9;
+  --border: #D8D8D3;
+  --input: transparent;
+  --input-background: #FAFAF9;
+  --switch-background: #D8D8D3;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: #47685C;
+  
+  /* Chart Colors */
+  --chart-1: #47685C;
+  --chart-2: #A9C9A4;
+  --chart-3: #2C4653;
+  --chart-4: #C1643B;
+  --chart-5: #5A8070;
+  
+  /* Border Radius */
+  --radius: 0.5rem;
+  
+  /* Sidebar */
+  --sidebar: #2C4653;
+  --sidebar-foreground: #F5F5F2;
+  --sidebar-primary: #47685C;
+  --sidebar-primary-foreground: #F5F5F2;
+  --sidebar-accent: #3D5B6B;
+  --sidebar-accent-foreground: #F5F5F2;
+  --sidebar-border: #1F3340;
+  --sidebar-ring: #A9C9A4;
+  
+  /* Typography */
+  --font-family-heading: 'Manrope', sans-serif;
+  --font-family-body: 'Inter', sans-serif;
+  --font-family-mono: 'Roboto Mono', monospace;
+  
+  /* Text Sizes */
+  --text-2xl: 1.75rem;
+  --text-xl: 1.375rem;
+  --text-lg: 1.125rem;
+  --text-base: 1rem;
+  --text-sm: 0.875rem;
+  --text-xs: 0.8125rem;
+}
+
+.dark {
+  --background: #1F1F1F;
+  --foreground: #F5F5F2;
+  --card: #2A2A2A;
+  --card-foreground: #F5F5F2;
+  --popover: #2A2A2A;
+  --popover-foreground: #F5F5F2;
+  --primary: #5A8070;
+  --primary-foreground: #F5F5F2;
+  --secondary: #3D5B6B;
+  --secondary-foreground: #F5F5F2;
+  --muted: #3A3A3A;
+  --muted-foreground: #A9C9A4;
+  --accent: #A9C9A4;
+  --accent-foreground: #1F1F1F;
+  --destructive: #C1643B;
+  --destructive-foreground: #F5F5F2;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: #A9C9A4;
+  --sidebar: #1F3340;
+  --sidebar-foreground: #F5F5F2;
+  --sidebar-primary: #5A8070;
+  --sidebar-primary-foreground: #F5F5F2;
+  --sidebar-accent: #2C4653;
+  --sidebar-accent-foreground: #F5F5F2;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #A9C9A4;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-family-body);
+  }
+}
+
+/**
+ * Base typography. This is not applied to elements which have an ancestor with a Tailwind text class.
+ */
+@layer base {
+  :where(:not(:has([class*=" text-"]), :not(:has([class^="text-"])))) {
+    h1 {
+      font-family: var(--font-family-heading);
+      font-size: var(--text-2xl);
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    h2 {
+      font-family: var(--font-family-heading);
+      font-size: var(--text-xl);
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    h3 {
+      font-family: var(--font-family-heading);
+      font-size: var(--text-lg);
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    h4 {
+      font-family: var(--font-family-heading);
+      font-size: var(--text-base);
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    p {
+      font-family: var(--font-family-body);
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.6;
+    }
+
+    label {
+      font-family: var(--font-family-body);
+      font-size: var(--text-sm);
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    button {
+      font-family: var(--font-family-body);
+      font-size: var(--text-base);
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    input {
+      font-family: var(--font-family-body);
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.5;
+    }
+    
+    table {
+      font-family: var(--font-family-mono);
+    }
+  }
+}
+
+html {
+  font-size: var(--font-size);
+}
+
+/* GeStock Custom Utilities - Natural Shadows */
+.gestock-shadow {
+  box-shadow: 0 1px 3px 0 rgba(31, 31, 31, 0.08), 0 1px 2px -1px rgba(31, 31, 31, 0.06);
+}
+
+.gestock-shadow-lg {
+  box-shadow: 0 10px 15px -3px rgba(31, 31, 31, 0.10), 0 4px 6px -4px rgba(31, 31, 31, 0.08);
+}
+
+.gestock-hover-shadow {
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.gestock-hover-shadow:hover {
+  box-shadow: 0 4px 12px -2px rgba(31, 31, 31, 0.12), 0 2px 6px -2px rgba(31, 31, 31, 0.10);
+  transform: translateY(-1px);
+}
+
+/* GeStock Grid Spacing */
+.gestock-grid-padding {
+  padding: 2rem;
+}
+
+@media (min-width: 768px) {
+  .gestock-grid-padding {
+    padding: 2rem;
+  }
+}
+
+/* GeStock Date Badge */
+.gestock-date-badge {
+  font-family: var(--font-family-mono);
+  font-size: 0.75rem;
+  color: var(--color-muted-foreground);
+  background: var(--color-muted);
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.375rem;
+}
+
+/* GeStock Mobile Animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulseGreen {
+  0%, 100% {
+    background-color: rgba(71, 104, 92, 0.1);
+    transform: scale(1);
+  }
+  50% {
+    background-color: rgba(71, 104, 92, 0.3);
+    transform: scale(1.02);
+    box-shadow: 0 0 20px rgba(71, 104, 92, 0.4);
+  }
+}
+
+@keyframes pulseCopper {
+  0%, 100% {
+    background-color: rgba(193, 100, 59, 0.1);
+    transform: scale(1);
+  }
+  50% {
+    background-color: rgba(193, 100, 59, 0.25);
+    transform: scale(1.02);
+    box-shadow: 0 0 20px rgba(193, 100, 59, 0.4);
+  }
+}
+
+.animate-pulse-green {
+  animation: pulseGreen 0.8s ease-out;
+}
+
+.animate-pulse-copper {
+  animation: pulseCopper 0.8s ease-out;
+}
+
+/* Hide scrollbar for horizontal scroll */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Smooth touch feedback */
+@media (hover: none) and (pointer: coarse) {
+  button:active,
+  .active-scale:active {
+    transform: scale(0.96);
+    transition: transform 0.1s ease-out;
+  }
+  
+  /* Prevent zoom on input focus on mobile */
+  input[type="number"],
+  input[type="text"],
+  input[type="search"] {
+    font-size: 16px;
+  }
+}
