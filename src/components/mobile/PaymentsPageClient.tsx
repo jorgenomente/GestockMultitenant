@@ -7,6 +7,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -988,7 +989,7 @@ export default function PaymentsPageClient({ branchName, tenantId, branchId }: P
                 </div>
                 <div className="space-y-1 sm:col-span-2">
                   <Label htmlFor="payment-note">Observación</Label>
-                  <textarea
+                  <Textarea
                     id="payment-note"
                     value={paymentForm.note}
                     onChange={(event) =>
@@ -996,7 +997,6 @@ export default function PaymentsPageClient({ branchName, tenantId, branchId }: P
                     }
                     placeholder="Detalle adicional, referencia interna, etc."
                     rows={3}
-                    className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
                   />
                 </div>
               </div>
@@ -1238,7 +1238,7 @@ export default function PaymentsPageClient({ branchName, tenantId, branchId }: P
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="provider-contact">Información de contacto</Label>
-                    <textarea
+                    <Textarea
                       id="provider-contact"
                       value={providerForm.contactInfo}
                       onChange={(event) =>
@@ -1246,7 +1246,6 @@ export default function PaymentsPageClient({ branchName, tenantId, branchId }: P
                       }
                       rows={3}
                       placeholder="Nombre, teléfono, email"
-                      className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
                     />
                   </div>
                   {providerSuccess && (
