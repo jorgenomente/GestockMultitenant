@@ -762,13 +762,19 @@ const mapSum = new Map<string, number>();
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 rounded-xl border border-slate-300 px-2 py-1 bg-white">
-              <Input
-                aria-label="Presupuesto semanal"
-                inputMode="numeric"
+          <div
+            className="flex items-center gap-2 rounded-xl border px-2 py-1"
+            style={{
+              backgroundColor: "var(--input-background)",
+              borderColor: "var(--border)",
+            }}
+          >
+            <Input
+              aria-label="Presupuesto semanal"
+              inputMode="numeric"
                 enterKeyHint="done"
                 pattern="[0-9]*"
-                className="h-10 font-mono text-lg border-0 shadow-none focus-visible:ring-0 p-0"
+                className="h-10 font-mono text-lg border-0 shadow-none focus-visible:ring-0 p-0 bg-transparent"
                 style={{ width: `${inputCh}ch` }}
                 value={budgetInput}
                 onChange={handleBudgetChange}
@@ -784,10 +790,20 @@ const mapSum = new Map<string, number>();
               />
               <Button
                 size="icon"
-                className={`h-8 w-8 rounded-full transition-colors ${budgetSaveState === "saved" ? "bg-emerald-600 text-white" : budgetSaveState === "error" ? "bg-rose-100 text-rose-700" : ""}`}
+                className="h-8 w-8 rounded-full transition-colors"
                 aria-label="Guardar presupuesto"
                 title={budgetSaveState === "saved" ? "Presupuesto guardado" : budgetSaveState === "error" ? "Hubo un problema al guardar" : "Guardar presupuesto"}
                 disabled={budgetSaveState === "saving"}
+                style={{
+                  backgroundColor:
+                    budgetSaveState === "saved"
+                      ? "var(--color-success)"
+                      : budgetSaveState === "error"
+                      ? "var(--color-alert)"
+                      : "var(--color-primary)",
+                  color: "var(--primary-foreground)",
+                  opacity: budgetSaveState === "saved" ? 0.85 : 1,
+                }}
                 onClick={() => {
                   handleBudgetSave().catch((err) => {
                     const message = err instanceof Error ? err.message : String(err);
@@ -810,7 +826,13 @@ const mapSum = new Map<string, number>();
         </div>
 
         {/* Barra segmentada por frecuencia */}
-        <div className="w-full h-4 rounded-full bg-slate-200 overflow-hidden ring-1 ring-slate-300">
+        <div
+          className="w-full h-4 rounded-full overflow-hidden"
+          style={{
+            backgroundColor: "var(--muted)",
+            boxShadow: "inset 0 0 0 1px var(--border)",
+          }}
+        >
           <div className="flex h-full w-full">
             {segments.map((s) => (
               <div
@@ -858,16 +880,27 @@ const mapSum = new Map<string, number>();
                     {/* NUEVO: contador de tarjetas por frecuencia */}
       <Badge
         variant="outline"
-        className="rounded-full px-2 py-0.5 text-xs bg-slate-100 text-slate-700 border-slate-300 tabular-nums"
+        className="rounded-full px-2 py-0.5 text-xs tabular-nums"
+        style={{
+          backgroundColor: "var(--muted)",
+          color: "var(--muted-foreground)",
+          borderColor: "var(--border)",
+        }}
         aria-label={`Cantidad de proveedores ${FREQ_LABEL[freq].toLowerCase()}`}
         title={`Proveedores ${FREQ_LABEL[freq].toLowerCase()}: ${items.length}`}
       >
         {items.length}
       </Badge>
-                    <Badge className={`rounded-full px-3 py-1 text-sm ${FREQ_BADGE[freq]}`}>
+                    <Badge
+                      className={`rounded-full px-3 py-1 text-sm ${FREQ_BADGE[freq]}`}
+                      style={{ backgroundColor: "var(--accent)", color: "var(--accent-foreground)" }}
+                    >
                       {fmtARS(total)}
                     </Badge>
-                    <div className="h-9 w-9 grid place-items-center rounded-full border border-slate-300 text-slate-600">
+                    <div
+                      className="h-9 w-9 grid place-items-center rounded-full border"
+                      style={{ borderColor: "var(--border)", color: "var(--muted-foreground)" }}
+                    >
                       <ChevronsDown className="h-4 w-4" />
                     </div>
                   </div>
@@ -979,10 +1012,18 @@ const mapSum = new Map<string, number>();
             </span>
           </CardContent>
         </Card>
-        <Card className="bg-amber-50">
+        <Card>
           <CardContent className="px-4 py-4 grid grid-cols-[1fr_auto] items-center gap-x-3 min-w-0">
-            <span className="font-semibold leading-tight text-sm sm:text-base">Diferencia</span>
-            <span className="tabular-nums whitespace-nowrap text-right font-semibold text-[15px] sm:text-base justify-self-end">
+            <span
+              className="font-semibold leading-tight text-sm sm:text-base"
+              style={{ color: diferencia >= 0 ? "var(--color-success)" : "var(--color-alert)" }}
+            >
+              Diferencia
+            </span>
+            <span
+              className="tabular-nums whitespace-nowrap text-right font-semibold text-[15px] sm:text-base justify-self-end"
+              style={{ color: diferencia >= 0 ? "var(--color-success)" : "var(--color-alert)" }}
+            >
               {fmtARS(diferencia)}
             </span>
           </CardContent>

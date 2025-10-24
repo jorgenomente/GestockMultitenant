@@ -155,13 +155,16 @@ function getSeverity(expStr: string): Severity {
   return "green";
 }
 function isExpired(expStr: string) { const l = daysUntil(expStr); return l !== null && l < 0; }
-function severityClasses(sev: Severity, compact: boolean) {
-  const base = compact ? "ring-0" : "";
+function severityAccentColor(sev: Severity): string {
   switch (sev) {
-    case "red": return `${base} bg-red-50 border-red-300 ring-1 ring-red-200`;
-    case "orange": return `${base} bg-orange-50 border-orange-300 ring-1 ring-orange-200`;
-    case "green": return `${base} bg-green-50 border-green-300 ring-1 ring-green-200`;
-    default: return `${base} bg-neutral-50 border-neutral-200`;
+    case "red":
+      return "var(--color-alert)";
+    case "orange":
+      return "var(--color-action-secondary)";
+    case "green":
+      return "var(--color-success)";
+    default:
+      return "var(--border)";
   }
 }
 function severityLabel(expStr: string) {
@@ -985,12 +988,29 @@ export default function VencimientosPage() {
     const freezerShown = getDraftValue(it.id, "freezer", it.freezer ?? false);
 
     const sev = getSeverity(expShown);
-    const sevClass = severityClasses(sev, compact);
+    const accentColor = severityAccentColor(sev);
     const sevText = severityLabel(expShown);
     const hasDraft = !!drafts[it.id];
 
+    const cardStyle: React.CSSProperties = {
+      backgroundColor: "var(--card)",
+      borderColor: "var(--border)",
+      borderLeftColor: accentColor,
+      borderLeftWidth: compact ? 4 : 6,
+    };
+
+    const chipStyle: React.CSSProperties = {
+      backgroundColor: accentColor,
+      color: "var(--card-foreground)",
+      borderColor: accentColor,
+    };
+
     return (
-      <Card key={it.id} className={`border ${sevClass} ${compact ? "shadow-none" : "shadow-sm"} ${it.confirmed && !hasDraft ? "ring-2 ring-offset-0" : ""}`}>
+      <Card
+        key={it.id}
+        className={`${compact ? "shadow-none" : "shadow-sm"} border bg-[var(--card)] ${it.confirmed && !hasDraft ? "ring-2 ring-offset-0" : ""}`}
+        style={cardStyle}
+      >
         <CardContent className={`${compact ? "p-2" : "p-3 pt-0 pb-0"} space-y-2`}>
           {/* Fila 1 */}
           <div className="grid grid-cols-12 gap-2 sm:flex sm:items-center">
@@ -1004,7 +1024,11 @@ export default function VencimientosPage() {
             </div>
 
             <div className="col-span-6 sm:ml-2 sm:mr-2 sm:shrink-0 sm:self-center">
-              <span className={`inline-block rounded-full border font-semibold ${chipCls}`} title={sevText}>
+              <span
+                className={`inline-block rounded-full border font-semibold ${chipCls}`}
+                title={sevText}
+                style={chipStyle}
+              >
                 {sevText}
               </span>
             </div>
@@ -1016,7 +1040,8 @@ export default function VencimientosPage() {
                 onClick={() => toggleFreezer(it.id)}
                 aria-label="Marcar como Freezer"
                 title="Marcar como Freezer"
-                className={`${compact ? "h-8 w-8" : "h-8 w-8"} ${freezerShown ? "bg-sky-500 hover:bg-sky-600 text-white" : ""}`}
+                className={`${compact ? "h-8 w-8" : "h-8 w-8"}`}
+                style={freezerShown ? { backgroundColor: "var(--color-action-secondary)", color: "var(--accent-foreground)" } : undefined}
               >
                 <Snowflake className="h-4 w-4" />
               </Button>
@@ -1034,7 +1059,12 @@ export default function VencimientosPage() {
                 onClick={() => applyChanges(it.id)}
                 aria-label={(!hasDraft && it.confirmed) ? "Cambios aplicados" : "Aplicar cambios"}
                 title={(!hasDraft && it.confirmed) ? "Cambios aplicados" : "Aplicar cambios"}
-                className={`${compact ? "h-8 w-8" : "h-8 w-8"} ${(!hasDraft && it.confirmed) ? "bg-green-600/70" : "bg-green-600 hover:bg-green-700"} text-white`}
+                className={`${compact ? "h-8 w-8" : "h-8 w-8"}`}
+                style={{
+                  backgroundColor: "var(--color-success)",
+                  color: "var(--success-foreground)",
+                  opacity: !hasDraft && it.confirmed ? 0.65 : 1,
+                }}
               >
                 <Check className="h-4 w-4" />
               </Button>
