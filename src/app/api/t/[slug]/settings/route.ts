@@ -12,6 +12,8 @@ const BodySchema = z.object({
   branchId: z.string().uuid().optional(),
 });
 
+const BRANCH_THEME_KEY = "branch-theme";
+
 const ensureSerializable = (value: unknown): Record<string, unknown> => {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -21,12 +23,16 @@ const ensureSerializable = (value: unknown): Record<string, unknown> => {
 
 export async function POST(req: NextRequest, context: { params: Promise<{ slug: string }> }) {
   const params = await context.params;
-  const auth = await authorizeTenant(params.slug, ["owner", "admin"]);
+  const auth = await authorizeTenant(params.slug, ["owner", "admin", "staff"]);
   if (!auth.ok) return auth.response;
 
   const { admin, tenant, role, userId } = auth;
   console.log("[settings] authorized", { tenant: tenant.slug, role, userId });
   const body = BodySchema.parse(await req.json());
+
+  if (body.key === BRANCH_THEME_KEY && role !== "owner") {
+    return NextResponse.json({ error: "Solo el owner puede modificar los colores" }, { status: 403 });
+  }
 
   const baseValue = ensureSerializable(body.value);
   const uploadedAt = new Date().toISOString();

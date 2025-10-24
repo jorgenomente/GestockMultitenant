@@ -156,14 +156,40 @@ function Stepper({ value, onChange, min = 0, step = 1 }: StepperProps) {
 }
 
 
+function useMediaQuery(query: string) {
+  const getMatch = React.useCallback(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia(query).matches;
+  }, [query]);
+
+  const [matches, setMatches] = React.useState<boolean>(getMatch);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia(query);
+    const handler = (event: MediaQueryListEvent) => setMatches(event.matches);
+    setMatches(mql.matches);
+    if (mql.addEventListener) mql.addEventListener("change", handler);
+    else if (mql.addListener) mql.addListener(handler);
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", handler);
+      else if (mql.removeListener) mql.removeListener(handler);
+    };
+  }, [query]);
+
+  return matches;
+}
+
 function useHideBarsOnScroll(opts?: {
   threshold?: number;          // delta mínimo para cambiar estado
   revealOnStopMs?: number|null;// null/0 => desactivar "revelar al frenar"
   minYToHide?: number;         // no ocultar hasta scrollear al menos esto
+  disabled?: boolean;          // si true, nunca oculta ni agrega listeners
 }) {
   const threshold = opts?.threshold ?? 6;
   const revealOnStopMs = opts?.revealOnStopMs ?? null; // ⬅️ por defecto desactivado
   const minYToHide = opts?.minYToHide ?? 0;
+  const disabled = opts?.disabled ?? false;
 
   const [hidden, setHidden] = React.useState(false);
   const lastY = React.useRef(0);
@@ -171,6 +197,7 @@ function useHideBarsOnScroll(opts?: {
   const stopTimer = React.useRef<number | null>(null);
 
   const onScroll = React.useCallback(() => {
+    if (disabled) return;
     const yNow = window.scrollY || document.documentElement.scrollTop || 0;
 
     if (raf.current) cancelAnimationFrame(raf.current);
@@ -195,9 +222,13 @@ function useHideBarsOnScroll(opts?: {
         stopTimer.current = window.setTimeout(() => setHidden(false), revealOnStopMs);
       }
     });
-  }, [threshold, revealOnStopMs, minYToHide]);
+  }, [threshold, revealOnStopMs, minYToHide, disabled]);
 
   React.useEffect(() => {
+    if (disabled) {
+      setHidden(false);
+      return;
+    }
     lastY.current = window.scrollY || 0;
     window.addEventListener("scroll", onScroll, { passive: true });
     const vv = (window as any).visualViewport as VisualViewport | undefined;
@@ -210,9 +241,9 @@ function useHideBarsOnScroll(opts?: {
       if (raf.current) cancelAnimationFrame(raf.current);
       if (stopTimer.current) clearTimeout(stopTimer.current);
     };
-  }, [onScroll]);
+  }, [onScroll, disabled]);
 
-  return hidden; // true => oculto
+  return disabled ? false : hidden; // true => oculto
 }
 
 
@@ -722,11 +753,13 @@ const normalizeSearchParam = (value: string | null) => {
 export default function ProviderOrderPage() {
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
   const router = useRouter();
+  const isDesktop = useMediaQuery("(min-width: 768px)");
   const barsHidden = useHideBarsOnScroll({
-  threshold: 5,       // podés bajarlo si querés más sensibilidad
-  revealOnStopMs: null, // ⬅️ importante: NO revelar al frenar
-  minYToHide: 24,     // no ocultar hasta pasar ~24px
-});
+    threshold: 5,
+    revealOnStopMs: null,
+    minYToHide: 24,
+    disabled: isDesktop,
+  });
 
   const params = useParams<{ slug: string; provId: string }>();
   const provId = String(params?.provId || "");

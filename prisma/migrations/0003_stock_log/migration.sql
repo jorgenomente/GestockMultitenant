@@ -18,7 +18,18 @@ CREATE TABLE IF NOT EXISTS public.stock_logs (
 CREATE INDEX IF NOT EXISTS stock_logs_item_idx ON public.stock_logs(order_item_id);
 CREATE INDEX IF NOT EXISTS stock_logs_tenant_branch_idx ON public.stock_logs(tenant_id, branch_id);
 
-ALTER TABLE public.stock_logs
-  ADD CONSTRAINT stock_logs_order_item_fkey
-  FOREIGN KEY (order_item_id) REFERENCES public.order_items(id) ON DELETE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'stock_logs_order_item_fkey'
+          AND conrelid = 'public.stock_logs'::regclass
+    ) THEN
+        ALTER TABLE public.stock_logs
+          ADD CONSTRAINT stock_logs_order_item_fkey
+          FOREIGN KEY (order_item_id) REFERENCES public.order_items(id) ON DELETE CASCADE;
+    END IF;
+END;
+$$;
 

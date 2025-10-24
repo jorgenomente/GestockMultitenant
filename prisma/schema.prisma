@@ -21,6 +21,7 @@ model app_settings {
 
   @@index([tenant_id, branch_id], map: "app_settings_tenant_branch_idx")
   @@index([tenant_id], map: "app_settings_tenant_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -55,6 +56,7 @@ model branches {
   @@unique([tenant_id, slug], map: "uniq_branches_tenant_slug")
   @@index([tenant_id])
   @@index([tenant_id], map: "idx_branches_tenant")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -68,6 +70,7 @@ model client_order_comments {
   branches      branches      @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   client_orders client_orders @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   tenants       tenants       @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -84,6 +87,7 @@ model client_order_items {
   branches      branches      @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   client_orders client_orders @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   tenants       tenants       @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -102,6 +106,7 @@ model client_orders {
   tenants               tenants                 @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([client_id], map: "client_orders_client_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -120,6 +125,7 @@ model clients {
 
   @@index([branch_id], map: "clients_branch_idx")
   @@index([tenant_id], map: "clients_tenant_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -139,6 +145,7 @@ model expirations {
 
   @@index([branch_id], map: "expirations_branch_idx")
   @@index([tenant_id], map: "expirations_tenant_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -158,6 +165,7 @@ model expirations_archive {
 
   @@index([branch_id], map: "expirations_archive_branch_idx")
   @@index([tenant_id], map: "expirations_archive_tenant_idx")
+  @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -176,6 +184,7 @@ model memberships {
   @@index([user_id, tenant_id], map: "idx_memberships_user_tenant")
   @@index([tenant_id, user_id])
   @@index([user_id], map: "memberships_user_idx")
+  @@schema("public")
 }
 
 model order_items {
@@ -202,6 +211,7 @@ model order_items {
   @@index([order_id], map: "order_items_order_idx")
   @@index([order_id, product_name], map: "order_items_order_product_idx")
   @@index([tenant_id, branch_id], map: "order_items_tenant_branch_idx")
+  @@schema("public")
 }
 
 model order_snapshots {
@@ -213,6 +223,7 @@ model order_snapshots {
   orders     orders   @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([order_id], map: "order_snapshots_order_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -226,6 +237,7 @@ model order_summaries {
   branches    branches  @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   providers   providers @relation(fields: [provider_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   tenants     tenants   @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -247,6 +259,7 @@ model order_summaries_week {
   @@unique([week_id, provider_id], map: "order_summaries_week_unique_idx")
   @@index([provider_id], map: "order_summaries_week_provider_idx")
   @@index([week_id], map: "order_summaries_week_week_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -262,6 +275,7 @@ model order_ui_state {
   tenants     tenants  @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([order_id], map: "order_ui_state_order_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -288,6 +302,7 @@ model orders {
   @@index([provider_id], map: "orders_provider_idx")
   @@index([tenant_id, branch_id], map: "orders_tenant_branch_idx")
   @@index([tenant_id], map: "orders_tenant_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -298,6 +313,7 @@ model orders_store {
   tenants     tenants  @relation(fields: [tenant_slug], references: [slug], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([updated_at(sort: Desc)], map: "orders_store_updated_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -316,6 +332,7 @@ model payment_providers {
   branches      branches   @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   tenants       tenants    @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   payments      payments[]
+  @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -339,6 +356,7 @@ model payments {
 
   @@index([provider_id], map: "payments_provider_idx")
   @@index([tenant_id, branch_id, payment_date(sort: Desc), created_at(sort: Desc)], map: "payments_tenant_branch_date_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -357,6 +375,7 @@ model prices_raw {
   @@index([barcode])
   @@index([tenant_id], map: "prices_raw_tenant_idx")
   @@index([ts(sort: Desc)])
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -377,6 +396,7 @@ model products {
 
   @@index([branch_id], map: "products_branch_idx")
   @@index([tenant_id], map: "products_tenant_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -390,6 +410,7 @@ model products_test {
   tenants    tenants  @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([tenant_id], map: "products_test_tenant_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -398,6 +419,7 @@ model profiles {
   email      String?
   full_name  String?
   updated_at DateTime? @default(now()) @db.Timestamptz(6)
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -416,6 +438,7 @@ model provider_week_providers {
   @@unique([week_id, provider_id], map: "provider_week_providers_unique")
   @@index([provider_id], map: "provider_week_providers_provider_idx")
   @@index([week_id], map: "provider_week_providers_week_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -435,6 +458,7 @@ model provider_week_states {
   @@unique([week_id, provider_id], map: "provider_week_states_unique")
   @@index([provider_id], map: "provider_week_states_provider_idx")
   @@index([week_id], map: "provider_week_states_week_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -454,6 +478,7 @@ model provider_weeks {
   @@unique([tenant_id, branch_id, week_start], map: "provider_weeks_unique")
   @@index([branch_id], map: "provider_weeks_branch_idx")
   @@index([tenant_id], map: "provider_weeks_tenant_idx")
+  @@schema("public")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -482,6 +507,7 @@ model providers {
 
   @@index([branch_id], map: "providers_branch_idx")
   @@index([tenant_id], map: "providers_tenant_idx")
+  @@schema("public")
 }
 
 model branch_messages {
@@ -499,6 +525,7 @@ model branch_messages {
   @@index([branch_id], map: "branch_messages_branch_idx")
   @@index([tenant_id], map: "branch_messages_tenant_idx")
   @@index([tenant_id, branch_id, created_at(sort: Desc)], map: "branch_messages_tenant_branch_idx")
+  @@schema("public")
 }
 
 model stock_logs {
@@ -518,6 +545,7 @@ model stock_logs {
 
   @@index([order_item_id], map: "stock_logs_item_idx")
   @@index([tenant_id, branch_id], map: "stock_logs_tenant_branch_idx")
+  @@schema("public")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -549,6 +577,7 @@ model tenants {
   provider_weeks          provider_weeks[]
   providers               providers[]
   branch_messages         branch_messages[]
+  @@schema("public")
 }
 
 enum client_order_status {
@@ -556,12 +585,14 @@ enum client_order_status {
   guardado
   entregado
   cancelado
+  @@schema("public")
 }
 
 enum membership_role {
   owner
   admin
   staff
+  @@schema("public")
 }
 
 enum order_status {
@@ -570,26 +601,31 @@ enum order_status {
   ENVIADO
   COMPLETADO
   CANCELADO
+  @@schema("public")
 }
 
 enum payment_method {
   EFECTIVO
   TRANSFERENCIA
   ECHEQ
+  @@schema("public")
 }
 
 enum provider_frequency {
   SEMANAL
   QUINCENAL
   MENSUAL
+  @@schema("public")
 }
 
 enum provider_payment_method {
   EFECTIVO
   TRANSFERENCIA
+  @@schema("public")
 }
 
 enum provider_status {
   PENDIENTE
   REALIZADO
+  @@schema("public")
 }

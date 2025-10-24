@@ -1,25 +1,30 @@
 :root {
-  /* Primary - Leaf Green */
+  /* Structure & Primary Actions */
+  --color-deep-green-light: #3A4A42;
+  --color-deep-green: #2C3A33;
+  --color-deep-green-dark: #1F2A23;
+
+  /* Leaf Green family (legacy references) */
   --color-leaf-green-light: #5A8070;
   --color-leaf-green: #47685C;
   --color-leaf-green-dark: #3A5349;
 
-  /* Secondary - Petroleum Blue */
+  /* Navigation depth */
   --color-petroleum-light: #3D5B6B;
   --color-petroleum: #2C4653;
   --color-petroleum-dark: #1F3340;
 
-  /* Complementary - Light Sand */
+  /* Warm neutral surfaces */
   --color-sand-light: #F0E9D9;
   --color-sand: #E6DDC5;
   --color-sand-dark: #D4C9AC;
 
-  /* Neutral Light - Bone White */
+  /* Neutral light */
   --color-bone-lightest: #FAFAF9;
   --color-bone: #F5F5F2;
   --color-bone-dark: #E8E8E4;
 
-  /* Neutral Dark - Graphite */
+  /* Neutral dark */
   --color-graphite-light: #3A3A3A;
   --color-graphite: #1F1F1F;
   --color-graphite-dark: #0F0F0F;
@@ -29,29 +34,43 @@
   --color-lime: #A9C9A4;
   --color-lime-dark: #8FB88A;
 
-  /* Material - Natural Honey */
+  /* Alerts - Copper */
   --color-honey-light: #D89072;
   --color-honey: #C1643B;
   --color-honey-dark: #B85535;
 
-  /* Derived Neutrals */
+  /* Derived neutrals */
   --color-neutral-line: #D8D8D3;
   --color-neutral-subtle: #E5E5E0;
 
-  /* Chart Palette */
-  --chart-1: #47685C;
-  --chart-2: #A9C9A4;
-  --chart-3: #2C4653;
-  --chart-4: #C1643B;
-  --chart-5: #5A8070;
+  /* Dark theme foundations */
+  --color-dark-bg-main: #1C2623;
+  --color-dark-surface: #3C4A44;
+  --color-dark-nav: #2C3A33;
+  --color-dark-text-primary: #F5F5F2;
+  --color-dark-text-secondary: #B9BBB8;
+  --color-dark-divider: #4B5B53;
+  --color-data-primary: #7394B0;
+  --color-data-secondary: #5A7B99;
+  --color-action-primary: #7DAA92;
+  --color-action-hover: #6C9C83;
+  --color-action-light: #8FBDA5;
+  --color-action-glow: #8FBDA5;
+  --color-action-focus-ring: #A9CDB6;
+  --color-action-secondary: #A9CDB6;
+  --color-action-secondary-hover: #97BBA5;
+  --color-action-secondary-glow: #BAD9C8;
+  --color-alert: #C1643B;
+  --color-alert-hover: #B85535;
 
   /* Typography */
-  --font-family-heading: Manrope, sans-serif;
-  --font-family-body: Inter, sans-serif;
+  --font-family-heading: "Manrope", sans-serif;
+  --font-family-body: "Inter", sans-serif;
   --font-family-mono: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-size-root: 16px;
+  --font-size: 16px;
   --text-2xl: 1.75rem;
   --text-xl: 1.375rem;
   --text-lg: 1.125rem;
@@ -71,36 +90,43 @@
   --shadow-card: 0 1px 3px 0 rgba(31, 31, 31, 0.08), 0 1px 2px -1px rgba(31, 31, 31, 0.06);
   --shadow-elevated: 0 10px 15px -3px rgba(31, 31, 31, 0.10), 0 4px 6px -4px rgba(31, 31, 31, 0.08);
 
-  /* System mappings */
-  --background: var(--color-bone);
-  --foreground: var(--color-graphite);
-  --card: var(--color-bone-lightest);
-  --card-foreground: var(--color-graphite);
-  --popover: var(--color-bone-lightest);
-  --popover-foreground: var(--color-graphite);
-  --primary: var(--color-leaf-green);
-  --primary-foreground: var(--color-bone);
-  --secondary: var(--color-petroleum);
-  --secondary-foreground: var(--color-bone);
-  --muted: var(--color-sand);
-  --muted-foreground: var(--color-leaf-green-light);
-  --accent: var(--color-lime);
-  --accent-foreground: var(--color-graphite);
-  --destructive: var(--color-honey-dark);
-  --destructive-foreground: var(--color-bone-lightest);
-  --border: var(--color-neutral-line);
+  /* System mappings (Moss Green dark theme) */
+  --background: #1C2623;
+  --foreground: #F5F5F2;
+  --card: #2F3B37;
+  --card-foreground: #F5F5F2;
+  --popover: #2F3B37;
+  --popover-foreground: #F5F5F2;
+  --primary: #7DAA92;
+  --primary-foreground: #F5F5F2;
+  --secondary: #4B5B53;
+  --secondary-foreground: #F5F5F2;
+  --muted: #3C4A44;
+  --muted-foreground: #B9BBB8;
+  --accent: #7DAA92;
+  --accent-foreground: #F5F5F2;
+  --destructive: #C1643B;
+  --destructive-foreground: #F5F5F2;
+  --border: #4B5B53;
   --input: transparent;
-  --input-background: var(--color-bone-lightest);
-  --switch-background: var(--color-neutral-line);
-  --ring: var(--color-leaf-green);
-  --sidebar: var(--color-petroleum);
-  --sidebar-foreground: var(--color-bone);
-  --sidebar-primary: var(--color-leaf-green);
-  --sidebar-primary-foreground: var(--color-bone);
-  --sidebar-accent: var(--color-petroleum-light);
-  --sidebar-accent-foreground: var(--color-bone);
-  --sidebar-border: var(--color-petroleum-dark);
-  --sidebar-ring: var(--color-lime);
+  --input-background: #24312E;
+  --switch-background: #4B5B53;
+  --ring: #C1643B;
+  --sidebar: #2C3A33;
+  --sidebar-foreground: #F5F5F2;
+  --sidebar-primary: #7DAA92;
+  --sidebar-primary-foreground: #F5F5F2;
+  --sidebar-accent: #3C4A44;
+  --sidebar-accent-foreground: #F5F5F2;
+  --sidebar-border: #4B5B53;
+  --sidebar-ring: #7DAA92;
+
+  /* Chart palette */
+  --chart-1: #47685C;
+  --chart-2: #A9C9A4;
+  --chart-3: #2C4653;
+  --chart-4: #C1643B;
+  --chart-5: #5A8070;
 
   /* Legacy aliases (remove once unused) */
   --leaf-light: var(--color-leaf-green-light);

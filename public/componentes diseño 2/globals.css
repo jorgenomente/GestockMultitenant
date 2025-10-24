@@ -1,0 +1,692 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Roboto+Mono:wght@400;500&display=swap');
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* GeStock Design System - Natural Data Color Palette */
+  
+  /* Primary - Deep Green (Structural) */
+  --color-deep-green-light: #3A4A42;
+  --color-deep-green: #2C3A33;
+  --color-deep-green-dark: #1F2A23;
+  
+  /* Primary - Leaf Green */
+  --color-leaf-green-light: #5A8070;
+  --color-leaf-green: #47685C;
+  --color-leaf-green-dark: #3A5349;
+  
+  /* Secondary - Petroleum Blue */
+  --color-petroleum-light: #3D5B6B;
+  --color-petroleum: #2C4653;
+  --color-petroleum-dark: #1F3340;
+  
+  /* Complementary - Light Sand */
+  --color-sand-light: #F0E9D9;
+  --color-sand: #E6DDC5;
+  --color-sand-dark: #D4C9AC;
+  
+  /* Neutral Light - Bone White */
+  --color-bone-lightest: #FAFAF9;
+  --color-bone: #F5F5F2;
+  --color-bone-dark: #E8E8E4;
+  
+  /* Neutral Dark - Graphite */
+  --color-graphite-light: #3A3A3A;
+  --color-graphite: #1F1F1F;
+  --color-graphite-dark: #0F0F0F;
+  
+  /* Accent - Soft Lime Green */
+  --color-lime-light: #C3DEC0;
+  --color-lime: #A9C9A4;
+  --color-lime-dark: #8FB88A;
+  
+  /* Material - Natural Honey (Warm Copper Wood Tone) */
+  --color-honey-light: #D89072;
+  --color-honey: #C1643B;
+  --color-honey-dark: #B85535;
+  
+  /* Derived Neutrals */
+  --color-neutral-line: #D8D8D3;
+  --color-neutral-subtle: #E5E5E0;
+  
+  /* GeStock Dark Mode - Natural Dark Theme with Moss Green Actions */
+  --color-dark-bg-main: #1C2623;
+  --color-dark-surface: #3C4A44;
+  --color-dark-nav: #2C3A33;
+  --color-dark-text-primary: #F5F5F2;
+  --color-dark-text-secondary: #B9BBB8;
+  --color-dark-divider: #4B5B53;
+  --color-data-primary: #7394B0;
+  --color-data-secondary: #5A7B99;
+  --color-action-primary: #7DAA92;
+  --color-action-hover: #6C9C83;
+  --color-action-light: #8FBDA5;
+  --color-action-glow: #8FBDA5;
+  --color-action-focus-ring: #A9CDB6;
+  --color-action-secondary: #A9CDB6;
+  --color-action-secondary-hover: #97BBA5;
+  --color-action-secondary-glow: #BAD9C8;
+  --color-alert: #C1643B;
+  --color-alert-hover: #B85535;
+  
+  /* System Colors - Dark Mode */
+  --font-size: 16px;
+  --background: #1C2623;
+  --foreground: #F5F5F2;
+  --card: #2F3B37;
+  --card-foreground: #F5F5F2;
+  --popover: #2F3B37;
+  --popover-foreground: #F5F5F2;
+  --primary: #7DAA92;
+  --primary-foreground: #F5F5F2;
+  --secondary: #4B5B53;
+  --secondary-foreground: #F5F5F2;
+  --muted: #3C4A44;
+  --muted-foreground: #B9BBB8;
+  --accent: #7DAA92;
+  --accent-foreground: #F5F5F2;
+  --destructive: #C1643B;
+  --destructive-foreground: #F5F5F2;
+  --border: #4B5B53;
+  --input: transparent;
+  --input-background: #24312E;
+  --switch-background: #4B5B53;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: #C1643B;
+  
+  /* Chart Colors */
+  --chart-1: #47685C;
+  --chart-2: #A9C9A4;
+  --chart-3: #2C4653;
+  --chart-4: #C1643B;
+  --chart-5: #5A8070;
+  
+  /* Border Radius */
+  --radius: 0.5rem;
+  
+  /* Sidebar - Dark Mode */
+  --sidebar: #2C3A33;
+  --sidebar-foreground: #F5F5F2;
+  --sidebar-primary: #7DAA92;
+  --sidebar-primary-foreground: #F5F5F2;
+  --sidebar-accent: #3C4A44;
+  --sidebar-accent-foreground: #F5F5F2;
+  --sidebar-border: #4B5B53;
+  --sidebar-ring: #7DAA92;
+  
+  /* Typography */
+  --font-family-heading: 'Manrope', sans-serif;
+  --font-family-body: 'Inter', sans-serif;
+  --font-family-mono: 'Roboto Mono', monospace;
+  
+  /* Text Sizes */
+  --text-2xl: 1.75rem;
+  --text-xl: 1.375rem;
+  --text-lg: 1.125rem;
+  --text-base: 1rem;
+  --text-sm: 0.875rem;
+  --text-xs: 0.8125rem;
+}
+
+.dark {
+  --background: #1F1F1F;
+  --foreground: #F5F5F2;
+  --card: #2A2A2A;
+  --card-foreground: #F5F5F2;
+  --popover: #2A2A2A;
+  --popover-foreground: #F5F5F2;
+  --primary: #5A8070;
+  --primary-foreground: #F5F5F2;
+  --secondary: #3D5B6B;
+  --secondary-foreground: #F5F5F2;
+  --muted: #3A3A3A;
+  --muted-foreground: #A9C9A4;
+  --accent: #A9C9A4;
+  --accent-foreground: #1F1F1F;
+  --destructive: #C1643B;
+  --destructive-foreground: #F5F5F2;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: #A9C9A4;
+  --sidebar: #1F3340;
+  --sidebar-foreground: #F5F5F2;
+  --sidebar-primary: #5A8070;
+  --sidebar-primary-foreground: #F5F5F2;
+  --sidebar-accent: #2C4653;
+  --sidebar-accent-foreground: #F5F5F2;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #A9C9A4;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-family-body);
+  }
+}
+
+/**
+ * Base typography. This is not applied to elements which have an ancestor with a Tailwind text class.
+ */
+@layer base {
+  :where(:not(:has([class*=" text-"]), :not(:has([class^="text-"])))) {
+    h1 {
+      font-family: var(--font-family-heading);
+      font-size: var(--text-2xl);
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    h2 {
+      font-family: var(--font-family-heading);
+      font-size: var(--text-xl);
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    h3 {
+      font-family: var(--font-family-heading);
+      font-size: var(--text-lg);
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    h4 {
+      font-family: var(--font-family-heading);
+      font-size: var(--text-base);
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    p {
+      font-family: var(--font-family-body);
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.6;
+    }
+
+    label {
+      font-family: var(--font-family-body);
+      font-size: var(--text-sm);
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    button {
+      font-family: var(--font-family-body);
+      font-size: var(--text-base);
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    input {
+      font-family: var(--font-family-body);
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.5;
+    }
+    
+    table {
+      font-family: var(--font-family-mono);
+    }
+  }
+}
+
+html {
+  font-size: var(--font-size);
+}
+
+/* GeStock Custom Utilities - Natural Shadows */
+.gestock-shadow {
+  box-shadow: 0 1px 3px 0 rgba(31, 31, 31, 0.08), 0 1px 2px -1px rgba(31, 31, 31, 0.06);
+}
+
+.gestock-shadow-lg {
+  box-shadow: 0 10px 15px -3px rgba(31, 31, 31, 0.10), 0 4px 6px -4px rgba(31, 31, 31, 0.08);
+}
+
+.gestock-hover-shadow {
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.gestock-hover-shadow:hover {
+  box-shadow: 0 4px 12px -2px rgba(31, 31, 31, 0.12), 0 2px 6px -2px rgba(31, 31, 31, 0.10);
+  transform: translateY(-1px);
+}
+
+/* GeStock Grid Spacing */
+.gestock-grid-padding {
+  padding: 2rem;
+}
+
+@media (min-width: 768px) {
+  .gestock-grid-padding {
+    padding: 2rem;
+  }
+}
+
+/* GeStock Date Badge */
+.gestock-date-badge {
+  font-family: var(--font-family-mono);
+  font-size: 0.75rem;
+  color: var(--color-muted-foreground);
+  background: var(--color-muted);
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.375rem;
+}
+
+/* ========================================
+   GeStock Moss Green Button Micro-Interactions
+   Natural, calm, tactile feedback system
+   ======================================== */
+
+/* Primary Action Button - Moss Green */
+.gestock-btn-moss {
+  background-color: #7DAA92;
+  color: #F5F5F2;
+  transition: all 150ms ease-in-out;
+  position: relative;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.gestock-btn-moss:hover:not(:disabled) {
+  background-color: #7DAA92;
+  filter: brightness(1.05);
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.12),
+    0 0 15px rgba(143, 189, 165, 0.4);
+  transform: translateY(-1px);
+}
+
+.gestock-btn-moss:active:not(:disabled) {
+  background-color: #6C9C83;
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.15),
+    inset 0 1px 3px rgba(0, 0, 0, 0.1);
+  transform: translateY(1px);
+}
+
+.gestock-btn-moss:focus-visible:not(:disabled) {
+  outline: 1.5px solid #A9CDB6;
+  outline-offset: 2px;
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.1),
+    0 0 0 3px rgba(169, 205, 182, 0.2);
+}
+
+.gestock-btn-moss:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+  filter: none;
+}
+
+/* Alert Button - Copper (for destructive actions) */
+.gestock-btn-alert {
+  background-color: #C1643B;
+  color: #F5F5F2;
+  transition: all 150ms ease-in-out;
+  position: relative;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.gestock-btn-alert:hover:not(:disabled) {
+  background-color: #B85535;
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.12),
+    0 0 15px rgba(193, 100, 59, 0.3);
+  transform: translateY(-1px);
+}
+
+.gestock-btn-alert:active:not(:disabled) {
+  background-color: #B85535;
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.15),
+    inset 0 1px 3px rgba(0, 0, 0, 0.1);
+  transform: translateY(1px);
+}
+
+.gestock-btn-alert:focus-visible:not(:disabled) {
+  outline: 1.5px solid #D88B68;
+  outline-offset: 2px;
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.1),
+    0 0 0 3px rgba(193, 100, 59, 0.2);
+}
+
+.gestock-btn-alert:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Secondary Action Button - Light Sage Green */
+.gestock-btn-secondary {
+  background-color: #A9CDB6;
+  color: #F5F5F2;
+  transition: all 150ms ease-in-out;
+  position: relative;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(75, 91, 83, 0.15);
+}
+
+.gestock-btn-secondary:hover:not(:disabled) {
+  background-color: #97BBA5;
+  filter: brightness(1.05);
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.12),
+    0 0 15px rgba(186, 217, 200, 0.4);
+  transform: translateY(-1px);
+}
+
+.gestock-btn-secondary:active:not(:disabled) {
+  background-color: #8AAEA0;
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.15),
+    inset 0 1px 3px rgba(0, 0, 0, 0.1);
+  transform: translateY(1px);
+}
+
+.gestock-btn-secondary:focus-visible:not(:disabled) {
+  outline: 1.5px solid #BAD9C8;
+  outline-offset: 2px;
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.1),
+    0 0 0 3px rgba(186, 217, 200, 0.25);
+}
+
+.gestock-btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+  filter: none;
+}
+
+/* Neutral Button - For inactive/saved states */
+.gestock-btn-neutral {
+  background-color: #47685C;
+  color: #F5F5F2;
+  transition: all 150ms ease-in-out;
+  position: relative;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.gestock-btn-neutral:hover:not(:disabled) {
+  background-color: #3A5549;
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.12),
+    0 0 12px rgba(71, 104, 92, 0.25);
+  transform: translateY(-1px);
+}
+
+.gestock-btn-neutral:active:not(:disabled) {
+  background-color: #3A5549;
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.15),
+    inset 0 1px 3px rgba(0, 0, 0, 0.1);
+  transform: translateY(1px);
+}
+
+.gestock-btn-neutral:focus-visible:not(:disabled) {
+  outline: 1.5px solid #7394B0;
+  outline-offset: 2px;
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.1),
+    0 0 0 3px rgba(115, 148, 176, 0.2);
+}
+
+.gestock-btn-neutral:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* GeStock Scrollbar Hide */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* GeStock Mobile Animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes expandDown {
+  from {
+    opacity: 0;
+    transform: scaleY(0.95);
+    transform-origin: top;
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+    transform-origin: top;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulseGreen {
+  0%, 100% {
+    background-color: rgba(71, 104, 92, 0.1);
+    transform: scale(1);
+  }
+  50% {
+    background-color: rgba(71, 104, 92, 0.3);
+    transform: scale(1.02);
+    box-shadow: 0 0 20px rgba(71, 104, 92, 0.4);
+  }
+}
+
+@keyframes pulseCopper {
+  0%, 100% {
+    background-color: rgba(193, 100, 59, 0.1);
+    transform: scale(1);
+  }
+  50% {
+    background-color: rgba(193, 100, 59, 0.25);
+    transform: scale(1.02);
+    box-shadow: 0 0 20px rgba(193, 100, 59, 0.4);
+  }
+}
+
+@keyframes drawLine {
+  from {
+    stroke-dashoffset: 1000;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-pulse-green {
+  animation: pulseGreen 0.8s ease-out;
+}
+
+.animate-pulse-copper {
+  animation: pulseCopper 0.8s ease-out;
+}
+
+.animate-draw-line {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: drawLine 0.8s ease-out forwards;
+}
+
+/* Hide scrollbar for horizontal scroll */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Smooth touch feedback */
+@media (hover: none) and (pointer: coarse) {
+  button:active,
+  .active-scale:active {
+    transform: scale(0.96);
+    transition: transform 0.1s ease-out;
+  }
+  
+  /* Prevent zoom on input focus on mobile */
+  input[type="number"],
+  input[type="text"],
+  input[type="search"] {
+    font-size: 16px;
+  }
+}
+
+/* Safe area support for mobile notches */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* Bottom navigation hover states (desktop) */
+@media (hover: hover) and (pointer: fine) {
+  .bottom-nav-item:hover {
+    background-color: rgba(193, 100, 59, 0.06);
+  }
+}
+
+/* Work Mode navigation active bounce */
+@keyframes navBounce {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.nav-item-active {
+  animation: navBounce 0.3s ease-out;
+}
+
+/* Dashboard animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Natural dark theme utilities */
+.gestock-dark-card {
+  background: linear-gradient(135deg, #4B5B53 0%, #607266 100%);
+}
+
+.gestock-dark-surface {
+  background-color: #2C3A33;
+}
+
+/* Enhanced shadows for dark theme */
+.gestock-dark-shadow {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.gestock-dark-shadow-lg {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Smooth transitions for dark theme cards */
+.gestock-dark-transition {
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Dark theme hover state */
+.gestock-dark-hover:hover {
+  background-color: #536361;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}

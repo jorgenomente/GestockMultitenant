@@ -9,10 +9,10 @@ export const dynamic = "force-dynamic";
 
 const MessageBodySchema = z.object({
   message: z
-    .string({ required_error: "Mensaje requerido" })
+    .string({ message: "Mensaje requerido" })
     .trim()
-    .min(1, "El mensaje no puede estar vacío")
-    .max(800, "Máximo 800 caracteres"),
+    .min(1, { message: "El mensaje no puede estar vacío" })
+    .max(800, { message: "Máximo 800 caracteres" }),
 });
 
 type BranchRow = { id: string; name: string; slug: string; tenant_id: string };
@@ -126,7 +126,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ slug: 
   const params = await context.params;
   const bodyParse = MessageBodySchema.safeParse(await req.json());
   if (!bodyParse.success) {
-    const firstError = bodyParse.error.errors[0]?.message ?? "Datos inválidos";
+    const firstError = bodyParse.error.issues[0]?.message ?? "Datos inválidos";
     return NextResponse.json({ error: firstError }, { status: 400 });
   }
 

@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Camera, Upload } from "lucide-react";
+import { Camera, Upload, RefreshCcw, Search } from "lucide-react";
 
 /** ===================== Config ===================== */
 const DENSITY_COMPACT = true;
@@ -538,7 +538,7 @@ function usePrices(slug?: string) {
     [fetchCatalog, slug]
   );
 
-  return { items, count, importedAt, sourceMode, loading, error, notice, onUpload };
+  return { items, count, importedAt, sourceMode, loading, error, notice, onUpload, refresh: fetchCatalog };
 }
 
 /** ===================== UI ===================== */
@@ -569,7 +569,7 @@ function Highlight({ text, q }: { text: string; q: string }) {
 
 /** ✅ ÚNICO cambio de firma: recibe slug */
 export default function PriceSearch({ slug }: { slug: string }) {
-  const { items, count, importedAt, sourceMode, loading, error, notice, onUpload } = usePrices(slug);
+  const { items, count, importedAt, sourceMode, loading, error, notice, onUpload, refresh } = usePrices(slug);
   const [q, setQ] = React.useState("");
   const qDebounced = useDebounced(q, 180);
   const LIMIT = 10;
@@ -632,28 +632,6 @@ export default function PriceSearch({ slug }: { slug: string }) {
     return hits;
   }, [items, qDebounced]);
 
-  const styles = DENSITY_COMPACT
-    ? {
-        card: "transition-transform hover:-translate-y-0.5",
-        content: "p-3",
-        row: "flex items-start justify-between gap-3",
-        name: "text-[14px] font-medium leading-tight text-foreground line-clamp-2",
-        meta: "mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground",
-        price: "text-base font-semibold tabular-nums text-black dark:text-white",
-        priceSub: "text-[10px] text-muted-foreground",
-        listSpace: "mt-3 space-y-2 pb-24",
-      }
-    : {
-        card: "transition-transform hover:-translate-y-0.5",
-        content: "p-4",
-        row: "flex items-start justify-between gap-4",
-        name: "text-[15px] font-semibold leading-snug text-foreground line-clamp-2 break-words",
-        meta: "mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground",
-        price: "text-lg font-semibold tabular-nums text-black dark:text-white",
-        priceSub: "text-[11px] text-muted-foreground",
-        listSpace: "mt-3 space-y-3 pb-28",
-      };
-
   const lastLabel =
     importedAt != null
       ? new Date(importedAt).toLocaleString("es-AR", {
@@ -678,133 +656,181 @@ export default function PriceSearch({ slug }: { slug: string }) {
   const hasData = items.length > 0;
   const infoToShow = notice || (hasData ? error : null);
 
+  const listPadding = DENSITY_COMPACT ? "pb-24" : "pb-28";
+
   return (
     <>
-      <div className="w-full">
-        <div className="mx-auto max-w-screen-sm px-3 sm:px-4 md:max-w-2xl">
-        <div className="sticky top-0 z-20 border-b border-border/60 bg-card/90 pt-3 pb-2 backdrop-blur supports-[backdrop-filter]:bg-card/70">
-          <div className="flex items-center justify-between gap-2">
-            <h1 className="text-lg font-semibold">Buscador de Precios</h1>
-            <div className="text-right">
-              <div className="text-xs text-muted-foreground">
-                Cargados: {count.toLocaleString("es-AR")}
+      <div className="w-full bg-background">
+        <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 md:space-y-8 md:py-8">
+          <section className="rounded-3xl border border-border/50 bg-muted/20 p-5 shadow-[0_25px_60px_-35px_rgba(0,0,0,0.45)] md:p-7">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-1">
+                <h1 className="text-2xl font-semibold text-foreground md:text-3xl">Consulta de precios</h1>
+                <p className="text-xs text-muted-foreground">
+                  Actualizado: {lastLabel} · Fuente: {sourceLabel}
+                </p>
               </div>
-              <div className="text-[11px] text-muted-foreground">
-                Última actualización: {lastLabel} · Fuente: {sourceLabel}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-border/60 bg-background px-3 py-1 text-xs text-muted-foreground">
+                  Ítems cargados: <span className="font-semibold text-foreground">{count.toLocaleString("es-AR")}</span>
+                </span>
+                <span className="rounded-full border border-border/60 bg-background px-3 py-1 text-xs text-muted-foreground uppercase tracking-wide">
+                  Resultados máx.: {LIMIT}
+                </span>
+                <Button
+                  variant="outline"
+                  className="h-10 rounded-xl px-3 text-xs font-medium"
+                  title="Actualizar precios (subir archivo)"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={loading}
+                  aria-busy={loading}
+                >
+                  <Upload className="mr-2 h-4 w-4" /> Importar precios
+                </Button>
               </div>
             </div>
-          </div>
 
-          <div className="mt-3 flex items-center gap-2">
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Buscar por nombre, código o barras…"
-              className="h-11 rounded-xl bg-inputBackground/90 text-base shadow-[var(--shadow-card)]"
-              inputMode="search"
-              id={INPUT_ID}
-            />
+            <div className="mt-6 flex flex-col gap-3 md:flex-row md:items-center">
+              <div className="relative flex-1">
+                <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Buscar producto, categoría o código…"
+                  className="h-12 rounded-2xl border border-border/50 bg-background/70 pl-11 pr-4 text-base shadow-sm"
+                  inputMode="search"
+                  id={INPUT_ID}
+                />
+              </div>
 
-            {/* Input file oculto */}
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const input = e.currentTarget; // snapshot ANTES del await
-                const f = input.files?.[0];
-                if (f) {
-                  (async () => {
-                    try {
-                      await onUpload(f);
-                    } finally {
-                      input.value = ""; // permitir volver a elegir el mismo archivo
-                    }
-                  })();
-                } else {
-                  input.value = "";
-                }
-              }}
-            />
+              {/* Input file oculto */}
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+                className="hidden"
+                onChange={(e) => {
+                  const input = e.currentTarget;
+                  const f = input.files?.[0];
+                  if (f) {
+                    (async () => {
+                      try {
+                        await onUpload(f);
+                      } finally {
+                        input.value = "";
+                      }
+                    })();
+                  } else {
+                    input.value = "";
+                  }
+                }}
+              />
 
-            <Button
-              variant="outline"
-              className="h-11 rounded-xl px-4"
-              title="Escanear código de barras"
-              onClick={() => setScannerOpen(true)}
-              aria-label="Escanear código de barras"
-            >
-              <Camera className="h-5 w-5" />
-            </Button>
-
-            <Button
-              variant="outline"
-              className="h-11 rounded-xl px-4"
-              title="Actualizar precios (subir archivo)"
-              onClick={() => fileRef.current?.click()}
-              disabled={loading}
-              aria-busy={loading}
-            >
-              <Upload className="h-5 w-5" />
-            </Button>
-          </div>
-
-          {infoToShow ? (
-            <div className="mt-2 text-xs text-accent-foreground">
-              {infoToShow}
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  variant="outline"
+                  className="h-12 rounded-2xl px-4"
+                  title="Refrescar catálogo"
+                  onClick={() => void refresh()}
+                  disabled={loading}
+                  aria-busy={loading}
+                >
+                  <RefreshCcw className="h-5 w-5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-12 rounded-2xl px-4"
+                  title="Escanear código de barras"
+                  onClick={() => setScannerOpen(true)}
+                  aria-label="Escanear código de barras"
+                >
+                  <Camera className="h-5 w-5" />
+                </Button>
+              </div>
             </div>
-          ) : !q ? (
-            <div className="mt-1 text-xs text-muted-foreground">
-              Se cargaron {count.toLocaleString("es-AR")} ítems. Escribe para buscar (máx. {LIMIT} resultados).
-            </div>
-          ) : null}
 
-          {!hasData && error && (
-            <div className="mt-2 text-xs text-destructive">{error}</div>
-          )}
-        </div>
+            {infoToShow ? (
+              <div className="mt-3 rounded-2xl border border-accent/40 bg-accent/15 px-4 py-2 text-xs text-accent-foreground">
+                {infoToShow}
+              </div>
+            ) : !q ? (
+              <div className="mt-3 text-xs text-muted-foreground">
+                Se cargaron {count.toLocaleString("es-AR")} ítems. Escribí para buscar (máx. {LIMIT} coincidencias mostradas).
+              </div>
+            ) : null}
 
-        <div className={styles.listSpace}>
-          {loading && <div className="text-sm text-muted-foreground">Cargando precios…</div>}
+            {!hasData && error && (
+              <div className="mt-3 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+                {error}
+              </div>
+            )}
+          </section>
 
-          {!loading && q && filtered.length === 0 && (
-            <div className="text-sm text-muted-foreground">Sin resultados.</div>
-          )}
+          <section className={`space-y-4 md:space-y-5 ${listPadding}`}>
+            {loading && <div className="text-sm text-muted-foreground">Cargando precios…</div>}
 
-          {filtered.map((it) => (
-            <Card key={it.id} className={styles.card}>
-              <CardContent className={styles.content}>
-                <div className={styles.row}>
-                  <div className="min-w-0">
-                    <div className={styles.name}>
-                      <Highlight text={it.name} q={q} />
-                    </div>
-                    <div className={styles.meta}>
-                      {it.code && <span>#{it.code}</span>}
-                      {it.barcode && <span className="font-mono text-[11px]">{it.barcode}</span>}
-                      {it.updatedAt > 0 && (
-                        <span title={it.updatedAtLabel}>
-                          {new Date(it.updatedAt).toLocaleDateString("es-AR")}{" "}
-                          {new Date(it.updatedAt).toLocaleTimeString("es-AR", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
+            {!loading && q && filtered.length === 0 && (
+              <div className="rounded-2xl border border-border/60 bg-background px-4 py-3 text-sm text-muted-foreground">
+                No encontramos resultados para el término {q}.
+              </div>
+            )}
+
+            {filtered.map((it) => {
+              const updatedLabel = it.updatedAt > 0
+                ? `${new Date(it.updatedAt).toLocaleDateString("es-AR")} · ${new Date(it.updatedAt).toLocaleTimeString("es-AR", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}`
+                : null;
+
+              return (
+                <Card
+                  key={it.id}
+                  className="rounded-3xl border border-border/40 bg-card/60 shadow-[0_25px_60px_-45px_rgba(0,0,0,0.45)] transition-transform hover:-translate-y-0.5"
+                >
+                  <CardContent className="flex flex-col gap-4 p-5 md:gap-5 md:p-7">
+                    <div className="flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-wide text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-accent/15 px-3 py-1 text-accent-foreground">Producto</span>
+                        {it.code && (
+                          <span className="rounded-full bg-background px-3 py-1 font-medium text-foreground shadow-sm">#{it.code}</span>
+                        )}
+                        {it.barcode && (
+                          <span className="rounded-full bg-background px-3 py-1 font-mono text-[11px] text-foreground/80 shadow-sm">
+                            {it.barcode}
+                          </span>
+                        )}
+                      </div>
+                      {updatedLabel && (
+                        <span className="rounded-full bg-muted/60 px-3 py-1 text-[11px] text-muted-foreground">
+                          Actualizado · {updatedLabel}
                         </span>
                       )}
                     </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <div className={styles.price}>{fmtMoney(it.price)}</div>
-                    <div className={styles.priceSub}>Precio más reciente</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+
+                    <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                      <div className="space-y-2 md:max-w-[70%]">
+                        <h2 className="text-xl font-semibold leading-snug text-foreground md:text-2xl">
+                          <Highlight text={it.name} q={q} />
+                        </h2>
+                        <p className="text-sm text-muted-foreground">
+                          Precio sugerido para el último registro disponible.
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-3xl font-bold tracking-tight text-destructive md:text-4xl">
+                          {fmtMoney(it.price)}
+                        </div>
+                        <div className="text-xs text-muted-foreground">Precio venta</div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </section>
         </div>
       </div>
-    </div>
 
       <Dialog
         open={scannerOpen}

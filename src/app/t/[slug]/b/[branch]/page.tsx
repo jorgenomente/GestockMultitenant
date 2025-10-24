@@ -274,9 +274,8 @@ export default async function BranchDashboard({ params }: { params: Promise<Para
         severity,
       } satisfies UpcomingExpiration;
     })
-    .filter(
-      (item): item is UpcomingExpiration => Boolean(item) && item.daysLeft >= 0 && item.daysLeft <= 3
-    )
+    .filter((item): item is UpcomingExpiration => item !== null)
+    .filter((item) => item.daysLeft >= 0 && item.daysLeft <= 3)
     .sort((a, b) => a.daysLeft - b.daysLeft)
     .slice(0, 6);
 
