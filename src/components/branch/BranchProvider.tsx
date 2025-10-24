@@ -17,7 +17,7 @@ type BranchContextValue = {
   setCurrentBranch: (slug: string) => void;
 };
 
-const BranchContext = React.createContext<BranchContextValue | undefined>(undefined);
+export const BranchContext = React.createContext<BranchContextValue | undefined>(undefined);
 
 function extractBranchFromPath(pathname: string | null, tenant: string | null) {
   if (!pathname || !tenant) return null;

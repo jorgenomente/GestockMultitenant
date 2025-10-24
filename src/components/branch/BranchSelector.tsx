@@ -55,9 +55,9 @@ export default function BranchSelector() {
   return (
     <div className="border-b border-border/60 bg-card/95 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-end gap-3 px-4 py-3">
-        <label className="text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+        <span className="text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
           Sucursal
-        </label>
+        </span>
         <Select value={currentValue} onValueChange={handleChange}>
           <SelectTrigger className="w-52 rounded-lg border border-border/70 bg-card text-sm font-medium text-foreground shadow-[0_8px_20px_-16px_rgba(31,31,31,0.4)] focus:border-ring focus:ring-2 focus:ring-ring/30 focus:ring-offset-2 focus:ring-offset-card">
             <SelectValue placeholder="Seleccionar sucursal" />

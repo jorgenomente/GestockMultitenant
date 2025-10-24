@@ -1,0 +1,260 @@
+*** Begin Patch
+*** Update File: src/components/mobile/PaymentsPageClient.tsx
+@@
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Proveedores</DialogTitle>
+              <DialogDescription>
+                Listado de proveedores vinculados a la sucursal y formulario para sumar nuevos.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-neutral-700">Registrados</h3>
+                  <div className="flex items-center gap-2">
+                    {providersLoading && <span className="text-xs text-neutral-400">Cargando...</span>}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (showProviderForm) {
+                          resetProviderForm();
+                          setShowProviderForm(false);
+                          setProviderSuccess(null);
+                          setProvidersError(null);
+                        } else {
+                          resetProviderForm();
+                          setShowProviderForm(true);
+                          setProviderSuccess(null);
+                          setProvidersError(null);
+                        }
+                      }}
+                    >
+                      {showProviderForm ? "Ocultar formulario" : "Agregar proveedor"}
+                    </Button>
+                  </div>
+                </div>
+                {providersError && (
+                  <p className="text-sm text-rose-600">{providersError}</p>
+                )}
+                {providerSuccess && !showProviderForm && (
+                  <p className="text-sm text-emerald-600">{providerSuccess}</p>
+                )}
+                <ScrollArea className="h-64 rounded-md border">
+                  <div className="divide-y">
+                    {providers.length === 0 && !providersLoading && (
+                      <p className="p-4 text-sm text-neutral-500">
+                        Todavía no agregaste proveedores.
+                      </p>
+                    )}
+                    {providers.map((provider) => {
+                      const config = parseProviderConfig(provider);
+                      const termsLabel = config.days ? `${config.days} días` : null;
+                      const dayLabel = config.dayOfWeek ? capitalize(config.dayOfWeek) : null;
+                      return (
+                        <article key={provider.id} className="space-y-2 p-4 text-sm">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h4 className="font-medium text-neutral-900">{provider.name}</h4>
+                              <dl className="mt-1 space-y-1 text-neutral-600">
+                                {provider.alias && (
+                                  <div>
+                                    <dt className="uppercase tracking-wide text-[10px] text-neutral-400">Alias / Cuenta</dt>
+                                    <dd>{provider.alias}</dd>
+                                  </div>
+                                )}
+                                {termsLabel && (
+                                  <div>
+                                    <dt className="uppercase tracking-wide text-[10px] text-neutral-400">Plazo</dt>
+                                    <dd>{termsLabel}</dd>
+                                  </div>
+                                )}
+                                {dayLabel && (
+                                  <div>
+                                    <dt className="uppercase tracking-wide text-[10px] text-neutral-400">Día de pago</dt>
+                                    <dd>{dayLabel}</dd>
+                                  </div>
+                                )}
+                                {provider.contact_info && (
+                                  <div>
+                                    <dt className="uppercase tracking-wide text-[10px] text-neutral-400">Contacto</dt>
+                                    <dd>{provider.contact_info}</dd>
+                                  </div>
+                                )}
+                              </dl>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleEditProvider(provider)}
+                              >
+                                Editar
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => handleDeleteProvider(provider)}
+                                disabled={deletingProviderId === provider.id}
+                              >
+                                {deletingProviderId === provider.id ? "Eliminando..." : "Eliminar"}
+                              </Button>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              {showProviderForm ? (
+                <form className="space-y-3" onSubmit={handleSubmitProvider}>
+                  <h3 className="text-sm font-medium text-neutral-700">
+                    {editingProviderId ? "Editar proveedor" : "Agregar proveedor"}
+                  </h3>
+                <div className="space-y-1">
+                  <Label htmlFor="provider-name">Nombre</Label>
+                  <Input
+                    id="provider-name"
+                    value={providerForm.name}
+                    onChange={(event) =>
+                      setProviderForm((prev) => ({ ...prev, name: event.target.value }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="provider-alias">Alias o número de cuenta</Label>
+                  <Input
+                    id="provider-alias"
+                    value={providerForm.alias}
+                    onChange={(event) =>
+                      setProviderForm((prev) => ({ ...prev, alias: event.target.value }))
+                    }
+                    placeholder="ALIAS.EJEMPLO" 
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="provider-days">Plazo (días)</Label>
+                  <Input
+                    id="provider-days"
+                    type="number"
+                    min={0}
+                    value={providerForm.days}
+                    onChange={(event) =>
+                      setProviderForm((prev) => ({ ...prev, days: event.target.value }))
+                    }
+                    placeholder="Ej: 30"
+                  />
+                  <p className="text-[11px] text-neutral-500">
+                    Si preferís pagar por día fijo, dejá este campo vacío.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label>Día de pago (opcional)</Label>
+                  <Select
+                    value={providerForm.paymentDay}
+                    onValueChange={(value) =>
+                      setProviderForm((prev) => ({ ...prev, paymentDay: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccioná un día" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DAYS_OF_WEEK.map((day) => (
+                        <SelectItem key={day} value={day}>
+                          {day}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Prioridad</Label>
+                  <div className="flex flex-col gap-1 text-sm text-neutral-600">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="provider-priority"
+                        value="days"
+                        checked={providerForm.priority === "days"}
+                        onChange={() => setProviderForm((prev) => ({ ...prev, priority: "days" }))}
+                      />
+                      Usar plazo de pago
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="provider-priority"
+                        value="day"
+                        checked={providerForm.priority === "day"}
+                        onChange={() => setProviderForm((prev) => ({ ...prev, priority: "day" }))}
+                      />
+                      Usar día fijo de pago
+                    </label>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="provider-contact">Información de contacto</Label>
+                  <textarea
+                    id="provider-contact"
+                    value={providerForm.contactInfo}
+                    onChange={(event) =>
+                      setProviderForm((prev) => ({ ...prev, contactInfo: event.target.value }))
+                    }
+                    rows={3}
+                    placeholder="Nombre, teléfono, email"
+                    className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                  />
+                </div>
+                {providersError && !savingProvider && (
+                  <p className="text-sm text-rose-600">{providersError}</p>
+                )}
+                  {providerSuccess && (
+                    <p className="text-sm text-emerald-600">{providerSuccess}</p>
+                  )}
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        resetProviderForm();
+                        setShowProviderForm(false);
+                      }}
+                      disabled={savingProvider}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button type="submit" disabled={savingProvider}>
+                      {savingProvider
+                        ? "Guardando..."
+                        : editingProviderId
+                        ? "Guardar cambios"
+                        : "Agregar proveedor"}
+                    </Button>
+                  </div>
+                </form>
+              ) : (
+                <div className="flex h-full items-center justify-center rounded-lg border border-dashed px-4 py-6 text-center text-sm text-neutral-500">
+                  <div className="space-y-3">
+                    <p>
+                      Seleccioná un proveedor de la lista para editarlo o presioná el botón para agregar uno nuevo.
+                    </p>
+                    <Button
+                      onClick={() => {
+                        resetProviderForm();
+                        setShowProviderForm(true);
+                      }}
+                    >
+                      Agregar proveedor
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+
+*** End Patch
