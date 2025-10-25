@@ -10,6 +10,8 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils"; // opcional; si no lo tenés, quitá 'cn' y usa className directo
 
+type RoleOption = "owner" | "admin" | "staff";
+
 export default function MembersSection() {
   const { slug } = useParams<{ slug: string }>();
   const { data, isLoading, error } = useMembers(slug);
@@ -17,13 +19,20 @@ export default function MembersSection() {
 
   // form
   const [userId, setUserId] = useState("");
-  const [role, setRole] = useState<"owner" | "admin" | "staff">("staff");
+  const [role, setRole] = useState<RoleOption>("staff");
   const [branchIds, setBranchIds] = useState("");
+
+  const copy = (text: string) => navigator.clipboard?.writeText(text).catch(() => {});
 
   const handleAssign = async () => {
     const ids = branchIds.split(",").map(s => s.trim()).filter(Boolean);
-    await upsert.mutateAsync({ userId, role, branchIds: ids.length ? ids : [] });
-    setUserId(""); setBranchIds("");
+    await upsert.mutateAsync({
+      userId,
+      role,
+      branchIds: ids.length ? ids : [],
+    });
+    setUserId("");
+    setBranchIds("");
   };
 
   return (
@@ -33,7 +42,7 @@ export default function MembersSection() {
       {/* Form */}
       <div className="flex gap-2">
         <Input placeholder="user_id (UUID)" value={userId} onChange={(e) => setUserId(e.target.value)} />
-        <Select value={role} onValueChange={(v) => setRole(v as any)}>
+        <Select value={role} onValueChange={(value) => setRole(value as RoleOption)}>
           <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="owner">owner</SelectItem>
@@ -88,7 +97,7 @@ export default function MembersSection() {
                   <span className="truncate">{m.user_id}</span>
                   <button
                     className="underline"
-                    onClick={() => navigator.clipboard.writeText(m.user_id)}
+                    onClick={() => copy(m.user_id)}
                   >
                     copiar id
                   </button>

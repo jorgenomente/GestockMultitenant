@@ -129,7 +129,20 @@ const normKey = (s: string) =>
 const makeKey = (base: string, suffix: string | null) =>
   suffix ? `${base}:${suffix}` : base;
 
-function toEpochMs(v: any): number | null {
+const isVersionError = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "name" in error && (error as { name?: string }).name === "VersionError";
+
+const extractErrorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof Error && typeof error.message === "string" && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+  return fallback;
+};
+
+function toEpochMs(v: unknown): number | null {
   if (v == null || v === "") return null;
   if (typeof v === "number") {
     const d = XLSX.SSF.parse_date_code(v);
@@ -145,7 +158,7 @@ function toEpochMs(v: any): number | null {
     const s = v.replaceAll(".", "/").replaceAll("-", "/").trim();
     const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
     if (m) {
-      let [_, dd, mm, yyyy] = m;
+      const [, dd, mm, yyyy] = m;
       let year = parseInt(yyyy, 10);
       if (year < 100) year += 2000;
       return Date.UTC(year, parseInt(mm, 10) - 1, parseInt(dd, 10), 12);
@@ -153,12 +166,6 @@ function toEpochMs(v: any): number | null {
     return null;
   }
   return null;
-}
-function ab2b64(buf: ArrayBuffer) {
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
 }
 function b642ab(b64: string) {
   const bin = atob(b64);
@@ -280,8 +287,8 @@ async function idbOpenSmart(): Promise<IDBDatabase> {
     }
 
     return db;
-  } catch (err: any) {
-    if (err?.name === "VersionError") {
+  } catch (err: unknown) {
+    if (isVersionError(err)) {
       return await new Promise<IDBDatabase>((resolve, reject) => {
         const req = indexedDB.open(IDB_DB_NAME);
         req.onsuccess = () => resolve(req.result);
@@ -303,7 +310,7 @@ async function idbGet<T = unknown>(key: string): Promise<T | undefined> {
   });
 }
 
-async function idbSet(key: string, value: any): Promise<void> {
+async function idbSet<T>(key: string, value: T): Promise<void> {
   const db = await idbOpenSmart();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, "readwrite");
@@ -329,11 +336,11 @@ async function idbDel(key: string): Promise<void> {
 async function parseVentasArrayBuffer(buf: ArrayBuffer): Promise<Map<string, SalesRow[]>> {
   const wb = XLSX.read(buf, { type: "array" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  const raw = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as any[];
+  const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
 
   const parsed: SalesRow[] = [];
   for (const r of raw) {
-    const name = r["ARTÍCULO"] ?? r["ARTICULO"] ?? r["Artículo"] ?? "";
+    const name = (r["ARTÍCULO"] ?? r["ARTICULO"] ?? r["Artículo"] ?? "") as string;
     const qtyV = r["CANTIDAD"] ?? r["Cantidad"] ?? 0;
     const dateV = r["HORA"] ?? r["Hora"] ?? r["FECHA"] ?? "";
     const subtotalV = r["SUBTOTAL"] ?? r["Subtotal"] ?? r["Importe"] ?? null;
@@ -531,7 +538,7 @@ function useSharedSales(
               setLoading(false);
               return;
             }
-          } catch (remoteErr: any) {
+          } catch (remoteErr: unknown) {
             console.warn("No se pudo cargar ventas remotas", remoteErr);
           }
         }
@@ -578,8 +585,8 @@ function useSharedSales(
       const map = await parseVentasArrayBuffer(buf);
       setByProduct(map);
       setSource({ kind: "default", meta: { storage: "default" } });
-    } catch (e: any) {
-      setError(e?.message || "Error cargando ventas");
+    } catch (error: unknown) {
+      setError(extractErrorMessage(error, "Error cargando ventas"));
     } finally {
       setLoading(false);
     }
@@ -615,9 +622,10 @@ function useSharedSales(
 
       bcRef.current?.postMessage({ type: "sales-updated" });
       window.alert("Ventas actualizadas y persistidas (disponibles al recargar y en otras pestañas).");
-    } catch (e: any) {
-      setError(e?.message || "No se pudo importar el archivo de ventas.");
-      window.alert("No se pudo importar el archivo de ventas.");
+    } catch (error: unknown) {
+      const message = extractErrorMessage(error, "No se pudo importar el archivo de ventas.");
+      setError(message);
+      window.alert(message);
     } finally {
       setLoading(false);
     }
@@ -638,8 +646,8 @@ function useSharedSales(
       setSource({ kind: "default", meta: { storage: "default" } });
 
       bcRef.current?.postMessage({ type: "sales-cleared" });
-    } catch (e: any) {
-      setError(e?.message || "No se pudo volver a la fuente por defecto.");
+    } catch (error: unknown) {
+      setError(extractErrorMessage(error, "No se pudo volver a la fuente por defecto."));
     } finally {
       setLoading(false);
     }
@@ -739,7 +747,11 @@ export default function EstadisticaPage() {
 
   React.useEffect(() => {
     if (!hydrated) return;
-    try { localStorage.setItem(uiKey, JSON.stringify(ui)); } catch {}
+    try {
+      localStorage.setItem(uiKey, JSON.stringify(ui));
+    } catch (err) {
+      console.warn("No se pudo persistir el estado de estadísticas", err);
+    }
   }, [ui, hydrated, uiKey]);
 
   const selectedName = ui.selectedName;
@@ -756,6 +768,12 @@ export default function EstadisticaPage() {
 
   const [query, setQuery] = React.useState("");
   const [openDropdown, setOpenDropdown] = React.useState(false);
+
+  const productInputId = React.useId();
+  const fromInputId = React.useId();
+  const toInputId = React.useId();
+  const granularitySelectId = React.useId();
+  const columnsSliderId = React.useId();
 
   const productOptions = React.useMemo(() => {
     const names: string[] = [];
@@ -1076,11 +1094,17 @@ export default function EstadisticaPage() {
   const canShowStats = Boolean(tenantId && currentBranch);
 
   const selectedId = normKey(selectedName);
-  const rows = byProduct.get(selectedId) ?? [];
-  const stats: Stats = React.useMemo(
-    () => (rows.length ? computeStats(rows) : { avg4w: 0, sum2w: 0, sum30d: 0 }),
+  const rows = React.useMemo(() => {
+    const mapRows = byProduct.get(selectedId);
+    return mapRows ?? [];
+  }, [byProduct, selectedId]);
+  const stats = React.useMemo<Stats>(
+    () =>
+      rows.length
+        ? computeStats(rows)
+        : { avg4w: 0, sum2w: 0, sum30d: 0, lastUnitPrice: undefined, lastDate: undefined },
     [rows]
-  ) as Stats;
+  );
 
   function setQuick(days: number) {
     const end = new Date(to + "T00:00:00");
@@ -1221,8 +1245,9 @@ export default function EstadisticaPage() {
             <CardContent className="p-3 space-y-4">
               <div className="grid gap-3 lg:grid-cols-12 lg:items-end">
             <div className="relative lg:col-span-4 min-w-0">
-              <label className="text-sm font-medium">Elegí un artículo</label>
+              <label className="text-sm font-medium" htmlFor={productInputId}>Elegí un artículo</label>
               <Input
+                id={productInputId}
                 className="w-full"
                 placeholder="Buscar producto…"
                 value={selectedName || query}
@@ -1271,20 +1296,21 @@ export default function EstadisticaPage() {
             </div>
 
             <div className="min-w-0 lg:col-span-2">
-              <label className="text-sm font-medium">Desde</label>
-              <Input className="w-full" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <label className="text-sm font-medium" htmlFor={fromInputId}>Desde</label>
+              <Input id={fromInputId} className="w-full" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
             </div>
 
             <div className="min-w-0 lg:col-span-2">
-              <label className="text-sm font-medium">Hasta</label>
-              <Input className="w-full" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <label className="text-sm font-medium" htmlFor={toInputId}>Hasta</label>
+              <Input id={toInputId} className="w-full" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
-              <label className="text-sm font-medium">Granularidad</label>
+              <label className="text-sm font-medium" htmlFor={granularitySelectId}>Granularidad</label>
               <select
+                id={granularitySelectId}
                 className="border rounded-md p-2 text-sm bg-background"
                 value={gran}
                 onChange={(e) => setGran(e.target.value as Granularity)}
@@ -1295,9 +1321,16 @@ export default function EstadisticaPage() {
               </select>
             </div>
             <div className="flex items-center gap-2 min-w-0">
-              <label className="text-sm font-medium">Columnas</label>
+              <label className="text-sm font-medium" htmlFor={columnsSliderId}>Columnas</label>
               <div className="w-48">
-                <Slider value={[colCount]} min={1} max={15} step={1} onValueChange={(v) => setColCount(v[0])} />
+                <Slider
+                  id={columnsSliderId}
+                  value={[colCount]}
+                  min={1}
+                  max={15}
+                  step={1}
+                  onValueChange={(v) => setColCount(v[0])}
+                />
               </div>
               <span className="text-xs text-muted-foreground">{colCount}</span>
             </div>

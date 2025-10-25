@@ -30,7 +30,9 @@ export async function GET() {
         await s.storage.from(bucket).remove([pingKey]);
       }
     }
-  } catch {}
+  } catch (error: unknown) {
+    console.error("Supabase storage health check failed", error);
+  }
 
   return NextResponse.json({
     envOk,

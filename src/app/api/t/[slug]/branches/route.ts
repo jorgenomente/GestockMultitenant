@@ -54,9 +54,10 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
 
     return NextResponse.json({ branch: inserted }, { status: 201 });
-  } catch (e: any) {
-    console.error("POST /api/t/[slug]/branches", e);
-    return NextResponse.json({ error: e?.message ?? "Unexpected server error" }, { status: 500 });
+  } catch (error: unknown) {
+    console.error("POST /api/t/[slug]/branches", error);
+    const message = error instanceof Error ? error.message : "Unexpected server error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -77,7 +78,8 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     return NextResponse.json({ branches: data ?? [] });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Unexpected server error" }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unexpected server error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

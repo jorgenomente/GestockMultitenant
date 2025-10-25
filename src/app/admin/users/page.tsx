@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 /* =================== Tipos =================== */
 type AuthUser = {
@@ -17,6 +17,8 @@ type CreatePayload = {
   branch_id?: string;
 };
 
+type RoleOption = "" | "owner" | "admin" | "staff";
+
 /* =================== Constantes =================== */
 const EMAIL_SUFFIX = "tn"; // 👈 debe coincidir con el login y con /api/admin/users
 
@@ -30,7 +32,12 @@ export default function AdminUsersPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [branchId, setBranchId] = useState("");
-  const [role, setRole] = useState<"owner" | "admin" | "staff" | "">("");
+  const [role, setRole] = useState<RoleOption>("");
+
+  const usernameId = useId();
+  const passwordId = useId();
+  const roleId = useId();
+  const branchIdInput = useId();
 
   const canSubmit =
     username.trim().length >= 2 && password.length >= 4 && !submitting;
@@ -78,7 +85,7 @@ export default function AdminUsersPage() {
       };
       if (branchId && role) {
         payload.branch_id = branchId.trim();
-        payload.role = role as "owner" | "admin" | "staff";
+        payload.role = role;
       }
 
       const res = await fetch("/api/admin/users", {
@@ -144,8 +151,11 @@ export default function AdminUsersPage() {
         <h2 className="font-medium">Crear usuario</h2>
         <div className="grid grid-cols-1 gap-3">
           <div className="grid grid-cols-1 gap-2">
-            <label className="text-sm font-medium">Username</label>
+            <label className="text-sm font-medium" htmlFor={usernameId}>
+              Username
+            </label>
             <input
+              id={usernameId}
               className="border rounded p-2"
               placeholder="ej: cab1"
               value={username}
@@ -161,8 +171,11 @@ export default function AdminUsersPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-2">
-            <label className="text-sm font-medium">Contraseña</label>
+            <label className="text-sm font-medium" htmlFor={passwordId}>
+              Contraseña
+            </label>
             <input
+              id={passwordId}
               className="border rounded p-2"
               placeholder="mín. 4 caracteres"
               value={password}
@@ -175,11 +188,14 @@ export default function AdminUsersPage() {
           {/* Opcional: role + branch */}
           <div className="grid grid-cols-2 gap-3">
             <div className="grid grid-cols-1 gap-2">
-              <label className="text-sm font-medium">Rol (opcional)</label>
+              <label className="text-sm font-medium" htmlFor={roleId}>
+                Rol (opcional)
+              </label>
               <select
+                id={roleId}
                 className="border rounded p-2"
                 value={role}
-                onChange={(e) => setRole(e.target.value as any)}
+                onChange={(event) => setRole(event.target.value as RoleOption)}
               >
                 <option value="">(sin rol)</option>
                 <option value="staff">staff</option>
@@ -189,8 +205,11 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-2">
-              <label className="text-sm font-medium">Branch ID (UUID)</label>
+              <label className="text-sm font-medium" htmlFor={branchIdInput}>
+                Branch ID (UUID)
+              </label>
               <input
+                id={branchIdInput}
                 className="border rounded p-2"
                 placeholder="opcional"
                 value={branchId}
@@ -257,7 +276,9 @@ export default function AdminUsersPage() {
 }
 
 /* =================== Utils =================== */
-async function safeJson(res: Response): Promise<any | null> {
+type ErrorResponse = { error?: string };
+
+async function safeJson(res: Response): Promise<ErrorResponse | null> {
   try {
     return await res.json();
   } catch {

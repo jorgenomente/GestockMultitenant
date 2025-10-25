@@ -76,6 +76,16 @@ function parseArticleProvider(raw: string): { article: string; provider: string 
   return { article: left, provider: right || null };
 }
 
+type TagsInputProps = {
+  value: string[];
+  // eslint-disable-next-line no-unused-vars
+  onChange(value: string[]): void;
+  placeholder?: string;
+  hint?: React.ReactNode;
+  providerOptions?: string[];
+  inputId?: string;
+};
+
 /* ========= TagsInput con Autocomplete de proveedor (@) ========= */
 function TagsInput({
   value,
@@ -83,16 +93,12 @@ function TagsInput({
   placeholder = "Escribe y Enter…",
   hint,
   providerOptions = [],
-}: {
-  value: string[];
-  onChange: (next: string[]) => void;
-  placeholder?: string;
-  hint?: React.ReactNode;
-  providerOptions?: string[];
-}) {
+  inputId,
+}: TagsInputProps) {
   const [text, setText] = React.useState("");
   const [openSug, setOpenSug] = React.useState(false);
   const [activeIdx, setActiveIdx] = React.useState(0);
+  const listboxId = React.useId();
 
   // Detectar si estamos después de '@'
   const atPos = text.indexOf("@");
@@ -183,6 +189,7 @@ function TagsInput({
           className="flex-1 min-w-[120px] outline-none text-sm"
           placeholder={placeholder}
           value={text}
+          id={inputId}
           onChange={(e) => {
             setText(e.target.value);
             // mostrar sugerencias cuando hay '@' y prefijo
@@ -194,14 +201,15 @@ function TagsInput({
           onKeyDown={onKeyDown}
           aria-autocomplete="list"
           aria-expanded={openSug}
-          aria-controls="sug-listbox"
+          aria-controls={listboxId}
+          role="combobox"
         />
       </div>
 
       {/* Sugerencias */}
       {openSug && filteredSuggestions.length > 0 && (
         <ul
-          id="sug-listbox"
+          id={listboxId}
           role="listbox"
           className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-white shadow-md"
         >
@@ -275,7 +283,7 @@ export default function ClientsPage() {
       const ids = (cData ?? []).map((c) => c.id);
 
       const ordersByClient: Record<string, Array<ClientOrder & { items: ClientOrderItem[]; comments: ClientOrderComment[] }>> = {};
-      let oData: any[] = [];
+      let oData: ClientOrder[] = [];
       if (ids.length) {
         const { data, error } = await sb
           .from("client_orders")
@@ -285,7 +293,7 @@ export default function ClientsPage() {
           .in("client_id", ids)
           .order("created_at", { ascending: false });
         if (error) throw error;
-        oData = data ?? [];
+        oData = (data ?? []) as ClientOrder[];
       }
 
       const orderIds = oData.map((o) => o.id);
@@ -422,9 +430,10 @@ export default function ClientsPage() {
 
       form.reset({ name: "", phone: "", articles: [] });
       await fetchData();
-    } catch (e: any) {
-      console.error(e);
-      alert(`No se pudo guardar el pedido: ${e?.message ?? "sin detalle"}`);
+    } catch (error: unknown) {
+      console.error(error);
+      const message = error instanceof Error ? error.message : "sin detalle";
+      alert(`No se pudo guardar el pedido: ${message}`);
     } finally {
       setSaving(false);
     }
@@ -536,7 +545,9 @@ export default function ClientsPage() {
               )}
 
               <div className="space-y-1">
-                <label className="text-sm font-medium">Artículos (lista)</label>
+                <label className="text-sm font-medium" htmlFor="client-articles-input">
+                  Artículos (lista)
+                </label>
                 <TagsInput
                   value={form.watch("articles")}
                   onChange={(arr) => form.setValue("articles", arr, { shouldValidate: true })}
@@ -547,6 +558,7 @@ export default function ClientsPage() {
                     </>
                   }
                   providerOptions={providerList}
+                  inputId="client-articles-input"
                 />
                 {form.formState.errors.articles && (
                   <p className="text-xs text-red-600">
@@ -637,6 +649,17 @@ export default function ClientsPage() {
 
 /* ========= Subcomponentes ========= */
 
+type ClientCardProps = {
+  client: ClientWithOrders;
+  sb: SupabaseClient;
+  onChange(): Promise<void>;
+  // eslint-disable-next-line no-unused-vars
+  onDeleteClient(clientId: string): Promise<void>;
+  providerList: string[];
+  tenantId: string;
+  branchId: string;
+};
+
 function ClientCard({
   client,
   sb,
@@ -645,15 +668,7 @@ function ClientCard({
   providerList,
   tenantId,
   branchId,
-}: {
-  client: ClientWithOrders;
-  sb: SupabaseClient;
-  onChange: () => Promise<void>;
-  onDeleteClient: (clientId: string) => Promise<void>;
-  providerList: string[];
-  tenantId: string;
-  branchId: string;
-}) {
+}: ClientCardProps) {
   const [orderItems, setOrderItems] = React.useState<string[]>([]);
 
   // === Edición inline de nombre/teléfono ===
@@ -661,6 +676,14 @@ function ClientCard({
   const [editName, setEditName] = React.useState(client.name);
   const [editPhone, setEditPhone] = React.useState(client.phone ?? "");
   const [savingClient, setSavingClient] = React.useState(false);
+  const editNameInputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (editMode) {
+      editNameInputRef.current?.focus();
+      editNameInputRef.current?.select();
+    }
+  }, [editMode]);
 
   const normalizePhone = (v: string) => v.replace(/[^\d+()\-\s]/g, "").replace(/\s+/g, " ");
 
@@ -786,7 +809,7 @@ function ClientCard({
                   onKeyDown={onKeyDownEdit}
                   placeholder="Nombre"
                   className="h-8 text-sm"
-                  autoFocus
+                  ref={editNameInputRef}
                 />
                 <Input
                   value={editPhone}

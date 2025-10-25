@@ -32,12 +32,10 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
     }
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    console.error("Route crash:", e);
-    return NextResponse.json(
-      { error: e?.message ?? "Unexpected server error" },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    console.error("Route crash:", error);
+    const message = error instanceof Error ? error.message : "Unexpected server error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 

@@ -27,9 +27,10 @@ export async function DELETE(
     }
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Error inesperado";
     return NextResponse.json(
-      { error: e?.message ?? "Error inesperado" },
+      { error: message },
       { status: 500 }
     );
   }

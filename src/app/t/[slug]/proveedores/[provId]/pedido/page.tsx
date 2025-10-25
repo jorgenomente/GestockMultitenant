@@ -353,14 +353,24 @@ type Stats = { avg4w: number; sum2w: number; sum30d: number; lastQty?: number; l
 
 type SortMode = "alpha_asc" | "alpha_desc" | "avg_desc" | "avg_asc";
 
+type SnapshotItem = {
+  product_name: string;
+  display_name?: string | null; // 👈 NUEVO
+  qty: number;
+  unit_price: number;
+  group_name: string | null;
+  pack_size?: number | null;
+  stock_qty?: number | null;
+  stock_updated_at?: string | null;
+  previous_qty?: number | null;
+  previous_qty_updated_at?: string | null;
+  price_updated_at?: string | null;
+  tenant_id?: string | null;
+  branch_id?: string | null;
+};
+
 type SnapshotPayload = {
-  items: Array<{
-    product_name: string;
-    display_name?: string | null; // 👈 NUEVO
-    qty: number;
-    unit_price: number;
-    group_name: string | null;
-  }>;
+  items: SnapshotItem[];
 };
 
 type SnapshotRow = {
@@ -2870,66 +2880,126 @@ async function exportOrderAsXlsx() {
   }
 
   async function saveSnapshot() {
-  if (!order) return;
-  try {
-    const payload: SnapshotPayload = {
-      items: items
-  .filter((it) => it.product_name !== GROUP_PLACEHOLDER)
-  .map((it) => ({
-    product_name: it.product_name,
-    display_name: it.display_name ?? null,   // 👈 NUEVO
-    qty: it.qty,
-    unit_price: it.unit_price,
-    group_name: it.group_name,
-  })),
+    if (!order) return;
+    try {
+      const snapshotItems: SnapshotItem[] = items
+        .filter((it) => it.product_name !== GROUP_PLACEHOLDER)
+        .map((it) => ({
+          product_name: it.product_name,
+          display_name: it.display_name ?? null,
+          qty: it.qty,
+          unit_price: it.unit_price,
+          group_name: it.group_name,
+          pack_size: it.pack_size ?? null,
+          stock_qty: it.stock_qty ?? null,
+          stock_updated_at: it.stock_updated_at ?? null,
+          previous_qty: it.previous_qty ?? null,
+          previous_qty_updated_at: it.previous_qty_updated_at ?? null,
+          price_updated_at: it.price_updated_at ?? null,
+          tenant_id: it.tenant_id ?? null,
+          branch_id: it.branch_id ?? null,
+        }));
 
-    };
-    const title = `${providerName} - ${isoToday()}`;
+      const payload: SnapshotPayload = { items: snapshotItems };
+      const title = `${providerName} - ${isoToday()}`;
 
-    // Aseguramos que los totales estén al día
-    const totalNow = items.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
-    const qtyNow   = items.reduce((a, it) => a + (it.qty || 0), 0);
+      // Aseguramos que los totales estén al día
+      const totalNow = items.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
+      const qtyNow = items.reduce((a, it) => a + (it.qty || 0), 0);
 
-    // 1) Guardar snapshot
-    const { error } = await supabase
-      .from(TABLE_SNAPSHOTS)
-      .insert([{ order_id: order.id, title, snapshot: payload }])
-      .select("*")
-      .single();
-    if (error) throw error;
+      // 1) Guardar snapshot
+      const { error } = await supabase
+        .from(TABLE_SNAPSHOTS)
+        .insert([{ order_id: order.id, title, snapshot: payload }])
+        .select("*")
+        .single();
+      if (error) throw error;
 
-    // 2) Sincronizar resumen (por si aún no se había recalculado)
-    await saveOrderSummary(totalNow, qtyNow);
+      // 2) Sincronizar resumen (por si aún no se había recalculado)
+      await saveOrderSummary(totalNow, qtyNow);
 
-    await loadSnapshots();
-    setHistoryOpen(true);
-  } catch (e: any) {
-    console.error(e);
-    alert(`No se pudo guardar en historial.\n${e?.message ?? ""}`);
+      await loadSnapshots();
+      setHistoryOpen(true);
+    } catch (e: any) {
+      console.error(e);
+      alert(`No se pudo guardar en historial.\n${e?.message ?? ""}`);
+    }
   }
-}
-
 
   async function openSnapshot(snap: SnapshotRow) {
     if (!order) return;
     const itemsPayload = (snap.snapshot?.items ?? []) as SnapshotPayload["items"];
     const { error: delErr } = await supabase.from(itemsTable).delete().eq("order_id", order.id);
-    if (delErr) { console.error(delErr); alert("No se pudo abrir la versión (borrado previo)."); return; }
-    
-const { data: inserted, error: insErr } = await supabase
-  .from(itemsTable)
-  .insert(itemsPayload.map((r) => ({
-    order_id: order.id,
-    product_name: r.product_name,
-    display_name: r.display_name ?? null,   // 👈 NUEVO
-    qty: r.qty,
-    unit_price: r.unit_price,
-    group_name: r.group_name,
-  })))
-  .select("*");
+    if (delErr) {
+      console.error(delErr);
+      alert("No se pudo abrir la versión (borrado previo).");
+      return;
+    }
 
+    type InsertableSnapshotItem = {
+      order_id: string;
+      product_name: string;
+      display_name: string | null;
+      qty: number;
+      unit_price: number;
+      group_name: string | null;
+      pack_size: number | null;
+      stock_qty: number | null;
+      stock_updated_at: string | null;
+      previous_qty: number | null;
+      previous_qty_updated_at: string | null;
+      price_updated_at: string | null;
+      tenant_id: string | null;
+      branch_id: string | null;
+    };
 
-    if (insErr) { console.error(insErr); alert("No se pudo abrir la versión (insert)."); return; }
+    const normalizeNullable = (value: string | null | undefined): string | null => {
+      if (typeof value !== "string") return null;
+      const trimmed = value.trim();
+      return trimmed.length ? trimmed : null;
+    };
+
+    const normalizedItems = itemsPayload.reduce<InsertableSnapshotItem[]>((acc, item) => {
+      const productName = (item.product_name || "").trim();
+      if (!productName || productName === GROUP_PLACEHOLDER) return acc;
+
+      acc.push({
+        order_id: order.id,
+        product_name: productName,
+        display_name: normalizeNullable(item.display_name),
+        qty: item.qty,
+        unit_price: item.unit_price,
+        group_name: normalizeNullable(item.group_name),
+        pack_size: item.pack_size ?? null,
+        stock_qty: item.stock_qty ?? null,
+        stock_updated_at: item.stock_updated_at ?? null,
+        previous_qty: item.previous_qty ?? null,
+        previous_qty_updated_at: item.previous_qty_updated_at ?? null,
+        price_updated_at: item.price_updated_at ?? null,
+        tenant_id: item.tenant_id ?? null,
+        branch_id: item.branch_id ?? null,
+      });
+      return acc;
+    }, []);
+
+    if (!normalizedItems.length) {
+      setItems([]);
+      await recomputeOrderTotal([]);
+      setHistoryOpen(false);
+      return;
+    }
+
+    const { data: inserted, error: insErr } = await supabase
+      .from(itemsTable)
+      .insert(normalizedItems)
+      .select("*");
+
+    if (insErr) {
+      console.error(insErr);
+      alert("No se pudo abrir la versión (insert).");
+      return;
+    }
+
     const newItems = (inserted as ItemRow[]) ?? [];
     setItems(newItems);
     await recomputeOrderTotal(newItems);

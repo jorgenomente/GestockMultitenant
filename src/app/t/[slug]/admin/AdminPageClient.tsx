@@ -15,7 +15,6 @@ import {
   Command, CommandList, CommandEmpty, CommandGroup, CommandItem, CommandInput,
 } from "@/components/ui/command";
 import { Checkbox } from "@/components/ui/checkbox";
-import { cn } from "@/lib/utils";
 
 /* =================== Tipos =================== */
 type Branch = { id: string; name: string; slug: string };
@@ -70,16 +69,49 @@ function slugify(s: string) {
     .replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
 }
 
+function safeParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function getErrorMessage(payload: unknown): string | undefined {
+  if (payload && typeof payload === "object" && "error" in payload) {
+    const { error } = payload as { error?: unknown };
+    if (typeof error === "string") return error;
+  }
+  return undefined;
+}
+
 /* ======= UI helpers: Combobox y MultiSelect ======= */
 type Option = { value: string; label: string; hint?: string };
+type CreateBranchResponse = { branch: Branch };
+type DeleteBranchResponse = { ok: boolean };
+type MembershipMutationResponse = {
+  tenant_id: string;
+  user_id: string;
+  role: MembershipRow["role"];
+  branch_ids: string[] | null;
+};
+type CreateUserResponse = { user: AuthUser; membership_error?: string };
+type DeleteUserResponse = { ok: boolean };
 
 function Combobox({
-  value, onChange, options, placeholder = "Buscar...", empty = "Sin resultados",
+  value,
+  onChange,
+  options,
+  placeholder = "Buscar...",
+  empty = "Sin resultados",
 }: {
-  value?: string; onChange: (v: string) => void; options: Option[];
-  placeholder?: string; empty?: string;
+  value?: string;
+  onChange?: unknown;
+  options: Option[];
+  placeholder?: string;
+  empty?: string;
 }) {
-  const selected = options.find(o => o.value === value);
+  const selected = options.find((option) => option.value === value);
   const [open, setOpen] = useState(false);
 
   return (
@@ -97,7 +129,14 @@ function Combobox({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="p-0 w-[--radix-popover-trigger-width]">
-        <Command filter={(v, s) => (s as string).toLowerCase().includes(v.toLowerCase()) ? 1 : 0}>
+        <Command
+          filter={(inputValue, itemValue) =>
+            typeof itemValue === "string" &&
+            itemValue.toLowerCase().includes(inputValue.toLowerCase())
+              ? 1
+              : 0
+          }
+        >
           <CommandInput placeholder="Escribe para filtrar…" />
           <CommandList>
             <CommandEmpty>{empty}</CommandEmpty>
@@ -106,7 +145,10 @@ function Combobox({
                 <CommandItem
                   key={o.value}
                   value={`${o.label} ${o.hint ?? ""}`}
-                  onSelect={() => { onChange(o.value); setOpen(false); }}
+                  onSelect={() => {
+                    if (typeof onChange === "function") onChange(o.value);
+                    setOpen(false);
+                  }}
                   className="flex items-center justify-between"
                 >
                   <span>{o.label}</span>
@@ -122,14 +164,23 @@ function Combobox({
 }
 
 function MultiSelect({
-  values, onChange, options, placeholder = "Seleccionar…",
+  values,
+  onChange,
+  options,
+  placeholder = "Seleccionar…",
 }: {
-  values: string[]; onChange: (v: string[]) => void; options: Option[]; placeholder?: string;
+  values: string[];
+  onChange?: unknown;
+  options: Option[];
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const toggle = (val: string) => {
-    if (values.includes(val)) onChange(values.filter(v => v !== val));
-    else onChange([...values, val]);
+    if (typeof onChange !== "function") return;
+    const nextValues = values.includes(val)
+      ? values.filter((current) => current !== val)
+      : [...values, val];
+    onChange(nextValues);
   };
 
   return (
@@ -139,10 +190,15 @@ function MultiSelect({
           <div className="flex gap-1 flex-wrap">
             {values.length === 0 ? (
               <span className="text-neutral-500">{placeholder}</span>
-            ) : values.map(v => {
-              const o = options.find(o => o.value === v);
-              return <Badge key={v} variant="secondary" className="rounded-full">{o?.label ?? v}</Badge>;
-            })}
+            ) :
+              values.map((valueId) => {
+                const option = options.find((candidate) => candidate.value === valueId);
+                return (
+                  <Badge key={valueId} variant="secondary" className="rounded-full">
+                    {option?.label ?? valueId}
+                  </Badge>
+                );
+              })}
           </div>
         </Button>
       </PopoverTrigger>
@@ -175,8 +231,8 @@ function MemberRow({
   onApply,
 }: {
   m: MembershipRow;
-  branchOptions: { value: string; label: string; hint?: string }[];
-  onApply: (args: { userId: string; role: MembershipRow["role"]; branchIds: string[] | null }) => void;
+  branchOptions: Option[];
+  onApply?: unknown;
 }) {
   const [editing, setEditing] = useState(false);
 
@@ -184,6 +240,8 @@ function MemberRow({
     m.branch_ids === null ? null : (m.branch_ids ?? [])
   );
   const [role, setRole] = useState<MembershipRow["role"]>(m.role);
+
+  const copy = useClipboard();
 
   // Sync local state when membership updates from server
   useEffect(() => {
@@ -205,7 +263,13 @@ function MemberRow({
       : ["(sin sucursales)"];
 
   const apply = () => {
-    onApply({ userId: m.user_id, role, branchIds: temp });
+    if (typeof onApply === "function") {
+      onApply({
+        userId: m.user_id,
+        role,
+        branchIds: temp,
+      });
+    }
     setEditing(false);
   };
 
@@ -282,7 +346,7 @@ function MemberRow({
           <span className="truncate">{m.user_id}</span>
           <button
             type="button"
-            onClick={() => navigator.clipboard.writeText(m.user_id)}
+            onClick={() => copy(m.user_id)}
             className="underline"
             title="Copiar user_id"
           >
@@ -322,10 +386,12 @@ export default function AdminPageClient({ slug }: AdminPageClientProps) {
     queryFn: async () => {
       const res = await fetch(`/api/t/${slug}/tenant`, { cache: "no-store" });
       const txt = await res.text();
-      let json: any = null;
-      try { json = JSON.parse(txt); } catch {}
+      const json = safeParseJson(txt);
       if (res.status === 404) return null;
-      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+      if (!res.ok) {
+        const message = getErrorMessage(json) ?? `HTTP ${res.status}`;
+        throw new Error(message);
+      }
       return json as { id: string; slug: string; name: string };
     },
   });
@@ -340,12 +406,14 @@ export default function AdminPageClient({ slug }: AdminPageClientProps) {
     queryFn: async () => {
       const res = await fetch(`/api/t/${slug}/branches`, { cache: "no-store" });
       const txt = await res.text();
-      let json: any = null;
-      try { json = JSON.parse(txt); } catch {}
+      const json = safeParseJson(txt);
       if (res.status === 404) return [];
-      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
-      const branches = (json?.branches ?? []) as Branch[];
-      return branches;
+      if (!res.ok) {
+        const message = getErrorMessage(json) ?? `HTTP ${res.status}`;
+        throw new Error(message);
+      }
+      const parsed = json as { branches?: Branch[] } | null;
+      return Array.isArray(parsed?.branches) ? parsed!.branches! : [];
     },
   });
 
@@ -356,10 +424,12 @@ export default function AdminPageClient({ slug }: AdminPageClientProps) {
     queryFn: async () => {
       const res = await fetch(`/api/t/${slug}/memberships`, { method: "GET", cache: "no-store" });
       const txt = await res.text();
-      let json: any = null;
-      try { json = JSON.parse(txt); } catch {}
-      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
-      return json as MembershipRow[];
+      const json = safeParseJson(txt);
+      if (!res.ok) {
+        const message = getErrorMessage(json) ?? `HTTP ${res.status}`;
+        throw new Error(message);
+      }
+      return (json as MembershipRow[]) ?? [];
     },
   });
 
@@ -375,12 +445,6 @@ export default function AdminPageClient({ slug }: AdminPageClientProps) {
   });
 
   /* --- Mapas --- */
-  const branchNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const b of branchesQ.data ?? []) map.set(b.id, b.name);
-    return map;
-  }, [branchesQ.data]);
-
   const userOptions: Option[] = useMemo(() => {
     const list = usersQ.data?.users ?? [];
     return list.map((u) => {
@@ -400,55 +464,55 @@ export default function AdminPageClient({ slug }: AdminPageClientProps) {
   }, [branchesQ.data]);
 
   /* =================== Mutations =================== */
-  const createBranch = useMutation<any, Error, BranchFormValues>({
+  const createBranch = useMutation<CreateBranchResponse, Error, BranchFormValues>({
     mutationFn: async (values) => {
       const res = await fetch(`/api/t/${slug}/branches`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 400)}`);
-      return res.json();
+      return res.json() as Promise<CreateBranchResponse>;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["branches", slug] }),
     onError: (err) => alert(err instanceof Error ? err.message : String(err)),
   });
 
-  const deleteBranch = useMutation<any, Error, string>({
+  const deleteBranch = useMutation<DeleteBranchResponse, Error, string>({
     mutationFn: async (branchId) => {
       const res = await fetch(`/api/t/${slug}/branches/${branchId}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 400)}`);
-      return res.json();
+      return res.json() as Promise<DeleteBranchResponse>;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["branches", slug] }),
     onError: (err) => alert(`No se pudo borrar: ${err instanceof Error ? err.message : String(err)}`),
   });
 
-  const upsertMember = useMutation<any, Error, MemberFormValues>({
+  const upsertMember = useMutation<MembershipMutationResponse, Error, MemberFormValues>({
     mutationFn: async (values) => {
       const res = await fetch(`/api/t/${slug}/memberships`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values),
       });
       if (!res.ok) throw new Error(await res.text());
-      return res.json();
+      return res.json() as Promise<MembershipMutationResponse>;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["memberships", slug] }),
   });
 
-  const createUser = useMutation<any, Error, CreateUserValues>({
+  const createUser = useMutation<CreateUserResponse, Error, CreateUserValues>({
     mutationFn: async (values) => {
       const res = await fetch(`/api/t/${slug}/users`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values),
       });
       if (!res.ok && res.status !== 207) throw new Error(await res.text());
-      return res.json();
+      return res.json() as Promise<CreateUserResponse>;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users", slug] }),
   });
 
-  const deleteUser = useMutation<any, Error, string>({
+  const deleteUser = useMutation<DeleteUserResponse, Error, string>({
     mutationFn: async (userId) => {
       const res = await fetch(`/api/t/${slug}/users/${userId}`, { method: "DELETE" });
       if (!res.ok) throw new Error(await res.text());
-      return res.json();
+      return res.json() as Promise<DeleteUserResponse>;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users", slug] }),
   });
@@ -461,7 +525,7 @@ export default function AdminPageClient({ slug }: AdminPageClientProps) {
 
   const mf = useForm<MemberFormValues>({
     resolver: zodResolver(MemberFormSchema),
-    defaultValues: { userId: "" as any, role: "staff", branchIds: [] },
+    defaultValues: { userId: "", role: "staff", branchIds: [] },
   });
 
   const uf = useForm<CreateUserValues>({
@@ -543,7 +607,7 @@ export default function AdminPageClient({ slug }: AdminPageClientProps) {
                     <span className="text-xs text-neutral-500">({b.slug})</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => navigator.clipboard.writeText(b.id)} className="text-xs font-mono text-neutral-500 hover:text-neutral-700" title="Copiar ID">
+                    <button type="button" onClick={() => copy(b.id)} className="text-xs font-mono text-neutral-500 hover:text-neutral-700" title="Copiar ID">
                       {b.id.slice(0, 8)}… copiar
                     </button>
                     <button
@@ -609,7 +673,7 @@ export default function AdminPageClient({ slug }: AdminPageClientProps) {
                       {username && <div className="text-xs text-neutral-500 truncate">username: {username}</div>}
                     </div>
                     <div className="flex items-center gap-2">
-                      <button type="button" onClick={() => navigator.clipboard.writeText(u.id)} className="text-xs underline" title="Copiar user_id">
+                      <button type="button" onClick={() => copy(u.id)} className="text-xs underline" title="Copiar user_id">
                         copiar id
                       </button>
                       <button
@@ -662,7 +726,7 @@ export default function AdminPageClient({ slug }: AdminPageClientProps) {
               render={({ field }) => (
                 <div className="space-y-1">
                   <MultiSelect
-                    values={Array.isArray(field.value ?? []) ? field.value ?? [] : []}
+                    values={Array.isArray(field.value) ? field.value : []}
                     onChange={(vals) => field.onChange(vals)}
                     options={branchOptions}
                     placeholder="Sucursales (dejar vacío = ninguna)"
@@ -674,7 +738,7 @@ export default function AdminPageClient({ slug }: AdminPageClientProps) {
                     <Button type="button" variant="secondary" onClick={() => mf.setValue("branchIds", [])}>
                       Ninguna
                     </Button>
-                    <Button type="button" variant="secondary" onClick={() => mf.setValue("branchIds", null as any)}>
+                    <Button type="button" variant="secondary" onClick={() => mf.setValue("branchIds", null)}>
                       Todas
                     </Button>
                   </div>

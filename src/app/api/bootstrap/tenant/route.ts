@@ -36,7 +36,7 @@ export async function POST(req: Request) {
   } else {
     // Si falla, puede ser por unique_violation (slug ya existe) o por otra razón.
     // Código de Postgres para unique_violation = '23505'
-    const code = (insertRes as any).error?.code;
+    const code = insertRes.error?.code;
     if (code === "23505") {
       // Ya existe: lo buscamos por slug
       const getRes = await supabase

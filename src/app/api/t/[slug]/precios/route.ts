@@ -4,6 +4,7 @@ import {
   getSupabaseUserServerClient,
   getSupabaseServiceRoleClient,
 } from "@/lib/supabaseServer";
+import type { User } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";        // Service Role -> Node, no Edge
 export const dynamic = "force-dynamic"; // evita cache en endpoints con DB
@@ -16,6 +17,9 @@ const excelSerialToMs = (n: number) => Date.UTC(1899, 11, 30) + Math.round(n * 8
 const stripInvisibles = (s: string) => s.replace(NBSP_RX, " ");
 const normText = (s: unknown) =>
   !s ? "" : String(s).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+
+const catalogFields = ["name", "code", "barcode", "price", "updated"] as const;
+type CatalogField = (typeof catalogFields)[number];
 
 function headerMatches(header: string, alias: string) {
   const norm = (s: string) =>
@@ -84,6 +88,10 @@ type Catalog = {
   sourceKey?: string;
 };
 
+type SupabaseUserClient = Awaited<ReturnType<typeof getSupabaseUserServerClient>>;
+type TenantRow = { id: string; slug: string };
+type MembershipRole = "owner" | "admin" | "staff";
+
 const MIN_BARCODE_DIGITS_FOR_KEY = 8;
 
 const barcodeKeyValue = (barcode?: string) => {
@@ -135,7 +143,7 @@ async function parseWorkbook(buf: ArrayBuffer) {
 }
 
 function buildCatalog(rows: Record<string, unknown>[]): Catalog {
-  const aliases: Record<string, string[]> = {
+  const aliases: Record<CatalogField, readonly string[]> = {
     name: ["descripcion", "descripción", "nombre", "detalle", "producto", "articulo", "artículo"],
     code: ["codigo", "código", "id", "sku", "código interno", "cod interno"],
     barcode: [
@@ -147,14 +155,15 @@ function buildCatalog(rows: Record<string, unknown>[]): Catalog {
 
   const first = rows[0] ?? {};
   const keys = Object.keys(first);
-  const colMap: Record<"name" | "code" | "barcode" | "price" | "updated", string | null> = {
+  const colMap: Record<CatalogField, string | null> = {
     name: null, code: null, barcode: null, price: null, updated: null,
   };
 
-  for (const k of keys) {
-    for (const [field, list] of Object.entries(aliases)) {
-      if ((list as string[]).some((a) => headerMatches(k, a))) {
-        if (!(colMap as any)[field]) (colMap as any)[field] = k;
+  const aliasEntries = Object.entries(aliases) as Array<[CatalogField, readonly string[]]>;
+  for (const headerKey of keys) {
+    for (const [field, list] of aliasEntries) {
+      if (list.some((alias) => headerMatches(headerKey, alias)) && !colMap[field]) {
+        colMap[field] = headerKey;
       }
     }
   }
@@ -167,14 +176,19 @@ function buildCatalog(rows: Record<string, unknown>[]): Catalog {
 
   for (const r of rows) {
     rowCount++;
-    const rawName = String(r[colMap.name as string] ?? "").trim();
+    const nameKey = colMap.name;
+    const rawName = nameKey ? String(r[nameKey] ?? "").trim() : "";
     if (!rawName) continue;
 
-    const code = r[colMap.code as string] ? String(r[colMap.code as string]).trim() : undefined;
-    const barcode = colMap.barcode ? normBarcode(r[colMap.barcode as string]) : undefined;
+    const codeKey = colMap.code;
+    const barcodeKey = colMap.barcode;
+    const codeValue = codeKey ? String(r[codeKey] ?? "").trim() : "";
+    const code = codeValue ? codeValue : undefined;
+    const barcode = barcodeKey ? normBarcode(r[barcodeKey]) : undefined;
 
     let priceNum = 0;
-    const priceRaw = r[colMap.price as string];
+    const priceKey = colMap.price;
+    const priceRaw = priceKey ? r[priceKey] : undefined;
     if (typeof priceRaw === "number") priceNum = priceRaw;
     else if (typeof priceRaw === "string") {
       const clean = priceRaw.replace(/\./g, "").replace(/,/g, ".");
@@ -182,7 +196,8 @@ function buildCatalog(rows: Record<string, unknown>[]): Catalog {
       priceNum = Number.isFinite(n) ? n : 0;
     }
 
-    const updRaw = colMap.updated ? r[colMap.updated as string] : undefined;
+    const updatedKey = colMap.updated;
+    const updRaw = updatedKey ? r[updatedKey] : undefined;
     const updatedAt = parseUpdatedAt(updRaw);
     const updatedAtLabel =
       typeof updRaw === "string" ? String(updRaw) : updatedAt ? new Date(updatedAt).toLocaleString("es-AR") : "";
@@ -203,23 +218,37 @@ function buildCatalog(rows: Record<string, unknown>[]): Catalog {
 }
 
 /** ===================== Supabase utils ===================== */
-async function getTenantBySlug(userClient: any, slug: string) {
-  const { data, error } = await userClient.from("tenants").select("id, slug").eq("slug", slug).single();
+async function getTenantBySlug(userClient: SupabaseUserClient, slug: string): Promise<TenantRow> {
+  const { data, error } = await userClient
+    .from("tenants")
+    .select("id, slug")
+    .eq("slug", slug)
+    .single<TenantRow>();
   if (error || !data) throw new Error("Tenant no encontrado");
-  return data as { id: string; slug: string };
+  return data;
 }
 
-async function assertMember(userClient: any, tenantId: string) {
-  const { data: { user } } = await userClient.auth.getUser();
+async function assertMember(
+  userClient: SupabaseUserClient,
+  tenantId: string
+): Promise<{ user: User; role: MembershipRole }> {
+  const {
+    data: { user },
+  } = await userClient.auth.getUser();
   if (!user) throw new Error("No autenticado");
+
   const { data, error } = await userClient
     .from("memberships")
     .select("role")
     .eq("user_id", user.id)
     .eq("tenant_id", tenantId)
     .limit(1);
-  if (error || !data || data.length === 0) throw new Error("Sin permisos");
-  return { user, role: data[0].role as "owner" | "admin" | "staff" };
+
+  if (error) throw new Error(error.message);
+  const membershipRows = (data ?? []) as Array<{ role: MembershipRole }>;
+  if (membershipRows.length === 0) throw new Error("Sin permisos");
+
+  return { user, role: membershipRows[0].role };
 }
 
 /** ===================== GET ===================== */
@@ -243,18 +272,19 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     }
 
     const text = await file.text();
-    const cat: Catalog = JSON.parse(text);
-    const items = Array.isArray(cat.items) ? cat.items : [];
+    const parsed = JSON.parse(text) as Partial<Catalog>;
+    const items = Array.isArray(parsed.items) ? (parsed.items as PriceItem[]) : [];
     const canon = reduceLatestByDate(items);
     const out: Catalog = {
       items: canon,
-      rowCount: cat.rowCount ?? canon.length,
-      importedAt: cat.importedAt ?? Date.now(),
+      rowCount: typeof parsed.rowCount === "number" ? parsed.rowCount : canon.length,
+      importedAt: typeof parsed.importedAt === "number" ? parsed.importedAt : Date.now(),
       sourceMode: "api",
     };
     return NextResponse.json(out, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Error leyendo catálogo" }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Error leyendo catálogo";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -288,7 +318,8 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     if (error) throw error;
 
     return NextResponse.json({ ok: true, imported: cat.items.length }, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Error subiendo catálogo" }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Error subiendo catálogo";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

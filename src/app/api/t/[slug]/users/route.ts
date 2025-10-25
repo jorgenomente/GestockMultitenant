@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
 const EMAIL_SUFFIX = "tn"; // debe coincidir con tu login: username@tn
 
-function getServiceDb() {
+function getServiceDb(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   if (!url || !key) throw new Error("Faltan NEXT_PUBLIC_SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY");
@@ -26,7 +27,11 @@ type Ctx = { params: Promise<{ slug: string }> };
 /** GET /api/t/[slug]/users — lista usuarios (filtro simple por sufijo) */
 export async function GET(_req: NextRequest, { params }: Ctx) {
   try {
-    const { slug } = await params; // disponible para futuros filtros por tenant
+    const { slug } = await params;
+    if (!slug) {
+      return NextResponse.json({ error: "slug requerido" }, { status: 400 });
+    }
+
     const admin = getSupabaseAdminClient();
 
     const { data, error } = await admin.auth.admin.listUsers({ page: 1, perPage: 100 });
@@ -34,8 +39,9 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 
     const users = (data?.users ?? []).filter((u) => u.email?.endsWith(`@${EMAIL_SUFFIX}`));
     return NextResponse.json({ users });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Error inesperado" }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Error inesperado";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -73,7 +79,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         .from("tenants")
         .select("id")
         .eq("slug", slug)
-        .single();
+        .single<{ id: string }>();
       if (tErr) {
         return NextResponse.json({ user: created.user, membership_error: tErr.message }, { status: 207 });
       }
@@ -86,7 +92,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         .from("branches")
         .select("id, tenant_id")
         .eq("id", branch_id)
-        .single();
+        .single<{ id: string; tenant_id: string }>();
       if (bErr) {
         return NextResponse.json({ user: created.user, membership_error: bErr.message }, { status: 207 });
       }
@@ -118,7 +124,8 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     }
 
     return NextResponse.json({ user: created.user }, { status: 201 });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Unexpected server error" }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unexpected server error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

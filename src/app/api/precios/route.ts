@@ -18,14 +18,11 @@ function getSupabaseAdmin() {
 }
 
 /* ==================== Utils ==================== */
-type Row = Record<string, any>;
+type Row = Record<string, unknown>;
 const NBSP_RX = /[\u202F\u00A0]/g;
 const stripInvisibles = (s: string) => s.replace(NBSP_RX, " ");
 const norm = (s: string) =>
   s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
-
-const keyFor = (name: string, barcode?: string | null, code?: string | null) =>
-  (barcode && barcode.trim()) || (code && code.trim()) || norm(name);
 
 /* ======= precio robusto ======= */
 function parsePrice(val: unknown): number {
@@ -111,7 +108,7 @@ function parseUpdatedAt(value: unknown): number {
 
   // dd/MM/yyyy hh:mm[:ss] a. m./p. m.
   m =
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2})\:(\d{2})(?::(\d{2}))?\s*([ap])\s*\.?\s*m\.?$/i.exec(s);
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([ap])\s*\.?\s*m\.?$/i.exec(s);
   if (m) {
     const [, dd, MM, yyyy, hh, mm, ssOpt, ap] = m;
     let H = parseInt(hh, 10);
@@ -122,7 +119,7 @@ function parseUpdatedAt(value: unknown): number {
   }
 
   // dd/MM/yyyy HH:mm[:ss]
-  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2})\:(\d{2})(?::(\d{2}))?$/.exec(s);
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(s);
   if (m) {
     const [, dd, MM, yyyy, HH, mm, ssOpt] = m;
     const t = Date.UTC(+yyyy, +MM - 1, +dd, +HH, +mm, ssOpt ? +ssOpt : 0);
@@ -130,7 +127,7 @@ function parseUpdatedAt(value: unknown): number {
   }
 
   // dd-MM-yyyy HH:mm[:ss]
-  m = /^(\d{1,2})-(\d{1,2})-(\d{4})\s+(\d{1,2})\:(\d{2})(?::(\d{2}))?$/.exec(s);
+  m = /^(\d{1,2})-(\d{1,2})-(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(s);
   if (m) {
     const [, dd, MM, yyyy, HH, mm, ssOpt] = m;
     const t = Date.UTC(+yyyy, +MM - 1, +dd, +HH, +mm, ssOpt ? +ssOpt : 0);
@@ -138,7 +135,7 @@ function parseUpdatedAt(value: unknown): number {
   }
 
   // dd/MM/yy HH:mm
-  m = /^(\d{1,2})\/(\d{1,2})\/(\d{2})\s+(\d{1,2})\:(\d{2})$/.exec(s);
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{2})\s+(\d{1,2}):(\d{2})$/.exec(s);
   if (m) {
     const [, dd, MM, yy, HH, mm] = m;
     const yyyy = 2000 + parseInt(yy, 10);
@@ -150,6 +147,26 @@ function parseUpdatedAt(value: unknown): number {
   const parsed = Date.parse(s.replace(/(\d{1,2})\/(\d{1,2})\//, "$2/$1/"));
   return Number.isFinite(parsed) && parsed >= Date.UTC(2005, 0, 1) ? parsed : 0;
 }
+
+type PriceRow = {
+  id: string | null;
+  name: string | null;
+  code: string | null;
+  barcode: string | null;
+  price: number | string | null;
+  ts: string | Date | null;
+  imported_at?: string | null;
+};
+
+type PriceItem = {
+  id: string;
+  name: string | null;
+  code?: string;
+  barcode?: string;
+  price: number;
+  updatedAt: number;
+  updatedAtLabel: string;
+};
 
 /* ==================== HEAD/ETag ==================== */
 function makeWeakEtag(rowCount: number, maxTsMs: number) {
@@ -208,7 +225,7 @@ export async function GET() {
   const PAGE = 1000;
   let from = 0;
   let total = 0;
-  const items: any[] = [];
+  const items: PriceItem[] = [];
 
   const head = await s.from("v_prices_latest").select("id", { head: true, count: "exact" });
   if (!head.error && typeof head.count === "number") total = head.count ?? 0;
@@ -222,21 +239,47 @@ export async function GET() {
       .range(from, to);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    if (!data || data.length === 0) break;
+    const pageRows = (data ?? []) as PriceRow[];
+    if (pageRows.length === 0) break;
 
-    for (const r of data as any[]) {
+    for (const r of pageRows) {
+      const name =
+        typeof r.name === "string"
+          ? r.name
+          : r.name != null
+          ? String(r.name)
+          : null;
+      const codeValue = typeof r.code === "string" ? r.code : undefined;
+      const barcodeValue = typeof r.barcode === "string" ? r.barcode : undefined;
+      const fallbackName = name ?? "";
       const ms = r.ts ? Date.parse(String(r.ts)) : 0;
+      const updatedAt = Number.isFinite(ms) ? ms : 0;
+      const priceRaw = r.price;
+      const price =
+        typeof priceRaw === "number"
+          ? priceRaw
+          : typeof priceRaw === "string"
+          ? Number(priceRaw) || 0
+          : 0;
+      const id =
+        (typeof r.id === "string" && r.id) ||
+        barcodeValue ||
+        codeValue ||
+        (fallbackName ? norm(fallbackName) : "");
+
       items.push({
-        id: r.id ?? (r.barcode || r.code || norm(r.name)),
-        name: r.name,
-        code: r.code ?? undefined,
-        barcode: r.barcode ?? undefined,
-        price: typeof r.price === "number" ? r.price : Number(r.price) || 0,
-        updatedAt: Number.isFinite(ms) ? ms : 0,
-        updatedAtLabel: ms ? new Date(ms).toLocaleString("es-AR") : "",
+        id,
+        name,
+        code: codeValue,
+        barcode: barcodeValue,
+        price,
+        updatedAt,
+        updatedAtLabel: updatedAt
+          ? new Date(updatedAt).toLocaleString("es-AR")
+          : "",
       });
     }
-    if (data.length < PAGE) break;
+    if (pageRows.length < PAGE) break;
     from += PAGE;
   }
 

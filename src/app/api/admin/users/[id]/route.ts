@@ -22,15 +22,16 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       user: {
         id: u.id,
         email: u.email,
-        phone: (u as any).phone ?? null,
+        phone: u.phone ?? null,
         created_at: u.created_at,
         last_sign_in_at: u.last_sign_in_at,
         app_metadata: u.app_metadata,
         user_metadata: u.user_metadata,
       },
     });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Error inesperado" }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Error inesperado";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -45,7 +46,8 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Error inesperado" }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Error inesperado";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
