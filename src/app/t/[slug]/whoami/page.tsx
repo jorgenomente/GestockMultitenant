@@ -76,8 +76,9 @@ export default function WhoAmIPage() {
           : allBranches;
 
         setBranches(vis);
-      } catch (e: any) {
-        setErr(e?.message ?? "Error inesperado");
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Error inesperado";
+        setErr(message);
       } finally {
         setLoading(false);
       }

@@ -11,9 +11,6 @@ import { Camera, Upload, RefreshCcw, Search } from "lucide-react";
 /** ===================== Config ===================== */
 const DENSITY_COMPACT = true;
 const LS_KEY = "gestock:prices:v6"; // bump cache
-const PRECIOS_FILENAME = "precios.xlsx";
-const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
-const PRECIOS_URL = `${BASE_PATH ? BASE_PATH : ""}/${PRECIOS_FILENAME}`;
 const INPUT_ID = "price-search-input";
 
 /** ===================== Tipos ===================== */
@@ -33,6 +30,37 @@ type Catalog = {
   importedAt: number; // epoch ms
   sourceMode: "api" | "public" | "local-upload";
   sourceKey?: string;
+};
+
+type PriceApiInput = Record<string, unknown> & {
+  name?: unknown;
+  code?: unknown;
+  barcode?: unknown;
+  price?: unknown;
+  updatedAt?: unknown;
+  updatedAtMs?: unknown;
+  updated?: unknown;
+  updatedAtLabel?: unknown;
+  fechaUltimaActualizacion?: unknown;
+  "fecha ultima actualización"?: unknown;
+  "ultima actualizacion"?: unknown;
+  "última actualización"?: unknown;
+};
+
+type CatalogApiResponse = Partial<Omit<Catalog, "items">> & {
+  items?: unknown;
+};
+
+const errorMessageFrom = (error: unknown, fallback: string) => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string" && error.trim()) return error.trim();
+  return fallback;
+};
+
+const logDebug = (context: string, error: unknown) => {
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(context, error);
+  }
 };
 
 const MIN_BARCODE_DIGITS_FOR_KEY = 8;
@@ -92,7 +120,6 @@ function reduceLatestByDate(list: PriceItem[]): PriceItem[] {
 }
 
 /** ===================== Utils ===================== */
-const STOPWORDS = new Set(["de", "del", "la", "el", "los", "las"]);
 const NBSP_RX = /[\u202F\u00A0]/g;
 
 const fmtMoney = (n: number) =>
@@ -100,22 +127,10 @@ const fmtMoney = (n: number) =>
 
 const stripInvisibles = (s: string) => s.replace(NBSP_RX, " ");
 
-const normKey = (key: string) =>
-  key.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
-
 const normText = (s: unknown) =>
   !s
     ? ""
     : String(s).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
-
-function headerMatches(header: string, alias: string) {
-  const h = normKey(header);
-  const a = normKey(alias);
-  if (h === a) return true;
-  const hTok = h.split(" ").filter((t) => t && !STOPWORDS.has(t));
-  const aTok = a.split(" ").filter((t) => t && !STOPWORDS.has(t));
-  return aTok.every((t) => hTok.includes(t));
-}
 
 const excelSerialToMs = (n: number) => Date.UTC(1899, 11, 30) + Math.round(n * 86400000);
 
@@ -243,31 +258,38 @@ function parseUpdatedAt(value: unknown): number {
 }
 
 /** Reconstruye price y updatedAt de lo que venga del API (string, Excel serial, etc.) */
-function normalizeFromApi(x: any): PriceItem {
-  const name = String(x?.name ?? "").trim();
-  const code = x?.code ? String(x.code).trim() : undefined;
-  const barcode = x?.barcode ? normBarcode(x.barcode) : undefined;
+function normalizeFromApi(rawItem: unknown): PriceItem {
+  const item: PriceApiInput =
+    typeof rawItem === "object" && rawItem !== null ? (rawItem as PriceApiInput) : {};
+
+  const name = String(item.name ?? "").trim();
+  const codeValue = item.code;
+  const code =
+    codeValue == null
+      ? undefined
+      : String(codeValue).trim() || undefined;
+  const barcode = item.barcode != null ? normBarcode(item.barcode) : undefined;
 
   // precio robusto
   let priceNum = 0;
-  const p = x?.price;
-  if (typeof p === "number") priceNum = p;
-  else if (typeof p === "string") {
-    const clean = p.replace(/\./g, "").replace(/,/g, ".");
+  const priceRaw = item.price;
+  if (typeof priceRaw === "number") priceNum = priceRaw;
+  else if (typeof priceRaw === "string") {
+    const clean = priceRaw.replace(/\./g, "").replace(/,/g, ".");
     const n = Number(clean.replace(/[^\d.]/g, ""));
     priceNum = Number.isFinite(n) ? n : 0;
   }
 
   // candidatos de fecha que puede traer el backend
   const dateCandidates: unknown[] = [
-    x?.updatedAt,
-    x?.updatedAtMs,
-    x?.updated,
-    x?.updatedAtLabel,
-    x?.fechaUltimaActualizacion,
-    x?.["fecha ultima actualización"],
-    x?.["ultima actualizacion"],
-    x?.["última actualización"],
+    item.updatedAt,
+    item.updatedAtMs,
+    item.updated,
+    item.updatedAtLabel,
+    item.fechaUltimaActualizacion,
+    item["fecha ultima actualización"],
+    item["ultima actualizacion"],
+    item["última actualización"],
   ];
 
   let bestTs = 0;
@@ -282,8 +304,8 @@ function normalizeFromApi(x: any): PriceItem {
 
   const updatedAt = bestTs || 0;
   const updatedAtLabel =
-    (typeof x?.updatedAtLabel === "string" && x.updatedAtLabel.trim())
-      ? String(x.updatedAtLabel)
+    typeof item.updatedAtLabel === "string" && item.updatedAtLabel.trim()
+      ? item.updatedAtLabel
       : updatedAt
       ? new Date(updatedAt).toLocaleString("es-AR")
       : "";
@@ -301,108 +323,6 @@ function normalizeFromApi(x: any): PriceItem {
   };
 }
 
-/** ===================== XLSX helpers ===================== */
-async function parseWorkbook(buf: ArrayBuffer) {
-  const XLSX = await import("xlsx");
-  const wb = XLSX.read(buf, { type: "array" });
-  const wsName = wb.SheetNames[0];
-  const ws = wb.Sheets[wsName];
-  const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
-  return rows;
-}
-
-function buildCatalog(rows: Record<string, unknown>[], sourceMode: Catalog["sourceMode"]): Catalog {
-  const aliases: Record<string, string[]> = {
-    name: ["descripcion", "descripción", "nombre", "detalle", "producto", "articulo", "artículo"],
-    code: ["codigo", "código", "id", "sku", "código interno", "cod interno"],
-    barcode: [
-      "barcode",
-      "barra",
-      "barras",
-      "codigo barras",
-      "código barras",
-      "codigo de barras",
-      "código de barras",
-      "cod barras",
-      "cod. barras",
-      "ean",
-    ],
-    price: ["precio", "precio venta", "precio final", "pvp", "importe"],
-    updated: [
-      "desde",
-    ],
-  };
-
-  const first = rows[0] ?? {};
-  const keys = Object.keys(first);
-  const colMap: Record<"name" | "code" | "barcode" | "price" | "updated", string | null> = {
-    name: null,
-    code: null,
-    barcode: null,
-    price: null,
-    updated: null,
-  };
-
-  for (const k of keys) {
-    for (const [field, list] of Object.entries(aliases)) {
-      if ((list as string[]).some((a) => headerMatches(k, a))) {
-        if (!(colMap as any)[field]) (colMap as any)[field] = k;
-      }
-    }
-  }
-
-  if (!colMap.name) colMap.name = keys[0] ?? "nombre";
-  if (!colMap.price) colMap.price = "precio";
-  if (!colMap.updated && keys.length > 0) colMap.updated = keys[keys.length - 1];
-
-  const all: PriceItem[] = [];
-  let rowCount = 0;
-
-  for (const r of rows) {
-    rowCount++;
-    const rawName = String(r[colMap.name as string] ?? "").trim();
-    if (!rawName) continue;
-
-    const code = r[colMap.code as string] ? String(r[colMap.code as string]).trim() : undefined;
-    const barcode = colMap.barcode ? normBarcode(r[colMap.barcode]) : undefined;
-
-    // precio
-    let priceNum = 0;
-    const priceRaw = r[colMap.price as string];
-    if (typeof priceRaw === "number") priceNum = priceRaw;
-    else if (typeof priceRaw === "string") {
-      const clean = priceRaw.replace(/\./g, "").replace(/,/g, ".");
-      const n = Number(clean.replace(/[^\d.]/g, ""));
-      priceNum = Number.isFinite(n) ? n : 0;
-    }
-
-    // fecha
-    const updRaw = colMap.updated ? r[colMap.updated] : undefined;
-    const updatedAt = parseUpdatedAt(updRaw);
-    const updatedAtLabel =
-      typeof updRaw === "string"
-        ? String(updRaw)
-        : updatedAt
-        ? new Date(updatedAt).toLocaleString("es-AR")
-        : "";
-
-    const next: PriceItem = {
-      id: keyFor(rawName, barcode, code),
-      name: rawName,
-      code,
-      barcode,
-      price: priceNum,
-      updatedAt: updatedAt || 0,
-      updatedAtLabel,
-    };
-
-    all.push(next);
-  }
-
-  const items = reduceLatestByDate(all);
-  return { items, rowCount, importedAt: Date.now(), sourceMode };
-}
-
 /** ===================== Debounce ===================== */
 function useDebounced<T>(value: T, ms = 180) {
   const [debounced, setDebounced] = React.useState(value);
@@ -417,15 +337,16 @@ function safeSaveCache(catalog: Catalog) {
   // Intenta guardar completo; si excede la cuota (iOS), guarda solo metadatos
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(catalog));
-  } catch {
+  } catch (fullCacheError) {
+    logDebug("No se pudo cachear catálogo completo", fullCacheError);
     try {
       const lite: Catalog = {
         ...catalog,
         items: [], // sin items para no superar 5MB
       };
       localStorage.setItem(LS_KEY, JSON.stringify(lite));
-    } catch {
-      // última chance: no cacheamos nada
+    } catch (liteCacheError) {
+      logDebug("No se pudo cachear metadatos de catálogo", liteCacheError);
     }
   }
 }
@@ -458,7 +379,9 @@ function usePrices(slug?: string) {
           setSourceMode(cat.sourceMode ?? null);
         }
       }
-    } catch {}
+    } catch (storageError) {
+      logDebug("No se pudo restaurar cache local de precios", storageError);
+    }
   }, []);
 
   // 2) Intentar API por tenant; si falla y estamos en multitenant, NO hacemos fallback
@@ -470,19 +393,18 @@ function usePrices(slug?: string) {
       // ✅ API por tenant
       const res = await fetch(`/api/t/${slug}/precios`, { cache: "no-store" });
       if (!res.ok) throw new Error(`API HTTP ${res.status}`);
-      const rawCat: Catalog = await res.json();
+      const rawCat = (await res.json()) as CatalogApiResponse;
 
-      const normalized = Array.isArray(rawCat.items)
-        ? rawCat.items.map((x: any) => normalizeFromApi(x))  // tu normalizador
-        : [];
+      const rawItems = Array.isArray(rawCat.items) ? rawCat.items : [];
+      const normalized = rawItems.map((item) => normalizeFromApi(item));
 
       const canonItems = reduceLatestByDate(normalized);
       const canon: Catalog = {
-        ...rawCat,
-        sourceMode: "api",
         items: canonItems,
         rowCount: rawCat.rowCount ?? canonItems.length,
         importedAt: rawCat.importedAt ?? Date.now(),
+        sourceMode: "api",
+        sourceKey: typeof rawCat.sourceKey === "string" ? rawCat.sourceKey : undefined,
       };
 
       setItems(canon.items);
@@ -490,12 +412,11 @@ function usePrices(slug?: string) {
       setImportedAt(canon.importedAt ?? null);
       setSourceMode("api");
       safeSaveCache(canon);
-      return;
-
-    } catch (apiErr: any) {
+    } catch (apiErr: unknown) {
       // ✅ Multitenant: no caer a /public si forzamos API
       if (FORCE_SOURCE === "api") {
-        setError(apiErr?.message || "No se pudo cargar precios.");
+        setError(errorMessageFrom(apiErr, "No se pudo cargar precios."));
+        logDebug("Fallo al cargar catálogo de precios", apiErr);
       } else {
         // (Dejamos el fallback vacío a propósito para otros contextos)
       }
@@ -522,15 +443,25 @@ function usePrices(slug?: string) {
           // Mostrar mensaje real si viene en JSON
           let serverMsg = "";
           try {
-            const j = await up.json();
-            serverMsg = j?.error || j?.message || "";
-          } catch {}
+            const parsed = await up.json();
+            if (parsed && typeof parsed === "object") {
+              const data = parsed as Record<string, unknown>;
+              if (typeof data.error === "string") {
+                serverMsg = data.error;
+              } else if (typeof data.message === "string") {
+                serverMsg = data.message;
+              }
+            }
+          } catch (jsonError) {
+            logDebug("No se pudo interpretar respuesta de subida de catálogo", jsonError);
+          }
           throw new Error(serverMsg || "No se pudo subir el archivo");
         }
         setNotice("Catálogo actualizado en la nube.");
         await fetchCatalog(); // refresca desde la API
-      } catch (e: any) {
-        setError(e?.message ?? "Error actualizando precios.");
+      } catch (uploadError: unknown) {
+        setError(errorMessageFrom(uploadError, "Error actualizando precios."));
+        logDebug("Fallo al subir catálogo de precios", uploadError);
       } finally {
         setLoading(false);
       }
@@ -586,7 +517,9 @@ export default function PriceSearch({ slug }: { slug: string }) {
       try {
         const len = node.value.length;
         node.setSelectionRange(len, len);
-      } catch {}
+      } catch (selectionError) {
+        logDebug("No se pudo posicionar el cursor en la búsqueda", selectionError);
+      }
     });
   }, []);
 

@@ -5,8 +5,11 @@ import clsx from "clsx";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import type { PostgrestError, StorageError, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import type { CellObject, WorkSheet } from "xlsx";
 import { SALES_STORAGE_BUCKET, SALES_STORAGE_DIR } from "@/lib/salesStorage";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 /* UI */
 import { Button } from "@/components/ui/button";
@@ -71,7 +74,6 @@ const STORAGE_DIR_SALES = SALES_STORAGE_DIR;
 const TABLE_SETTINGS = "app_settings";
 const TABLE_UI_STATE = "order_ui_state";
 
-const PENDING_PREFIX = "tmp_";
 const GROUP_PLACEHOLDER = "__group__placeholder__";
 
 let ensureSalesBucketPromise: Promise<boolean> | null = null;
@@ -98,18 +100,42 @@ async function ensureSalesBucketOnce() {
   return ok;
 }
 
+const getVisualViewport = (): VisualViewport | null => {
+  if (typeof window === "undefined") return null;
+  return window.visualViewport ?? null;
+};
+
+type ErrorWithStatus = { statusCode?: unknown; status?: unknown; message?: unknown };
+
+const readStatusCode = (error: unknown): number | undefined => {
+  if (!error || typeof error !== "object") return undefined;
+  const withStatus = error as ErrorWithStatus;
+  if (typeof withStatus.statusCode === "number") return withStatus.statusCode;
+  if (typeof withStatus.status === "number") return withStatus.status;
+  return undefined;
+};
+
+const readErrorMessage = (error: unknown): string => {
+  if (!error || typeof error !== "object") return "";
+  const withMessage = error as ErrorWithStatus;
+  return typeof withMessage.message === "string" ? withMessage.message : "";
+};
+
 const isMissingProviderError = (error: unknown) => {
-  if (!error || typeof error !== "object") return false;
-  const code = typeof (error as any).code === "string" ? (error as any).code : "";
-  const message = typeof (error as any).message === "string" ? (error as any).message.toLowerCase() : "";
+  if (typeof error !== "object" || error === null) return false;
+  const rawCode = (error as { code?: unknown }).code;
+  const rawMessage = (error as { message?: unknown }).message;
+  const code = typeof rawCode === "string" ? rawCode : "";
+  const message = typeof rawMessage === "string" ? rawMessage.toLowerCase() : "";
   if (!message) return false;
   if (message.includes("proveedor") && message.includes("no existe")) return true;
   if (message.includes("provider") && message.includes("does not exist")) return true;
   return code === "P0001" && message.includes("proveedor");
 };
 
+/* eslint-disable no-unused-vars */
 /* ---------- Subcomponente: Stepper ---------- */
-type StepperProps = { value: number; onChange: (n: number) => void; min?: number; step?: number; };
+type StepperProps = { value: number; onChange: (...args: [number]) => void; min?: number; step?: number; };
 
 function Stepper({ value, onChange, min = 0, step = 1 }: StepperProps) {
   const s = Math.max(1, Math.floor(step));
@@ -231,13 +257,13 @@ function useHideBarsOnScroll(opts?: {
     }
     lastY.current = window.scrollY || 0;
     window.addEventListener("scroll", onScroll, { passive: true });
-    const vv = (window as any).visualViewport as VisualViewport | undefined;
-    if (vv) vv.addEventListener("scroll", onScroll as any, { passive: true } as any);
+    const viewport = getVisualViewport();
+    const viewportScrollHandler = () => onScroll();
+    if (viewport) viewport.addEventListener("scroll", viewportScrollHandler, { passive: true });
 
     return () => {
       window.removeEventListener("scroll", onScroll);
-      const vv2 = (window as any).visualViewport as VisualViewport | undefined;
-      if (vv2) vv2.removeEventListener("scroll", onScroll as any);
+      if (viewport) viewport.removeEventListener("scroll", viewportScrollHandler);
       if (raf.current) cancelAnimationFrame(raf.current);
       if (stopTimer.current) clearTimeout(stopTimer.current);
     };
@@ -286,13 +312,16 @@ function useDragAutoscroll(opts?: {
   }, []);
 
   const updateFromEvent = React.useCallback((e: DragEvent | React.DragEvent) => {
-    const y = (e as DragEvent).clientY ?? (e as React.DragEvent).clientY;
+    const y = e.clientY;
 
     let viewTop = 0, viewHeight = 0;
     const el = containerRef.current;
     if (el) { const r = el.getBoundingClientRect(); viewTop = r.top; viewHeight = r.height; }
-    else { const vv = (window as any).visualViewport as VisualViewport | undefined;
-           viewTop = vv?.offsetTop ?? 0; viewHeight = vv?.height ?? window.innerHeight; }
+    else {
+      const viewport = getVisualViewport();
+      viewTop = viewport?.offsetTop ?? 0;
+      viewHeight = viewport?.height ?? window.innerHeight;
+    }
 
     const topZone = viewTop + edge;
     const botZone = viewTop + viewHeight - edge;
@@ -350,6 +379,72 @@ type ItemRow = {
 
 type SalesRow = { product: string; qty: number; subtotal?: number; date: number; category?: string; };
 type Stats = { avg4w: number; sum2w: number; sum30d: number; lastQty?: number; lastDate?: number; lastUnitRetail?: number; avgUnitRetail30d?: number; };
+type XlsxModule = typeof import("xlsx");
+type StyledCell = CellObject & { s?: NonNullable<CellObject["s"]> };
+type CssVars = React.CSSProperties & Record<`--${string}`, string>;
+type ItemUpsertPayload = {
+  order_id: string;
+  product_name: string;
+  qty: number;
+  unit_price: number;
+  group_name: string | null;
+  display_name?: string | null;
+  pack_size?: number | null;
+  stock_qty?: number | null;
+  stock_updated_at?: string | null;
+  previous_qty?: number | null;
+  previous_qty_updated_at?: string | null;
+  price_updated_at?: string | null;
+  tenant_id?: string | null;
+  branch_id?: string | null;
+};
+type GroupRenderFn = (
+  ...args: [string, ItemRow[], React.HTMLAttributes<HTMLDivElement>]
+) => React.ReactNode;
+type DraggableGroupListProps = {
+  groups: Array<[string, ItemRow[]]>;
+  renderGroup: GroupRenderFn;
+  onReorder: (...args: [string[]]) => void;
+};
+type AddItemHandler = (...args: [string, string]) => Promise<void>;
+type RemoveItemHandler = (id: string) => Promise<void>;
+type UpdateQtyHandler = (...args: [string, number]) => Promise<void>;
+type UpdateNumberHandler = (...args: [string, number]) => Promise<void>;
+type RenameGroupHandler = (...args: [string, string]) => Promise<void>;
+type DeleteGroupHandler = (name: string) => Promise<void>;
+type UpdatePackSizeHandler = (...args: [string, number | null]) => Promise<void>;
+type UpdateStockHandler = (...args: [string, number | null]) => Promise<void>;
+type BulkItemsHandler = (...args: [string[], string]) => Promise<void>;
+type RenameItemHandler = (...args: [string, string]) => Promise<void> | void;
+type ComputeSalesSinceHandler = (...args: [string, number | null]) => number;
+type SetItemCheckedHandler = (...args: [string, boolean]) => void;
+type GroupSectionProps = {
+  groupName: string;
+  items: ItemRow[];
+  productNames: string[];
+  sales: SalesRow[];
+  margin: number;
+  tokenMatch: (...args: [string, string]) => boolean;
+  placeholder: string;
+  onRenameItemLabel: RenameItemHandler;
+  computeSalesSinceStock: ComputeSalesSinceHandler;
+  onAddItem: AddItemHandler;
+  onRemoveItem: RemoveItemHandler;
+  onUpdateQty: UpdateQtyHandler;
+  onUpdateUnitPrice: UpdateNumberHandler;
+  onRenameGroup: RenameGroupHandler;
+  onDeleteGroup: DeleteGroupHandler;
+  onUpdatePackSize: UpdatePackSizeHandler;
+  onUpdateStock: UpdateStockHandler;
+  onBulkAddItems?: BulkItemsHandler;
+  onBulkRemoveByNames?: BulkItemsHandler;
+  sortMode: SortMode;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  checkedMap: Record<string, boolean>;
+  setItemChecked: SetItemCheckedHandler;
+  containerProps?: React.HTMLAttributes<HTMLDivElement>;
+};
 
 type SortMode = "alpha_asc" | "alpha_desc" | "avg_desc" | "avg_asc";
 
@@ -425,19 +520,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 /* ========= Drag & Drop de grupos (HTML5 nativo) ========= */
 import { GripVertical } from "lucide-react";
 
-function DraggableGroupList({
-  groups,
-  renderGroup,
-  onReorder,
-}: {
-  groups: Array<[string, ItemRow[]]>;
-  renderGroup: (
-    name: string,
-    items: ItemRow[],
-    containerProps: React.HTMLAttributes<HTMLDivElement>
-  ) => React.ReactNode;
-  onReorder: (nextNames: string[]) => void;
-}) {
+function DraggableGroupList({ groups, renderGroup, onReorder }: DraggableGroupListProps) {
   const [dragIndex, setDragIndex] = React.useState<number | null>(null);
   const [overIndex, setOverIndex] = React.useState<number | null>(null);
 
@@ -446,12 +529,12 @@ function DraggableGroupList({
     [groups]
   );
 
-const auto = useDragAutoscroll({
-  edge: 170,     // 150–200 activa más lejos del borde
-  maxSpeed: 36,  // 32–40 si querés que “vuele” al final
-  minSpeed: 3,   // empujón inicial
-  power: 1.25,   // suave al principio, acelera cerca del borde
-});
+  const auto = useDragAutoscroll({
+    edge: 170,     // 150–200 activa más lejos del borde
+    maxSpeed: 36,  // 32–40 si querés que “vuele” al final
+    minSpeed: 3,   // empujón inicial
+    power: 1.25,   // suave al principio, acelera cerca del borde
+  });
 
 
 
@@ -475,27 +558,27 @@ const auto = useDragAutoscroll({
     document.addEventListener("dragend", stopAll, { passive: true });
 
     return () => {
-      document.removeEventListener("dragover", onDocDragOver as any);
-      document.removeEventListener("drop", stopAll as any);
-      document.removeEventListener("dragend", stopAll as any);
+      document.removeEventListener("dragover", onDocDragOver);
+      document.removeEventListener("drop", stopAll);
+      document.removeEventListener("dragend", stopAll);
     };
   }, [dragIndex, auto]);
 
-  function handleDragStart(e: React.DragEvent, index: number) {
+  function handleDragStart(e: React.DragEvent<HTMLDivElement>, index: number) {
     setDragIndex(index);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", String(index)); // Firefox
     auto.start(); // 🔛 arranca el loop
   }
 
-  function handleDragOver(e: React.DragEvent, index: number) {
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>, index: number) {
     e.preventDefault();
     setOverIndex(index);
     e.dataTransfer.dropEffect = "move";
     auto.updateFromEvent(e); // también actualizamos cuando está sobre un grupo
   }
 
-  function handleDrop(e: React.DragEvent, index: number) {
+  function handleDrop(e: React.DragEvent<HTMLDivElement>, index: number) {
     e.preventDefault();
     const from = dragIndex;
     const to = index;
@@ -525,9 +608,9 @@ const auto = useDragAutoscroll({
 
         const containerProps: React.HTMLAttributes<HTMLDivElement> = {
           draggable: true,
-          onDragStart: (e) => handleDragStart(e as any, idx),
-          onDragOver: (e) => handleDragOver(e as any, idx),
-          onDrop: (e) => handleDrop(e as any, idx),
+          onDragStart: (e) => handleDragStart(e, idx),
+          onDragOver: (e) => handleDragOver(e, idx),
+          onDrop: (e) => handleDrop(e, idx),
           onDragEnd: handleDragEnd,
           className: [
             "rounded-lg outline-none",
@@ -636,6 +719,7 @@ function parseDateCell(v: unknown): number | null {
 const startOfDayUTC = (t: number) => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); };
 const fmtMoney = (n: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n || 0);
 const fmtInt = (n: number) => new Intl.NumberFormat("es-AR").format(n || 0);
+const qtyFormatter = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 });
 const round2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
 const parseNumberInput = (value: string): number => {
   if (!value) return 0;
@@ -652,9 +736,15 @@ async function parseSalesArrayBuffer(ab: ArrayBuffer): Promise<SalesRow[]> {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(ab, { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows: any[] = XLSX.utils.sheet_to_json(ws, { raw: true });
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { raw: true });
 
-  const candidates = rows.map((r) => { const obj: any = {}; for (const k of Object.keys(r)) obj[k.toLowerCase().replace(NBSP_RX, " ").trim()] = r[k]; return obj; });
+  const candidates = rows.map((r) => {
+    const obj: Record<string, unknown> = {};
+    for (const key of Object.keys(r)) {
+      obj[key.toLowerCase().replace(NBSP_RX, " ").trim()] = r[key];
+    }
+    return obj;
+  });
   const nameKeys = ["artículo", "articulo", "producto", "nombre", "item", "producto/marca"];
   const dateKeys = ["hora", "fecha", "date", "día", "dia"];
   const qtyKeys  = ["cantidad", "qty", "venta", "ventas"];
@@ -797,7 +887,7 @@ export default function ProviderOrderPage() {
   const [order, setOrder]   = React.useState<OrderRow | null>(null);
   const [items, setItems]   = React.useState<ItemRow[]>([]);
   const [sales, setSales]   = React.useState<SalesRow[]>([]);
-  const [margin, setMargin] = React.useState<number>(48);
+  const margin = 48;
   const [filter, setFilter] = React.useState("");
   const [sortMode, setSortMode] = React.useState<SortMode>("alpha_asc");
   const [stockModalOpen, setStockModalOpen] = React.useState(false);
@@ -834,11 +924,6 @@ export default function ProviderOrderPage() {
         .reduce((acc, row) => acc + (row.qty || 0), 0);
     },
     [salesByProduct]
-  );
-
-  const qtyFormatter = React.useMemo(
-    () => new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }),
-    []
   );
 
   const applyTimestampMs = React.useMemo(() => {
@@ -1001,9 +1086,10 @@ export default function ProviderOrderPage() {
       setStockModalOpen(false);
       setStockAdjustments({});
       setStockError(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("apply stock error", err);
-      setStockError(err?.message ?? "No se pudo actualizar el stock.");
+      const message = err instanceof Error ? err.message : "";
+      setStockError(message || "No se pudo actualizar el stock.");
     } finally {
       setStockProcessing(false);
     }
@@ -1083,8 +1169,8 @@ export default function ProviderOrderPage() {
   }, [salesImportError]);
   // ===== Altura del BottomNav y estilo root (variable CSS global en la página) =====
 const bottomNavHeightPx = 76; // ajustá 72–84px según mida tu BottomNav real
-const rootStyle: React.CSSProperties = {
-  ["--bottom-nav-h" as any]: `${bottomNavHeightPx}px`,
+const rootStyle: CssVars = {
+  "--bottom-nav-h": `${bottomNavHeightPx}px`,
 };
 
   React.useEffect(() => {
@@ -1167,6 +1253,24 @@ const rootStyle: React.CSSProperties = {
     return () => { mounted = false; };
   }, [supabase, tenantId, branchId]);
 
+  const loadUIState = React.useCallback(async (orderId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from(TABLE_UI_STATE)
+        .select("group_order, checked_map")
+        .eq("order_id", orderId)
+        .maybeSingle();
+      if (error) {
+        console.error("loadUIState error", error);
+        return;
+      }
+      if (data?.group_order) setGroupOrder(data.group_order as string[]);
+      if (data?.checked_map) setCheckedMap(data.checked_map as Record<string, boolean>);
+    } catch (err) {
+      console.error("loadUIState exception", err);
+    }
+  }, [supabase]);
+
   // crear/obtener pedido PENDIENTE + cargar ítems
 
 React.useEffect(() => {
@@ -1174,7 +1278,7 @@ React.useEffect(() => {
   let mounted = true;
   (async () => {
     let base: OrderRow | null = null;
-    let ordersError: any = null;
+    let ordersError: PostgrestError | Error | null = null;
     const orderCandidates = [ordersTable, ...ORDER_TABLE_CANDIDATES.filter((t) => t !== ordersTable)];
 
     const variantKeys = new Set<string>();
@@ -1242,7 +1346,16 @@ React.useEffect(() => {
     }
 
     if (!base && !ordersError) {
-      const creationPayloadBase: Record<string, any> = {
+      type OrderInsertPayload = {
+        provider_id: string;
+        status: Status;
+        notes: string;
+        total: number;
+        tenant_id?: string;
+        branch_id?: string;
+      };
+
+      const creationPayloadBase: OrderInsertPayload = {
         provider_id: provId,
         status: 'PENDIENTE' as Status,
         notes: `${providerName} - ${isoToday()}`,
@@ -1252,7 +1365,7 @@ React.useEffect(() => {
       for (const table of orderCandidates) {
         let skipTableInsert = false;
         for (const variant of orderVariants) {
-          const payload = { ...creationPayloadBase } as Record<string, any>;
+          const payload: OrderInsertPayload = { ...creationPayloadBase };
           if (variant.useTenant && tenantId) payload.tenant_id = tenantId;
           if (variant.useBranch && branchId) payload.branch_id = branchId;
 
@@ -1334,7 +1447,7 @@ React.useEffect(() => {
 
     const itemCandidates = [itemsTable, ...ITEM_TABLE_CANDIDATES.filter((t) => t !== itemsTable)];
     let rows: ItemRow[] | null = null;
-    let itemsError: any = null;
+    let itemsError: PostgrestError | Error | null = null;
 
     const itemVariants: Array<{ useTenant: boolean; useBranch: boolean }> = [];
     const itemVariantKeys = new Set<string>();
@@ -1460,7 +1573,7 @@ React.useEffect(() => {
     }
   })();
   return () => { mounted = false; };
-}, [supabase, provId, providerName, tenantId, branchId, ordersTable, itemsTable]);
+}, [supabase, provId, providerName, tenantId, branchId, ordersTable, itemsTable, loadUIState]);
 
 
   // Realtime (escucha cambios en items)
@@ -1469,15 +1582,19 @@ React.useEffect(() => {
     const chItems = supabase.channel(`order-items-${order.id}`).on(
       "postgres_changes",
       { event: "*", schema: "public", table: itemsTable, filter: `order_id=eq.${order.id}` },
-      (payload: any) => {
-        const { eventType, new: n, old: o } = payload;
+      (payload: RealtimePostgresChangesPayload<ItemRow>) => {
+        const { eventType, new: newRow, old: oldRow } = payload;
         setItems((prev) => {
-          if (eventType === "DELETE") return prev.filter((r) => r.id !== o.id);
-          if (eventType === "INSERT") {
-            const exists = prev.some((r) => r.id === n.id);
-            return exists ? prev.map((r) => (r.id === n.id ? n : r)) : [...prev, n];
+          if (eventType === "DELETE" && oldRow) {
+            return prev.filter((r) => r.id !== oldRow.id);
           }
-          if (eventType === "UPDATE") return prev.map((r) => (r.id === n.id ? n : r));
+          if (eventType === "INSERT" && newRow) {
+            const exists = prev.some((r) => r.id === newRow.id);
+            return exists ? prev.map((r) => (r.id === newRow.id ? newRow : r)) : [...prev, newRow];
+          }
+          if (eventType === "UPDATE" && newRow) {
+            return prev.map((r) => (r.id === newRow.id ? newRow : r));
+          }
           return prev;
         });
       }
@@ -1593,20 +1710,6 @@ async function recomputeOrderTotal(newItems?: ItemRow[]) {
 
 
     /* ===== UI state en Supabase (multi-dispositivo) ===== */
-  async function loadUIState(orderId: string) {
-    try {
-      const { data, error } = await supabase
-        .from(TABLE_UI_STATE)
-        .select("group_order, checked_map")
-        .eq("order_id", orderId)
-        .maybeSingle();
-      if (error) { console.error("loadUIState error", error); return; }
-      if (data?.group_order) setGroupOrder(data.group_order as string[]);
-      if (data?.checked_map) setCheckedMap(data.checked_map as Record<string, boolean>);
-    } catch (e) {
-      console.error("loadUIState exception", e);
-    }
-  }
 // Guarda (o actualiza) el resumen del pedido para este proveedor
 async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
   if (!provId) return;
@@ -1645,7 +1748,13 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
     checked_map?: Record<string, boolean>;
   }) {
     try {
-      const payload: any = { order_id: orderId, updated_at: new Date().toISOString() };
+      type UiStateRow = {
+        order_id: string;
+        updated_at: string;
+        group_order?: string[];
+        checked_map?: Record<string, boolean>;
+      };
+      const payload: UiStateRow = { order_id: orderId, updated_at: new Date().toISOString() };
       if (patch.group_order) payload.group_order = patch.group_order;
       if (patch.checked_map) payload.checked_map = patch.checked_map;
 
@@ -1744,7 +1853,7 @@ async function createGroup(groupName: string) {
 
   const candidates = [itemsTable, ...ITEM_TABLE_CANDIDATES.filter((t) => t !== itemsTable)];
   for (const table of candidates) {
-    const basePayload: Record<string, any> = {
+    const basePayload: ItemUpsertPayload = {
       order_id: order.id,
       product_name: GROUP_PLACEHOLDER,
       qty: 0,
@@ -1756,7 +1865,7 @@ async function createGroup(groupName: string) {
 
     let { data, error } = await supabase.from(table).insert([basePayload]).select('*').single();
     if (error?.code === '42703') {
-      const fallbackPayload = { ...basePayload } as Record<string, any>;
+      const fallbackPayload: ItemUpsertPayload = { ...basePayload };
       delete fallbackPayload.tenant_id;
       delete fallbackPayload.branch_id;
       const fallback = await supabase.from(table).insert([fallbackPayload]).select('*').single();
@@ -1815,12 +1924,7 @@ async function applySuggested(mode: "week" | "2w" | "30d"): Promise<boolean> {
       else if (mode === "2w") n = st.sum2w || 0;
       else n = st.sum30d || 0;
 
-      const pack = it.pack_size || 1;
-      if (pack > 1) {
-        // redondeo al múltiplo más cercano; cambiá a Math.ceil si querés “hacia arriba”
-        n = Math.round(n / pack) * pack;
-      }
-      return Math.max(0, Math.trunc(n));
+      return Math.max(0, snapToPack(n, it.pack_size));
     };
 
     // nuevo estado local
@@ -1843,9 +1947,9 @@ async function applySuggested(mode: "week" | "2w" | "30d"): Promise<boolean> {
         supabase.from(itemsTable).update({ qty: p.qty }).eq("id", p.id)
       )
     );
-    const err = results.find((r: any) => r.error);
-    if (err) {
-      console.warn("bulk update error", err.error);
+    const failed = results.find((res) => res.error);
+    if (failed?.error) {
+      console.warn("bulk update error", failed.error);
       return false; // dispara tu alert
     }
   }
@@ -1930,8 +2034,8 @@ async function snapshotPreviousQuantities() {
             .eq("id", p.id)
         )
       );
-      const err = results.find((r: any) => r.error);
-      if (err) throw err.error;
+      const failed = results.find((res) => res.error);
+      if (failed?.error) throw failed.error;
     }
 
     alert("Se guardó el pedido anterior ✅");
@@ -1953,7 +2057,7 @@ async function addItem(product: string, groupName: string) {
 
   const candidates = [itemsTable, ...ITEM_TABLE_CANDIDATES.filter((t) => t !== itemsTable)];
   for (const table of candidates) {
-    const basePayload: Record<string, any> = {
+    const basePayload: ItemUpsertPayload = {
       order_id: order.id,
       product_name: product,
       qty: st?.avg4w ?? 0,
@@ -1965,7 +2069,7 @@ async function addItem(product: string, groupName: string) {
 
     let { data, error } = await supabase.from(table).insert([basePayload]).select('*').single();
     if (error?.code === '42703') {
-      const fallbackPayload = { ...basePayload } as Record<string, any>;
+      const fallbackPayload: ItemUpsertPayload = { ...basePayload };
       delete fallbackPayload.tenant_id;
       delete fallbackPayload.branch_id;
       const fallback = await supabase.from(table).insert([fallbackPayload]).select('*').single();
@@ -1994,7 +2098,7 @@ async function bulkAddItems(names: string[], groupName: string) {
 
   const rows = names.map((name) => {
     const st = computeStats(sales, name, latestDateForProduct(sales, name));
-    const payload: Record<string, any> = {
+    const payload: ItemUpsertPayload = {
       order_id: order.id,
       product_name: name,
       qty: st?.avg4w ?? 0,
@@ -2011,7 +2115,7 @@ async function bulkAddItems(names: string[], groupName: string) {
     let { data, error } = await supabase.from(table).insert(rows).select('*');
     if (error?.code === '42703') {
       const fallbackRows = rows.map((row) => {
-        const copy = { ...row } as Record<string, any>;
+        const copy: ItemUpsertPayload = { ...row };
         delete copy.tenant_id;
         delete copy.branch_id;
         return copy;
@@ -2208,7 +2312,7 @@ async function handleCopySimpleList() {
 
     // Recorremos los GRUPOS en el mismo orden que se renderizan (memo `groups`)
     const lines: string[] = [];
-    for (const [groupName, arr] of groups) {
+    for (const [, arr] of groups) {
       // Ítems reales del grupo, con cantidad > 0
       const visibles = arr
         .filter(it => it.product_name !== GROUP_PLACEHOLDER && (it.qty || 0) > 0);
@@ -2262,9 +2366,12 @@ async function handleCopySimpleList() {
 async function exportOrderAsXlsx() {
   if (!order) throw new Error("El pedido todavía no está listo para exportar.");
   // Estilos si están; si no, cae a xlsx puro (sin romper)
-  let XLSX: any;
-  try { XLSX = await import("xlsx-js-style"); }
-  catch { XLSX = await import("xlsx"); }
+  let XLSX: XlsxModule;
+  try {
+    XLSX = (await import("xlsx-js-style")) as unknown as XlsxModule;
+  } catch {
+    XLSX = await import("xlsx");
+  }
 
   // ---- Helpers fecha (serial Excel) ----
   const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30);
@@ -2303,21 +2410,30 @@ async function exportOrderAsXlsx() {
 
   // Autofiltro + freeze (A..K)
   ws["!autofilter"] = { ref: "A1:K1" };
-  (ws as any)["!freeze"] = { xSplit: 0, ySplit: 1 };
-  (ws as any)["!pane"]   = { state: "frozen", ySplit: 1, topLeftCell: "A2", activePane: "bottomLeft" };
+  const sheetWithPane = ws as WorkSheet & {
+    "!freeze"?: unknown;
+    "!pane"?: unknown;
+  };
+  sheetWithPane["!freeze"] = { xSplit: 0, ySplit: 1 };
+  sheetWithPane["!pane"] = {
+    state: "frozen",
+    ySplit: 1,
+    topLeftCell: "A2",
+    activePane: "bottomLeft",
+  };
 
   // ===== Estilos =====
   const HEADER_BG = "FF5B21B6"; // lila oscuro
   const HEADER_FG = "FFFFFFFF";
-  const headerStyle = {
+  const headerStyle: NonNullable<CellObject["s"]> = {
     font: { bold: true, color: { rgb: HEADER_FG } },
     fill: { fgColor: { rgb: HEADER_BG } },
     alignment: { vertical: "center" },
-  } as any;
+  };
 
-  const COL_LIGHT = { fill: { fgColor: { rgb: "FFF3F4F6" } } }; // gris claro
-  const COL_DARK  = { fill: { fgColor: { rgb: "FFE5E7EB" } } }; // gris más oscuro
-  const colFillFor = (c: number) => (c % 2 === 0 ? COL_LIGHT : COL_DARK);
+  const COL_LIGHT: NonNullable<CellObject["s"]> = { fill: { fgColor: { rgb: "FFF3F4F6" } } }; // gris claro
+  const COL_DARK: NonNullable<CellObject["s"]>  = { fill: { fgColor: { rgb: "FFE5E7EB" } } }; // gris más oscuro
+  const colFillFor = (c: number): NonNullable<CellObject["s"]> => (c % 2 === 0 ? COL_LIGHT : COL_DARK);
 
   // Encabezado
   for (let c = 0; c < HEAD.length; c++) {
@@ -2347,10 +2463,10 @@ async function exportOrderAsXlsx() {
     });
 
   // Helper para escribir celda con zebra por columna
-  function setCell(r0: number, c: number, cell: any) {
+  function setCell(r0: number, c: number, cell: StyledCell) {
     const addr = XLSX.utils.encode_cell({ r: r0, c });
     const zebra = colFillFor(c);
-    ws[addr] = { ...cell, s: { ...(cell.s || {}), ...(zebra as any) } };
+    ws[addr] = { ...cell, s: { ...(cell.s ?? {}), ...zebra } };
   }
 
   // ---- Volcado de filas ----
@@ -2512,7 +2628,7 @@ async function exportOrderAsXlsx() {
     const XLSX = await import("xlsx");
     const wb = XLSX.read(buffer, { type: "array" });
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const aoa: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 });
     const head = (aoa[0] || []).map((x) => String(x || "").toLowerCase());
     const hasHeader = head.join("|").includes("grupo") && head.join("|").includes("producto");
     const body = hasHeader ? aoa.slice(1) : aoa;
@@ -2550,7 +2666,7 @@ async function exportOrderAsXlsx() {
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
-    } catch (err) {
+    } catch {
       throw new Error("El archivo JSON no tiene un formato válido.");
     }
     if (!isRecord(parsed)) throw new Error("Formato de backup inválido.");
@@ -2594,7 +2710,7 @@ async function exportOrderAsXlsx() {
         const productName = productRaw.trim();
         if (!productName) return null;
 
-        const row: Record<string, any> = {
+        const row: ItemUpsertPayload & { id?: string } = {
           order_id: order.id,
           product_name: productName,
           display_name: toNullableString(entry.displayName ?? entry.display_name),
@@ -2619,7 +2735,7 @@ async function exportOrderAsXlsx() {
 
         return row;
       })
-      .filter((row): row is Record<string, any> => Boolean(row));
+      .filter((row): row is ItemUpsertPayload & { id?: string } => Boolean(row));
 
     if (!rows.length) throw new Error("No se encontraron productos válidos en el archivo.");
 
@@ -2671,9 +2787,10 @@ async function exportOrderAsXlsx() {
         const buffer = await file.arrayBuffer();
         await importOrderFromXlsx(buffer);
       }
-    } catch (e: any) {
-      console.error("import error", e);
-      alert(`No se pudo importar el archivo.\n${e?.message ?? ""}`);
+    } catch (error: unknown) {
+      console.error("import error", error);
+      const message = error instanceof Error ? error.message : "";
+      alert(`No se pudo importar el archivo.\n${message}`);
     } finally {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -2686,12 +2803,12 @@ async function exportOrderAsXlsx() {
     try {
       setSalesImportError(null);
       const ts  = Date.now();
-      const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+      const safeName = file.name.replace(/[^\w.-]+/g, "_");
       const path = `${STORAGE_DIR_SALES}/sales_${ts}__${safeName}`;
 
       await ensureSalesBucketOnce();
 
-      let uploadError: any = null;
+      let uploadError: StorageError | null = null;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, {
           cacheControl: "3600",
@@ -2706,14 +2823,8 @@ async function exportOrderAsXlsx() {
         }
 
         uploadError = error;
-        const statusCode =
-          typeof error.statusCode === "number"
-            ? error.statusCode
-            : typeof (error as any)?.status === "number"
-            ? (error as any).status
-            : undefined;
-        const mentionsBucket =
-          typeof error.message === "string" && error.message.toLowerCase().includes("bucket");
+        const statusCode = readStatusCode(error);
+        const mentionsBucket = readErrorMessage(error).toLowerCase().includes("bucket");
         const shouldRetry = attempt === 0 && (statusCode === 404 || mentionsBucket);
         if (!shouldRetry) break;
         ensureSalesBucketPromise = null;
@@ -2722,15 +2833,10 @@ async function exportOrderAsXlsx() {
 
       let payload: SalesPersistMeta;
       if (uploadError) {
-        const statusCode =
-          typeof uploadError.statusCode === "number"
-            ? uploadError.statusCode
-            : typeof (uploadError as any)?.status === "number"
-            ? (uploadError as any).status
-            : undefined;
+        const statusCode = readStatusCode(uploadError);
         const isNotFound = statusCode === 404;
         const mentionsBucket =
-          typeof uploadError.message === "string" && uploadError.message.toLowerCase().includes("bucket");
+          readErrorMessage(uploadError).toLowerCase().includes("bucket");
         if (!isNotFound && !mentionsBucket) throw uploadError;
 
         const buffer = await file.arrayBuffer();
@@ -2776,7 +2882,9 @@ async function exportOrderAsXlsx() {
         try {
           const errJson = await response.json();
           if (errJson?.error) message = String(errJson.error);
-        } catch {}
+        } catch (parseError) {
+          console.warn("settings response parse failed", parseError);
+        }
         throw new Error(message);
       }
 
@@ -2789,28 +2897,14 @@ async function exportOrderAsXlsx() {
           ? "Ventas importadas y guardadas localmente (no se encontró el bucket de Storage). ✅"
           : "Ventas actualizadas desde el archivo importado ✅"
       );
-    } catch (e: any) {
-      console.error("handleImportSales error", e);
-      const message = e?.message ? String(e.message) : "";
+    } catch (error: unknown) {
+      console.error("handleImportSales error", error);
+      const message = readErrorMessage(error) || (error instanceof Error ? error.message : "");
       setSalesImportError(message || "No se pudo importar el archivo de ventas.");
       alert(`No se pudo importar el archivo de ventas.\n${message}`);
     } finally {
       setImportingSales(false);
       if (salesUploadRef.current) salesUploadRef.current.value = "";
-    }
-  }
-
-  async function resetSalesSource() {
-    try {
-      const salesKey = salesKeyForScope(tenantId ?? null, branchId ?? null);
-      await supabase.from(TABLE_SETTINGS).delete().eq("key", salesKey);
-      const rows = await loadSalesFromURL(VENTAS_URL);
-      setSales(rows);
-      setSalesMeta({ source: "default", label: "ventas.xlsx" });
-      alert("Se restableció la fuente de ventas por defecto.");
-    } catch (e: any) {
-      console.error(e);
-      alert(`No se pudo restablecer la fuente por defecto.\n${e?.message ?? ""}`);
     }
   }
 
@@ -2870,9 +2964,10 @@ async function exportOrderAsXlsx() {
       );
 
       cancelEditingSnapshot();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      alert(`No se pudo renombrar la versión.\n${err?.message ?? ""}`);
+      const message = readErrorMessage(err) || (err instanceof Error ? err.message : "");
+      alert(`No se pudo renombrar la versión.\n${message}`);
       snapshotTitleInputRef.current?.focus();
     } finally {
       setRenamingSnapshotId(null);
@@ -2920,9 +3015,10 @@ async function exportOrderAsXlsx() {
 
       await loadSnapshots();
       setHistoryOpen(true);
-    } catch (e: any) {
-      console.error(e);
-      alert(`No se pudo guardar en historial.\n${e?.message ?? ""}`);
+    } catch (error: unknown) {
+      console.error(error);
+      const message = readErrorMessage(error) || (error instanceof Error ? error.message : "");
+      alert(`No se pudo guardar en historial.\n${message}`);
     }
   }
 
@@ -3017,9 +3113,10 @@ async function exportOrderAsXlsx() {
       setExportingOrder(true);
       await handleExport(exportFormat);
       setExportDialogOpen(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("export error", err);
-      alert(`No se pudo exportar el pedido.\n${err?.message ?? ""}`);
+      const message = readErrorMessage(err) || (err instanceof Error ? err.message : "");
+      alert(`No se pudo exportar el pedido.\n${message}`);
     } finally {
       setExportingOrder(false);
     }
@@ -3047,13 +3144,15 @@ async function exportOrderAsXlsx() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-xs font-medium uppercase text-muted-foreground">Formato</label>
+              <Label htmlFor="export-format" className="text-xs font-medium uppercase text-muted-foreground">
+                Formato
+              </Label>
               <Select
                 value={exportFormat}
                 onValueChange={(value) => setExportFormat(value as OrderExportFormat)}
                 disabled={exportingOrder}
               >
-                <SelectTrigger className="mt-1">
+                <SelectTrigger id="export-format" className="mt-1">
                   <SelectValue placeholder="Seleccionar formato" />
                 </SelectTrigger>
                 <SelectContent>
@@ -3403,7 +3502,9 @@ async function exportOrderAsXlsx() {
 
       {/* Crear grupo */}
       <div className="mt-3">
-        <label className="text-xs text-muted-foreground">Crear grupo</label>
+        <Label htmlFor="new-group-name" className="text-xs text-muted-foreground">
+          Crear grupo
+        </Label>
         <GroupCreator onCreate={(name) => { if (name.trim()) void createGroup(name.trim()); }} />
       </div>
 
@@ -3426,12 +3527,14 @@ async function exportOrderAsXlsx() {
 
       {/* Ordenar items + Casilla maestra */}
       <div className="mt-2">
-        <label className="text-xs text-muted-foreground">Ordenar items</label>
+        <Label htmlFor="sort-mode" className="text-xs text-muted-foreground">
+          Ordenar items
+        </Label>
         <div className="mt-1 flex items-center gap-2">
           {/* Select de orden, ocupa el espacio */}
           <div className="flex-1">
             <Select value={sortMode} onValueChange={(v) => setSortMode(v as SortMode)}>
-              <SelectTrigger className="h-9">
+              <SelectTrigger id="sort-mode" className="h-9">
                 <SelectValue placeholder="Ordenar por..." />
               </SelectTrigger>
               <SelectContent>
@@ -3445,11 +3548,13 @@ async function exportOrderAsXlsx() {
 
           <div className="flex items-center gap-2">
             {/* Casilla maestra a la derecha */}
-            <label
+            <Label
+              htmlFor="check-all"
               className="inline-flex items-center gap-2 px-2 py-1 rounded-md border hover:bg-muted cursor-pointer"
               title={allChecked ? "Desmarcar todos" : "Marcar todos"}
             >
               <Checkbox
+                id="check-all"
                 checked={bulkState}
                 onCheckedChange={(v) => setAllChecked(v === true)}
                 aria-label={allChecked ? "Desmarcar todos" : "Marcar todos"}
@@ -3457,7 +3562,7 @@ async function exportOrderAsXlsx() {
               <span className="text-sm select-none hidden sm:inline">
                 {allChecked ? "Todos" : "Marcar todos"}
               </span>
-            </label>
+            </Label>
           </div>
         </div>
       </div>
@@ -3482,9 +3587,12 @@ async function exportOrderAsXlsx() {
           </AlertDialogHeader>
 
           <div className="mt-4 space-y-4">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-muted-foreground">Fecha y hora inicial</span>
+            <div className="flex flex-col gap-1 text-sm">
+              <Label htmlFor="stock-start-datetime" className="text-muted-foreground">
+                Fecha y hora inicial
+              </Label>
               <Input
+                id="stock-start-datetime"
                 type="datetime-local"
                 value={stockSalesInput}
                 onChange={(event) => {
@@ -3494,7 +3602,7 @@ async function exportOrderAsXlsx() {
                 disabled={stockProcessing}
                 className="max-w-xs"
               />
-            </label>
+            </div>
 
             <div className="text-xs text-muted-foreground">
               Stock aplicado última vez: {lastStockAppliedLabel ?? "—"}
@@ -3733,19 +3841,26 @@ async function exportOrderAsXlsx() {
   );
 }
 
+type ItemTitleProps = {
+  name: string;
+  canonical: string;
+  onCommit: (...args: [string]) => Promise<void> | void;
+};
+
 function ItemTitle({
   name,          // etiqueta visible
   canonical,     // clave real (product_name)
   onCommit,
-}: {
-  name: string;
-  canonical: string;
-  onCommit: (label: string) => Promise<void> | void;
-}) {
+}: ItemTitleProps) {
   const [editing, setEditing] = React.useState(false);
   const [val, setVal] = React.useState(name);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => setVal(name), [name]);
+
+  React.useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
 
   const commit = async () => {
     const next = (val || "").trim();
@@ -3779,7 +3894,7 @@ function ItemTitle({
   return (
     <div className="flex items-center gap-1">
       <Input
-        autoFocus
+        ref={inputRef}
         className="h-8"
         value={val}
         onChange={(e) => setVal(e.target.value)}
@@ -3796,17 +3911,24 @@ function ItemTitle({
     </div>
   );
 }
+type PackSizeEditorProps = {
+  value?: number | null;
+  onCommit: (...args: [number | null]) => Promise<void> | void;
+};
+
 function PackSizeEditor({
   value,
   onCommit,
-}: {
-  value?: number | null;
-  onCommit: (n: number | null) => Promise<void> | void;
-}) {
+}: PackSizeEditorProps) {
   const [editing, setEditing] = React.useState(false);
   const [val, setVal] = React.useState<string>(String(value ?? ""));
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => setVal(String(value ?? "")), [value]);
+
+  React.useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
 
   const commit = async () => {
     const n = parseInt(val || "0", 10);
@@ -3832,7 +3954,7 @@ function PackSizeEditor({
   return (
     <div className="inline-flex items-center gap-1">
       <Input
-        autoFocus
+        ref={inputRef}
         className="h-8 w-16 text-center"
         inputMode="numeric"
         placeholder="ej. 12"
@@ -3854,15 +3976,17 @@ function PackSizeEditor({
 
 
 /* ---------- PriceEditor ---------- */
+type PriceEditorProps = {
+  price: number;
+  updatedAt?: string | null;    // 👈 NUEVO
+  onCommit: (...args: [number]) => Promise<void> | void;
+};
+
 function PriceEditor({
   price,
   updatedAt,                    // 👈 NUEVO
   onCommit,
-}: {
-  price: number;
-  updatedAt?: string | null;    // 👈 NUEVO
-  onCommit: (n: number) => Promise<void> | void;
-}) {
+}: PriceEditorProps) {
   const [val, setVal] = React.useState<string>(String(price ?? 0));
   const [dirty, setDirty] = React.useState(false);
 
@@ -3956,19 +4080,21 @@ function PriceEditor({
 
 }
 
+type StockEditorProps = {
+  value?: number | null;
+  updatedAt?: string | null;
+  previousUpdatedAt?: string | null;
+  onCommit: (...args: [number | null]) => Promise<void> | void;
+  salesSince?: number;
+};
+
 function StockEditor({
   value,
   updatedAt,
   previousUpdatedAt,
   onCommit,
   salesSince,
-}: {
-  value?: number | null;
-  updatedAt?: string | null;
-  previousUpdatedAt?: string | null;
-  onCommit: (n: number | null) => Promise<void> | void;
-  salesSince?: number;
-}) {
+}: StockEditorProps) {
   const [val, setVal] = React.useState<string>(value == null ? "" : String(value));
   const [dirty, setDirty] = React.useState(false);
 
@@ -4026,8 +4152,6 @@ function StockEditor({
       };
     }
   }
-  const qtyFormatter = React.useMemo(() => new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }), []);
-
   return (
     <div className="w-full space-y-2">
       <div className="flex items-center justify-between gap-2">
@@ -4094,46 +4218,7 @@ function StockEditor({
 
 
 /* =================== GroupSection =================== */
-function GroupSection(props: {
-  groupName: string;
-  items: ItemRow[];
-  productNames: string[];
-  sales: SalesRow[];
-  margin: number;
-  tokenMatch: (name: string, q: string) => boolean;
-  placeholder: string;
-  onRenameItemLabel: (id: string, label: string) => Promise<void> | void; // 👈 NUEVO
-  computeSalesSinceStock: (product: string, fromTs: number | null) => number;
-  
-
-  // CRUD base
-  onAddItem: (name: string, groupName: string) => Promise<void>;
-  onRemoveItem: (id: string) => Promise<void>;
-  onUpdateQty: (id: string, qty: number) => Promise<void>;
-  onUpdateUnitPrice: (id: string, price: number) => Promise<void>;
-  onRenameGroup: (oldName: string, newName: string) => Promise<void>;
-  onDeleteGroup: (name: string) => Promise<void>;
-
-  onUpdatePackSize: (id: string, pack: number | null) => Promise<void>;
-  onUpdateStock: (id: string, stock: number | null) => Promise<void>;
-
-
-  // Selección masiva
-  onBulkAddItems?: (names: string[], groupName: string) => Promise<void>;
-  onBulkRemoveByNames?: (names: string[], groupName: string) => Promise<void>;
-  sortMode: SortMode;
-
-  // NUEVO: mover grupos
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-
-  // NUEVO: checks visuales por ítem
-  checkedMap: Record<string, boolean>;
-  setItemChecked: (id: string, val: boolean) => void;
-
-  // NUEVO: props del contenedor para DnD aplicados al AccordionItem
-  containerProps?: React.HTMLAttributes<HTMLDivElement>;
-}) {
+function GroupSection(props: GroupSectionProps) {
   const {
     groupName, items, productNames, sales, margin, tokenMatch, placeholder,
     onAddItem, onRemoveItem, onUpdateQty, onUpdateUnitPrice, onRenameGroup, onDeleteGroup,
@@ -4160,11 +4245,11 @@ function GroupSection(props: {
   function ensureInputVisible() {
     if (!inputRef.current) return;
     const r = inputRef.current.getBoundingClientRect();
-    const vv = (window as any).visualViewport as VisualViewport | undefined;
-    const vvHeight = vv?.height ?? window.innerHeight;
-    const vvOffsetTop = vv?.offsetTop ?? 0;
-    const safeTop = vvOffsetTop + 8;
-    const safeBottom = vvOffsetTop + vvHeight - 12;
+    const viewport = getVisualViewport();
+    const viewportHeight = viewport?.height ?? window.innerHeight;
+    const viewportOffsetTop = viewport?.offsetTop ?? 0;
+    const safeTop = viewportOffsetTop + 8;
+    const safeBottom = viewportOffsetTop + viewportHeight - 12;
     if (r.top >= safeTop && r.bottom <= safeBottom) return;
     inputRef.current.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
   }
@@ -4176,14 +4261,14 @@ function GroupSection(props: {
     window.addEventListener("resize", update, true);
     window.addEventListener("scroll", update, true);
 
-    const vv = (window as any).visualViewport as VisualViewport | undefined;
-    const onVV = () => {
+    const viewport = getVisualViewport();
+    const onViewportChange = () => {
       update();
       ensureInputVisible();
     };
-    if (vv) {
-      vv.addEventListener("resize", onVV);
-      vv.addEventListener("scroll", onVV);
+    if (viewport) {
+      viewport.addEventListener("resize", onViewportChange);
+      viewport.addEventListener("scroll", onViewportChange);
     }
 
     update();
@@ -4195,9 +4280,9 @@ function GroupSection(props: {
     return () => {
       window.removeEventListener("resize", update, true);
       window.removeEventListener("scroll", update, true);
-      if (vv) {
-        vv.removeEventListener("resize", onVV);
-        vv.removeEventListener("scroll", onVV);
+      if (viewport) {
+        viewport.removeEventListener("resize", onViewportChange);
+        viewport.removeEventListener("scroll", onViewportChange);
       }
       clearTimeout(t);
     };
@@ -4210,21 +4295,22 @@ function GroupSection(props: {
       if (!inputRef.current?.contains(t) && !portalRef.current?.contains(t)) setOpen(false);
     }
     document.addEventListener("mousedown", onDocDown);
-    document.addEventListener("touchstart", onDocDown as any, { passive: true } as any);
+    const onDocTouch = (event: TouchEvent) => onDocDown(event);
+    document.addEventListener("touchstart", onDocTouch, { passive: true });
     return () => {
       document.removeEventListener("mousedown", onDocDown);
-      document.removeEventListener("touchstart", onDocDown as any);
+      document.removeEventListener("touchstart", onDocTouch);
     };
   }, [open]);
 
   const portalStyle: React.CSSProperties = React.useMemo(() => {
     if (!rect) return {};
-    const vv = (window as any).visualViewport as VisualViewport | undefined;
-    const vvHeight = vv?.height ?? window.innerHeight;
-    const vvOffsetTop = vv?.offsetTop ?? 0;
+    const viewport = getVisualViewport();
+    const viewportHeight = viewport?.height ?? window.innerHeight;
+    const viewportOffsetTop = viewport?.offsetTop ?? 0;
 
     const top = rect.bottom + 8;
-    const available = Math.max(160, Math.floor(vvHeight - (rect.bottom - vvOffsetTop) - 16));
+    const available = Math.max(160, Math.floor(viewportHeight - (rect.bottom - viewportOffsetTop) - 16));
 
     return {
       position: "fixed",
@@ -4241,25 +4327,12 @@ function GroupSection(props: {
   const [editValue, setEditValue] = React.useState(groupName || "Sin grupo");
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
-  const sectionRef = React.useRef<HTMLDivElement | null>(null);
-  const [showFloater, setShowFloater] = React.useState(false);
-  const qtyFormatter = React.useMemo(
-    () => new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }),
-    []
-  );
-
+  const groupNameInputRef = React.useRef<HTMLInputElement | null>(null);
   React.useEffect(() => setEditValue(groupName || "Sin grupo"), [groupName]);
 
   React.useEffect(() => {
-    const el = sectionRef.current;
-    if (!el) return;
-    const io = new IntersectionObserver(
-      ([entry]) => setShowFloater(entry.isIntersecting),
-      { threshold: 0.001 }
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
+    if (editing) groupNameInputRef.current?.focus();
+  }, [editing]);
 
   const arrVisible = items.filter((x) => x.product_name !== placeholder);
   // Items visibles (sin placeholder) ya existe:
@@ -4301,18 +4374,18 @@ const confirmedCount = React.useMemo(
 
 const mergedClassName = [
   "border rounded mb-3 overflow-visible",
-  props.containerProps?.className || "",
+  containerProps?.className || "",
 ].join(" ");
 
   return (
   <AccordionItem
     value={groupName || "Sin grupo"}
     // aplicamos DnD sin pisar className
-    draggable={props.containerProps?.draggable}
-    onDragStart={props.containerProps?.onDragStart as any}
-    onDragOver={props.containerProps?.onDragOver as any}
-    onDrop={props.containerProps?.onDrop as any}
-    onDragEnd={props.containerProps?.onDragEnd as any}
+    draggable={containerProps?.draggable}
+    onDragStart={containerProps?.onDragStart}
+    onDragOver={containerProps?.onDragOver}
+    onDrop={containerProps?.onDrop}
+    onDragEnd={containerProps?.onDragEnd}
     className={mergedClassName}
   >
     {/* HEADER */}
@@ -4337,7 +4410,7 @@ const mergedClassName = [
             </span>
           ) : (
             <Input
-              autoFocus
+              ref={groupNameInputRef}
               className="h-8 w-[10.5rem]"
               value={editValue}
               onClick={(e) => e.stopPropagation()}
@@ -4422,7 +4495,7 @@ const mergedClassName = [
       {/* CONTENIDO */}
       {/* CONTENIDO */}
       <AccordionContent className="!overflow-visible">
-        <div ref={sectionRef} className="relative px-3 pb-3">
+          <div className="relative px-3 pb-3">
           {/* Buscador */}
           <div className="relative mb-3">
             <Input
@@ -4499,13 +4572,19 @@ const mergedClassName = [
               </div>
 
               <div className="py-1">
-                {suggestions.map((name) => {
+                {suggestions.map((name, idx) => {
                   const checked = arrVisible.some((it) => it.product_name === name);
                   const st = computeStats(sales, name, latestDateForProduct(sales, name));
                   const uEst = Math.round((st?.lastUnitRetail ?? st?.avgUnitRetail30d ?? 0) * (1 - (margin / 100)));
+                  const suggestionId = `suggestion-${normKey(groupName || "sin-grupo")}-${idx}`;
                   return (
-                    <label key={name} className="flex items-center gap-2 px-3 py-2 hover:bg-accent cursor-pointer">
+                    <Label
+                      key={name}
+                      htmlFor={suggestionId}
+                      className="flex items-center gap-2 px-3 py-2 hover:bg-accent cursor-pointer"
+                    >
                       <Checkbox
+                        id={suggestionId}
                         checked={checked}
                         onCheckedChange={async (v: CheckedState) => {
                           if (v === true) {
@@ -4521,7 +4600,7 @@ const mergedClassName = [
                         <div className="font-medium truncate">{name}</div>
                         <div className="text-xs text-muted-foreground">Precio est.: {fmtMoney(uEst)}</div>
                       </div>
-                    </label>
+                    </Label>
                   );
                 })}
               </div>
@@ -4562,14 +4641,15 @@ const mergedClassName = [
               >
                 <CardContent className="p-3 relative">
                   <div className="absolute right-3 top-3">
-                    <label className="inline-flex items-center gap-2">
+                    <Label htmlFor={`item-check-${it.id}`} className="inline-flex items-center gap-2">
                       <Checkbox
+                        id={`item-check-${it.id}`}
                         checked={isChecked}
                         onCheckedChange={(v) => setItemChecked(it.id, v === true)}
                         className={isChecked ? "data-[state=checked]:text-green-600" : ""}
                         aria-label="Marcar como cargado"
                       />
-                    </label>
+                    </Label>
                   </div>
 
                   <div className="grid grid-cols-1 items-start">
@@ -4677,7 +4757,7 @@ const mergedClassName = [
           })}
 
           {/* Botón flotante para cerrar el grupo */}
-          {true && !open && (
+          {!open && (
             <div className="fixed inset-x-0 z-70 pointer-events-none bottom-[calc(env(safe-area-inset-bottom)+var(--bottom-nav-h)+120px)]">
               <div className="mx-auto max-w-md px-3 flex justify-end">
                 <Button
@@ -4700,7 +4780,10 @@ const mergedClassName = [
 }
 
 /* ---------- Crear grupo ---------- */
-function GroupCreator({ onCreate }: { onCreate: (name: string) => void }) {
+type GroupCreatorProps = { onCreate: (...args: [string]) => void };
+/* eslint-enable no-unused-vars */
+
+function GroupCreator({ onCreate }: GroupCreatorProps) {
   const [name, setName] = React.useState("");
 
   function handleCreate() {
@@ -4719,6 +4802,7 @@ function GroupCreator({ onCreate }: { onCreate: (name: string) => void }) {
       }}
     >
       <Input
+        id="new-group-name"
         placeholder="Ej: Budines, Galletas..."
         value={name}
         onChange={(e) => setName(e.target.value)}

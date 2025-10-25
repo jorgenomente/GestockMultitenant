@@ -18,11 +18,15 @@ import {
   History as HistoryIcon,
   Snowflake,
   ChevronDown,
-  ChevronRight,
   X as XIcon,
   Search as SearchIcon,
   ChevronUp,
+  AlertTriangle,
+  CalendarClock,
+  Clock4,
+  Flame,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 /* =================== Config =================== */
 const PRECIOS_URL = "/precios.xlsx";
@@ -91,6 +95,31 @@ type OutboxEntry = {
   ts: number;
   tenantId?: string | null;
   branchId?: string | null;
+};
+
+
+type ExpirationInsertPayload = {
+  name: string;
+  exp_date: string;
+  qty: number;
+  confirmed: boolean;
+  freezer?: boolean;
+  tenant_id: string | null;
+  branch_id: string | null;
+};
+
+type ExpirationUpdatePayload = Partial<Pick<ExpirationInsertPayload, "name" | "exp_date" | "qty" | "confirmed" | "freezer">>;
+
+type ExpirationArchiveInsertPayload = {
+  source_id: string;
+  name: string;
+  exp_date: string;
+  qty: number;
+  confirmed: boolean;
+  archived_at: string;
+  tenant_id: string;
+  branch_id: string;
+  freezer?: boolean;
 };
 
 /* =================== Utils =================== */
@@ -190,6 +219,12 @@ function downloadJSON(filename: string, data: unknown) {
   const url = URL.createObjectURL(blob); const a = document.createElement("a");
   a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
 }
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim().length > 0) return error;
+  return fallback;
+}
 function downloadArchivesXLSX(rows: ArchivedItem[]) {
   const data = rows.map((r) => ({
     Producto: r.name,
@@ -229,7 +264,6 @@ export default function VencimientosPage() {
     storageSuffix ? `${LS_COMPACT_KEY_BASE}${storageSuffix}` : null
   ), [storageSuffix]);
 
-  const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [supabaseStatus, setSupabaseStatus] =
     React.useState<"online" | "offline" | "unknown">("unknown");
@@ -256,7 +290,9 @@ export default function VencimientosPage() {
   }, [lsCompactKey]);
   React.useEffect(() => {
     if (!lsCompactKey) return;
-    try { localStorage.setItem(lsCompactKey, JSON.stringify(compact)); } catch {}
+    try { localStorage.setItem(lsCompactKey, JSON.stringify(compact)); } catch {
+      /* ignore localStorage write errors */
+    }
   }, [compact, lsCompactKey]);
 
   // Buscador global
@@ -306,28 +342,47 @@ export default function VencimientosPage() {
 
   React.useEffect(() => {
     if (!lsArchiveKey) return;
-    try { localStorage.setItem(lsArchiveKey, JSON.stringify(archives)); } catch {}
+    try { localStorage.setItem(lsArchiveKey, JSON.stringify(archives)); } catch {
+      /* ignore localStorage write errors */
+    }
   }, [archives, lsArchiveKey]);
 
   /* ===== Helpers persistentes dentro del componente ===== */
-  function setItemsLocal(updater: (prev: ExpItem[]) => ExpItem[]) {
+  const setItemsLocal = React.useCallback((updater: React.SetStateAction<ExpItem[]>) => {
     setItems((prev) => {
-      const next = updater(prev);
+      const next = Array.isArray(updater)
+        ? updater
+        : updater(prev);
       if (lsKey) {
-        try { localStorage.setItem(lsKey, JSON.stringify(next)); } catch {}
+        try {
+          localStorage.setItem(lsKey, JSON.stringify(next));
+        } catch {
+          /* ignore localStorage write errors */
+        }
       }
-      return next;
+      return next as ExpItem[];
     });
-  }
-  function readOutbox(): OutboxEntry[] {
+  }, [lsKey]);
+
+  const readOutbox = React.useCallback((): OutboxEntry[] => {
     if (!lsOutboxKey) return [];
-    try { return JSON.parse(localStorage.getItem(lsOutboxKey) || "[]"); } catch { return []; }
-  }
-  function writeOutbox(entries: OutboxEntry[]) {
+    try {
+      return JSON.parse(localStorage.getItem(lsOutboxKey) || "[]") as OutboxEntry[];
+    } catch {
+      return [];
+    }
+  }, [lsOutboxKey]);
+
+  const writeOutbox = React.useCallback((entries: OutboxEntry[]) => {
     if (!lsOutboxKey) return;
-    try { localStorage.setItem(lsOutboxKey, JSON.stringify(entries)); } catch {}
-  }
-  function pushOutbox(entry: OutboxEntry) {
+    try {
+      localStorage.setItem(lsOutboxKey, JSON.stringify(entries));
+    } catch {
+      /* ignore localStorage write errors */
+    }
+  }, [lsOutboxKey]);
+
+  const pushOutbox = React.useCallback((entry: OutboxEntry) => {
     if (!lsOutboxKey) return;
     const enriched: OutboxEntry = {
       ...entry,
@@ -337,8 +392,9 @@ export default function VencimientosPage() {
     const cur = readOutbox();
     cur.push(enriched);
     writeOutbox(cur);
-  }
-  function adoptLocalTmpAsOutbox(localItems: ExpItem[]) {
+  }, [branchId, lsOutboxKey, readOutbox, tenantId, writeOutbox]);
+
+  const adoptLocalTmpAsOutbox = React.useCallback((localItems: ExpItem[]) => {
     if (!lsOutboxKey) return;
     if (!tenantId || !branchId) return;
     const queue = readOutbox();
@@ -352,8 +408,9 @@ export default function VencimientosPage() {
       }
     }
     if (changed) writeOutbox(queue);
-  }
-  async function syncOutbox() {
+  }, [branchId, lsOutboxKey, readOutbox, tenantId, writeOutbox]);
+
+  const syncOutbox = React.useCallback(async () => {
     const supabase = supabaseRef.current;
     if (!supabase || supabaseStatus !== "online") return;
     if (!lsOutboxKey) return;
@@ -365,14 +422,14 @@ export default function VencimientosPage() {
 
     for (const e of queue) {
       try {
-        const entryTenantId = e.tenantId ?? tenantId;
-        const entryBranchId = e.branchId ?? branchId;
+        const entryTenantId = e.tenantId ?? tenantId ?? null;
+        const entryBranchId = e.branchId ?? branchId ?? null;
         if ((e.op === "insert" || e.op === "delete" || e.op === "update") && (!entryTenantId || !entryBranchId)) {
           next.push(e);
           continue;
         }
         if (e.op === "insert" && e.item) {
-          const payload: any = {
+          const payload: ExpirationInsertPayload = {
             name: e.item.name,
             exp_date: e.item.expDate,
             qty: e.item.qty,
@@ -384,25 +441,26 @@ export default function VencimientosPage() {
 
           const { data, error } = await supabase.from("expirations").insert(payload).select("*").single();
           if (error) throw error;
+          const inserted = data as ExpRow;
 
-          const newId = data.id;
+          const newId = inserted.id;
           setItemsLocal((prev) =>
             prev.map((x) =>
               x.id === e.item!.id
                 ? {
                     id: newId,
-                    name: data.name,
-                    expDate: data.exp_date,
-                    qty: data.qty,
-                    confirmed: !!data.confirmed,
-                    freezer: !!data.freezer,
-                    updatedAt: epoch(data.updated_at),
+                    name: inserted.name,
+                    expDate: inserted.exp_date,
+                    qty: inserted.qty,
+                    confirmed: !!inserted.confirmed,
+                    freezer: !!inserted.freezer,
+                    updatedAt: epoch(inserted.updated_at ?? new Date()),
                   }
                 : x
             )
           );
         } else if (e.op === "update" && e.item) {
-          const upd: any = {
+          const upd: ExpirationUpdatePayload = {
             name: e.item.name,
             exp_date: e.item.expDate,
             qty: e.item.qty,
@@ -431,7 +489,7 @@ export default function VencimientosPage() {
       }
     }
     writeOutbox(next);
-  }
+  }, [branchId, lsOutboxKey, readOutbox, setItemsLocal, supabaseStatus, tenantId, writeOutbox]);
 
   /* ---------- Carga local + migración ---------- */
   React.useEffect(() => {
@@ -454,7 +512,9 @@ export default function VencimientosPage() {
 
   React.useEffect(() => {
     if (!lsKey) return;
-    try { localStorage.setItem(lsKey, JSON.stringify(items)); } catch {}
+    try { localStorage.setItem(lsKey, JSON.stringify(items)); } catch {
+      /* ignore localStorage write errors */
+    }
   }, [items, lsKey]);
 
   /* ---------- Precios.xlsx (autocomplete) ---------- */
@@ -475,31 +535,38 @@ export default function VencimientosPage() {
         const uniq = Array.from(new Set(rows.map((r) => String(r[descKey] ?? "").trim()).filter(Boolean)))
           .sort((a, b) => a.localeCompare(b));
         suggestionsRef.current = uniq;
-      } catch (e:any) { setError(e.message || "No pude leer precios.xlsx"); }
+      } catch (error: unknown) {
+        setError(getErrorMessage(error, "No pude leer precios.xlsx"));
+      }
     })();
   }, []);
 
   /* ---------- Supabase: expirations ---------- */
   React.useEffect(() => {
     const supabase = supabaseRef.current;
-    if (!supabase || !tenantId || !currentBranch?.id) { setLoading(false); setSupabaseStatus("offline"); return; }
-    const branchIdValue = currentBranch.id;
+    if (!supabase || !tenantId || !branchId) { setSupabaseStatus("offline"); return; }
+    const branchIdValue = branchId;
 
     (async () => {
-      setLoading(true);
       const { data, error } = await supabase
         .from("expirations")
         .select("*")
         .eq("tenant_id", tenantId)
         .eq("branch_id", branchIdValue)
         .order("updated_at", { ascending: false });
-      if (error) { setError(error.message); setSupabaseStatus("offline"); setLoading(false); return; }
+      if (error) { setError(error.message); setSupabaseStatus("offline"); return; }
 
       setHasFreezerCol(!!data?.[0] && Object.prototype.hasOwnProperty.call(data[0], "freezer"));
-      const remote = (data ?? []).map((r: any) => ({
-        id: r.id, name: r.name, expDate: r.exp_date, qty: r.qty,
-        confirmed: !!r.confirmed, freezer: !!r.freezer, updatedAt: epoch(r.updated_at),
-      })) as ExpItem[];
+      const remoteRows = (data ?? []) as ExpRow[];
+      const remote: ExpItem[] = remoteRows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        expDate: r.exp_date,
+        qty: r.qty,
+        confirmed: !!r.confirmed,
+        freezer: !!r.freezer,
+        updatedAt: epoch(r.updated_at ?? new Date()),
+      }));
 
       setItemsLocal((prev) => {
         const merged = mergeByIdPreferNewer(prev, remote);
@@ -507,7 +574,6 @@ export default function VencimientosPage() {
         return merged;
       });
       setSupabaseStatus("online");
-      setLoading(false);
 
       // Adoptar tmp_* antiguos a la cola y sincronizar
       await syncOutbox();
@@ -562,15 +628,17 @@ export default function VencimientosPage() {
 
 
     return () => { supabase.removeChannel(ch); };
-  }, [tenantId, currentBranch?.id]);
+  }, [adoptLocalTmpAsOutbox, branchId, setItemsLocal, syncOutbox, tenantId]);
 
   // Reintentar Outbox al volver online
-  React.useEffect(() => { if (supabaseStatus === "online") syncOutbox(); }, [supabaseStatus, tenantId, branchId]);
+  React.useEffect(() => {
+    if (supabaseStatus === "online") syncOutbox();
+  }, [branchId, supabaseStatus, syncOutbox, tenantId]);
 
   /* ---------- Supabase: expirations_archive ---------- */
   React.useEffect(() => {
-    const supabase = supabaseRef.current; if (!supabase || !tenantId || !currentBranch?.id) return;
-    const branchIdValue = currentBranch.id;
+    const supabase = supabaseRef.current; if (!supabase || !tenantId || !branchId) return;
+    const branchIdValue = branchId;
     (async () => {
       const { data, error } = await supabase
         .from("expirations_archive")
@@ -580,14 +648,23 @@ export default function VencimientosPage() {
         .order("archived_at", { ascending: false });
       if (error) { setArchiveErr(error.message); return; }
       setHasArchiveFreezerCol(!!data?.[0] && Object.prototype.hasOwnProperty.call(data[0], "freezer"));
-      const remote = (data ?? []).map((r: any) => ({
-        id: r.id, sourceId: r.source_id ?? null, name: r.name, expDate: r.exp_date, qty: r.qty,
-        confirmed: !!r.confirmed, freezer: !!r.freezer, archivedAt: epoch(r.archived_at),
-      })) as ArchivedItem[];
+      const remoteRows = (data ?? []) as ExpArchiveRow[];
+      const remote: ArchivedItem[] = remoteRows.map((r) => ({
+        id: r.id,
+        sourceId: r.source_id ?? null,
+        name: r.name,
+        expDate: r.exp_date,
+        qty: r.qty,
+        confirmed: !!r.confirmed,
+        freezer: !!r.freezer,
+        archivedAt: epoch(r.archived_at ?? new Date()),
+      }));
       if (remote.length > 0) {
-        const map = new Map<string, ArchivedItem>();
-        [...archives, ...remote].forEach((a) => map.set(a.id, a));
-        setArchives(Array.from(map.values()).sort((a,b)=>b.archivedAt-a.archivedAt));
+        setArchives((prev) => {
+          const map = new Map<string, ArchivedItem>();
+          [...prev, ...remote].forEach((a) => map.set(a.id, a));
+          return Array.from(map.values()).sort((a,b)=>b.archivedAt-a.archivedAt);
+        });
       }
     })();
     
@@ -625,7 +702,7 @@ export default function VencimientosPage() {
   .subscribe();
 
     return () => { supabase.removeChannel(ch); };
-  }, [tenantId, currentBranch?.id]);
+  }, [branchId, tenantId]);
 
   /* ---------- Handlers ---------- */
   function updateSuggestions(query: string) {
@@ -680,7 +757,7 @@ export default function VencimientosPage() {
     }
 
     // Online → insert directo
-    const payload: any = {
+    const payload: ExpirationInsertPayload = {
       name: optimistic.name,
       exp_date: optimistic.expDate,
       qty: optimistic.qty,
@@ -691,16 +768,19 @@ export default function VencimientosPage() {
     };
     let { data, error } = await supabase.from("expirations").insert(payload).select("*").single();
     if (error && hasFreezerErr(error.message)) {
-      ({ data, error } = await supabase.from("expirations")
-        .insert({
-          name: optimistic.name,
-          exp_date: optimistic.expDate,
-          qty: optimistic.qty,
-          confirmed: optimistic.confirmed,
-          tenant_id: tenantId,
-          branch_id: branchId,
-        })
-        .select("*").single());
+      const fallbackPayload: ExpirationInsertPayload = {
+        name: optimistic.name,
+        exp_date: optimistic.expDate,
+        qty: optimistic.qty,
+        confirmed: optimistic.confirmed,
+        tenant_id: tenantId,
+        branch_id: branchId,
+      };
+      ({ data, error } = await supabase
+        .from("expirations")
+        .insert(fallbackPayload)
+        .select("*")
+        .single());
     }
     if (error) {
       // Falla puntual → Outbox
@@ -708,8 +788,17 @@ export default function VencimientosPage() {
       onClear();
       return;
     }
+    const inserted = data as ExpRow;
     setItemsLocal((old) => old.map((x) => x.id === tempId
-      ? { id: data.id, name: data.name, expDate: data.exp_date, qty: data.qty, confirmed: !!data.confirmed, freezer: !!data.freezer, updatedAt: epoch(data.updated_at) }
+      ? {
+          id: inserted.id,
+          name: inserted.name,
+          expDate: inserted.exp_date,
+          qty: inserted.qty,
+          confirmed: !!inserted.confirmed,
+          freezer: !!inserted.freezer,
+          updatedAt: epoch(inserted.updated_at ?? new Date()),
+        }
       : x));
     onClear();
   }
@@ -735,7 +824,13 @@ export default function VencimientosPage() {
     const current = getDraftValue(id, "expDate", items.find((x) => x.id === id)?.expDate ?? "");
     const { masked, caret } = maskWithCaretLoose(current, e.target.value, selStart);
     setDraft(id, { expDate: masked });
-    requestAnimationFrame(() => { try { el.setSelectionRange(caret, caret); } catch {} });
+    requestAnimationFrame(() => {
+      try {
+        el.setSelectionRange(caret, caret);
+      } catch {
+        /* selection range not supported */
+      }
+    });
   }
 
   async function updateItemRemote(id: string, patch: Partial<ExpItem>) {
@@ -755,7 +850,7 @@ export default function VencimientosPage() {
     }
 
     // Online
-    const upd: any = {};
+    const upd: ExpirationUpdatePayload = {};
     if (patch.name !== undefined) upd.name = patch.name;
     if (patch.expDate !== undefined) upd.exp_date = patch.expDate;
     if (patch.qty !== undefined) upd.qty = patch.qty;
@@ -769,7 +864,8 @@ export default function VencimientosPage() {
       .eq("tenant_id", tenantId ?? null)
       .eq("branch_id", branchId ?? null);
     if (error && hasFreezerErr(error.message)) {
-      const { freezer, ...updBase } = upd;
+      const updBase = { ...upd };
+      delete updBase.freezer;
       ({ error } = await supabase
         .from("expirations")
         .update(updBase)
@@ -870,13 +966,15 @@ export default function VencimientosPage() {
     clearDraft(id);
 
     const supabase = supabaseRef.current; if (!supabase) return;
-    const base: any = {
+    const base: ExpirationArchiveInsertPayload = {
       source_id: it.id, name: arch.name, exp_date: arch.expDate, qty: arch.qty,
       confirmed: arch.confirmed, archived_at: new Date(arch.archivedAt).toISOString(),
       tenant_id: tenantId,
       branch_id: branchId,
     };
-    let payload = hasArchiveFreezerCol ? { ...base, freezer: arch.freezer ?? false } : base;
+    const payload: ExpirationArchiveInsertPayload = hasArchiveFreezerCol
+      ? { ...base, freezer: arch.freezer ?? false }
+      : base;
     let { data, error } = await supabase.from("expirations_archive").insert(payload).select("*").single();
     if (error && hasFreezerErr(error.message)) {
       ({ data, error } = await supabase.from("expirations_archive").insert(base).select("*").single());
@@ -926,20 +1024,20 @@ export default function VencimientosPage() {
   // NUEVA clave de grupo
   type GroupKey = "gx" | "g1" | "g2" | "g3" | "gf"; // gx=vencidos, g1=1-3d, g2=4-10d, g3=11+d/invalid
 
-  function groupKey(it: ExpItem): Exclude<GroupKey,"gf"> {
+  const groupKey = React.useCallback((it: ExpItem): Exclude<GroupKey,"gf"> => {
     const d = daysUntil(it.expDate);
     if (d === null) return "g3";
     if (d < 0) return "gx";        // Vencidos
     if (d >= 1 && d <= 3) return "g1";
     if (d <= 10) return "g2";
     return "g3";
-  }
+  }, []);
 
   const groups = React.useMemo(() => {
     const acc: Record<Exclude<GroupKey,"gf">, ExpItem[]> = { gx: [], g1: [], g2: [], g3: [] };
     for (const it of filteredItems) acc[groupKey(it)].push(it);
     return acc;
-  }, [filteredItems]);
+  }, [filteredItems, groupKey]);
 
   const freezerItems = React.useMemo(() => {
     return filteredItems.filter((it) => (drafts[it.id]?.freezer ?? it.freezer) === true);
@@ -951,10 +1049,114 @@ export default function VencimientosPage() {
   function toggle(key: GroupKey) { setOpen((o) => ({ ...o, [key]: !o[key] })); }
 
   // Clases de tamaños
-  const labelCls = compact ? "text-[10px]" : "text-[11px]";
-  const inputCls = compact ? "h-8 px-2 text-xs" : "h-9 text-sm";
-  const chipCls = compact ? "text-[10px] px-2 py-0.5" : "text-[11px] px-2 py-1";
-  const timeCls = compact ? "text-[10px]" : "text-[11px]";
+  const labelCls = compact
+    ? "text-[11px] font-medium text-muted-foreground"
+    : "text-xs font-medium uppercase tracking-wide text-muted-foreground";
+  const inputCls = `${compact ? "h-9 text-xs" : "h-11 text-sm"} rounded-xl border border-border/40 bg-[rgba(23,33,30,0.85)] focus-visible:border-ring/70 focus-visible:ring-ring/30`;
+  const chipCls = compact ? "text-[10px] px-2 py-0.5" : "text-xs px-3 py-1";
+  const timeCls = compact ? "text-[11px]" : "text-xs";
+
+  type GroupMeta = {
+    label: string;
+    description: string;
+    icon: LucideIcon;
+    empty: string;
+    bubbleTone: string;
+    badgeTone: string;
+  };
+
+  const groupMeta: Record<GroupKey, GroupMeta> = {
+    gf: {
+      label: "Freezer",
+      description: "Productos marcados para frío",
+      icon: Snowflake,
+      empty: "No hay productos marcados como Freezer.",
+      bubbleTone: "border border-border/40 bg-[rgba(125,170,146,0.22)] text-[var(--color-action-secondary)]",
+      badgeTone: "bg-[rgba(125,170,146,0.22)] text-[var(--color-action-secondary)]",
+    },
+    gx: {
+      label: "Vencidos",
+      description: "Atención inmediata",
+      icon: AlertTriangle,
+      empty: "Sin productos en este rango.",
+      bubbleTone: "border border-border/40 bg-[rgba(193,100,59,0.2)] text-[var(--destructive)]",
+      badgeTone: "bg-[rgba(193,100,59,0.2)] text-[var(--destructive)]",
+    },
+    g1: {
+      label: "Vence en 1 a 3 días",
+      description: "Prioridad alta",
+      icon: Flame,
+      empty: "Sin productos en este rango.",
+      bubbleTone: "border border-border/40 bg-[rgba(234,152,68,0.18)] text-[#F7C58C]",
+      badgeTone: "bg-[rgba(234,152,68,0.18)] text-[#F7C58C]",
+    },
+    g2: {
+      label: "Faltan 4 a 10 días",
+      description: "Planificá seguimiento",
+      icon: Clock4,
+      empty: "Sin productos en este rango.",
+      bubbleTone: "border border-border/40 bg-[rgba(125,170,146,0.18)] text-[var(--color-action-secondary)]",
+      badgeTone: "bg-[rgba(125,170,146,0.18)] text-[var(--color-action-secondary)]",
+    },
+    g3: {
+      label: "Más adelante (11+ días)",
+      description: "Control de largo plazo",
+      icon: CalendarClock,
+      empty: "Sin productos en este rango.",
+      bubbleTone: "border border-border/40 bg-[rgba(90,123,153,0.18)] text-[#9DBAD1]",
+      badgeTone: "bg-[rgba(90,123,153,0.18)] text-[#9DBAD1]",
+    },
+  };
+
+  const groupSections: Array<{ key: GroupKey; items: ExpItem[] }> = [
+    { key: "gf", items: freezerItems },
+    { key: "gx", items: groups.gx },
+    { key: "g1", items: groups.g1 },
+    { key: "g2", items: groups.g2 },
+    { key: "g3", items: groups.g3 },
+  ];
+
+  const summaryMetrics = React.useMemo(
+    () => [
+      {
+        key: "freezer" as const,
+        label: "Freezer",
+        value: freezerItems.length,
+        description: "Productos en frío",
+        icon: Snowflake,
+        tone: "text-[var(--color-action-secondary)]",
+        bubble: "bg-[rgba(125,170,146,0.2)] border border-border/40",
+      },
+      {
+        key: "expired" as const,
+        label: "Vencidos",
+        value: groups.gx.length,
+        description: "Revisá urgente",
+        icon: AlertTriangle,
+        tone: "text-[var(--destructive)]",
+        bubble: "bg-[rgba(193,100,59,0.2)] border border-border/40",
+      },
+      {
+        key: "next" as const,
+        label: "Próximos (1-10 días)",
+        value: groups.g1.length + groups.g2.length,
+        description: "Seguimiento cercano",
+        icon: Clock4,
+        tone: "text-[var(--color-action-secondary)]",
+        bubble: "bg-[rgba(125,170,146,0.18)] border border-border/40",
+      },
+      {
+        key: "later" as const,
+        label: "Más adelante (11+ días)",
+        value: groups.g3.length,
+        description: "Control a futuro",
+        icon: CalendarClock,
+        tone: "text-[#9DBAD1]",
+        bubble: "bg-[rgba(90,123,153,0.2)] border border-border/40",
+      },
+    ],
+    [freezerItems.length, groups.g1.length, groups.g2.length, groups.g3.length, groups.gx.length]
+  );
 
   // Botón flotante: volver arriba
   const ScrollTopFab: React.FC = () => {
@@ -972,7 +1174,7 @@ export default function VencimientosPage() {
         onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
         aria-label="Volver arriba"
         title="Volver arriba"
-        className="fixed right-4 sm:right-6 h-12 w-12 rounded-full shadow-lg z-50"
+        className="fixed right-4 z-50 h-12 w-12 rounded-full bg-[var(--color-action-secondary)] text-[var(--background)] shadow-[0_12px_28px_rgba(0,0,0,0.35)] transition-transform hover:-translate-y-0.5 sm:right-6"
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 72px)" }}
       >
         <ChevronUp className="h-6 w-6" />
@@ -986,6 +1188,8 @@ export default function VencimientosPage() {
     const expShown  = getDraftValue(it.id, "expDate", it.expDate);
     const qtyShown = getDraftValue<number | "">(it.id, "qty", it.qty);
     const freezerShown = getDraftValue(it.id, "freezer", it.freezer ?? false);
+    const expInputId = `exp-${it.id}`;
+    const qtyInputId = `qty-${it.id}`;
 
     const sev = getSeverity(expShown);
     const accentColor = severityAccentColor(sev);
@@ -993,120 +1197,145 @@ export default function VencimientosPage() {
     const hasDraft = !!drafts[it.id];
 
     const cardStyle: React.CSSProperties = {
-      backgroundColor: "var(--card)",
-      borderColor: "var(--border)",
+      background: "linear-gradient(135deg, rgba(32,43,39,0.95), rgba(24,32,29,0.88))",
+      borderColor: "rgba(75,91,83,0.55)",
       borderLeftColor: accentColor,
       borderLeftWidth: compact ? 4 : 6,
     };
 
     const chipStyle: React.CSSProperties = {
       backgroundColor: accentColor,
-      color: "var(--card-foreground)",
+      color: "var(--background)",
       borderColor: accentColor,
+      boxShadow: "0 10px 18px -12px rgba(0,0,0,0.9)",
     };
 
+    const cardClass = [
+      "overflow-hidden rounded-3xl border border-border/40 px-0",
+      compact ? "py-3" : "py-4",
+      "shadow-[0_24px_48px_-28px_rgba(0,0,0,0.8)] transition-transform duration-200 hover:-translate-y-0.5 backdrop-blur-[1px]",
+      !hasDraft && it.confirmed ? "ring-1 ring-[var(--color-action-secondary)]/60" : "ring-1 ring-transparent",
+    ].join(" ");
+
+    const contentSpacing = compact ? "px-4 py-3 sm:px-4" : "px-4 py-5 sm:px-5";
+
+    const freezerButtonClass = `h-9 w-9 rounded-xl border transition-colors ${
+      freezerShown
+        ? "border-[var(--color-action-secondary)] bg-[var(--color-action-secondary)] text-[var(--background)] hover:bg-[var(--color-action-secondary)]/90"
+        : "border-border/40 bg-[rgba(64,82,75,0.4)] text-[var(--color-action-secondary)] hover:bg-[rgba(64,82,75,0.6)]"
+    }`;
+
+    const archiveButtonClass =
+      "h-9 w-9 rounded-xl border border-border/40 bg-[rgba(193,100,59,0.18)] text-[var(--destructive)] transition-colors hover:bg-[rgba(193,100,59,0.28)]";
+
+    const applyButtonClass = `h-9 w-9 rounded-xl border border-[var(--color-action-secondary)] bg-[var(--color-action-secondary)] text-[var(--background)] transition-colors hover:bg-[var(--color-action-secondary)]/90 ${
+      !hasDraft && it.confirmed ? "opacity-70" : ""
+    }`;
+
+    const deleteButtonClass = "h-9 w-9 rounded-xl";
+
     return (
-      <Card
-        key={it.id}
-        className={`${compact ? "shadow-none" : "shadow-sm"} border bg-[var(--card)] ${it.confirmed && !hasDraft ? "ring-2 ring-offset-0" : ""}`}
-        style={cardStyle}
-      >
-        <CardContent className={`${compact ? "p-2" : "p-3 pt-0 pb-0"} space-y-2`}>
-          {/* Fila 1 */}
-          <div className="grid grid-cols-12 gap-2 sm:flex sm:items-center">
-            <div className="col-span-12 sm:flex-1">
+      <Card key={it.id} className={cardClass} style={cardStyle}>
+        <CardContent className={`space-y-4 ${contentSpacing}`}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+            <div className="flex-1">
               <Input
                 value={nameShown as string}
                 onChange={(e) => onEditNameDraft(it.id, e.target.value)}
-                className={`w-full h-10 text-sm sm:h-8 sm:text-sm`}
+                className={`${inputCls} w-full ${compact ? "text-sm" : "text-base"}`}
                 aria-label="Producto"
               />
             </div>
-
-            <div className="col-span-6 sm:ml-2 sm:mr-2 sm:shrink-0 sm:self-center">
-              <span
-                className={`inline-block rounded-full border font-semibold ${chipCls}`}
-                title={sevText}
-                style={chipStyle}
-              >
-                {sevText}
-              </span>
-            </div>
-
-            <div className="col-span-6 sm:ml-auto sm:flex sm:items-center sm:gap-1 justify-end space-x-1">
+            <span
+              className={`inline-flex items-center justify-center rounded-full border font-semibold uppercase tracking-wide ${chipCls}`}
+              title={sevText}
+              style={chipStyle}
+            >
+              {sevText}
+            </span>
+            <div className="flex flex-wrap items-center gap-2 sm:self-start">
               <Button
                 size="icon"
-                variant={freezerShown ? undefined : "secondary"}
+                variant="ghost"
                 onClick={() => toggleFreezer(it.id)}
                 aria-label="Marcar como Freezer"
                 title="Marcar como Freezer"
-                className={`${compact ? "h-8 w-8" : "h-8 w-8"}`}
-                style={freezerShown ? { backgroundColor: "var(--color-action-secondary)", color: "var(--accent-foreground)" } : undefined}
+                className={freezerButtonClass}
               >
                 <Snowflake className="h-4 w-4" />
               </Button>
 
               {isExpired(expShown) && (
-                <Button size="icon" variant="secondary" onClick={() => archiveItem(it.id)}
-                  aria-label="Archivar (solo vencidos)" title="Archivar (solo vencidos)"
-                  className={`${compact ? "h-8 w-8" : "h-8 w-8"}`}>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => archiveItem(it.id)}
+                  aria-label="Archivar (solo vencidos)"
+                  title="Archivar (solo vencidos)"
+                  className={archiveButtonClass}
+                >
                   <Archive className="h-4 w-4" />
                 </Button>
               )}
 
               <Button
                 size="icon"
+                variant="ghost"
                 onClick={() => applyChanges(it.id)}
-                aria-label={(!hasDraft && it.confirmed) ? "Cambios aplicados" : "Aplicar cambios"}
-                title={(!hasDraft && it.confirmed) ? "Cambios aplicados" : "Aplicar cambios"}
-                className={`${compact ? "h-8 w-8" : "h-8 w-8"}`}
-                style={{
-                  backgroundColor: "var(--color-success)",
-                  color: "var(--success-foreground)",
-                  opacity: !hasDraft && it.confirmed ? 0.65 : 1,
-                }}
+                aria-label={!hasDraft && it.confirmed ? "Cambios aplicados" : "Aplicar cambios"}
+                title={!hasDraft && it.confirmed ? "Cambios aplicados" : "Aplicar cambios"}
+                className={applyButtonClass}
               >
                 <Check className="h-4 w-4" />
               </Button>
 
-              <Button size="icon" variant="destructive" onClick={() => deleteItem(it.id)}
-                aria-label="Eliminar" title="Eliminar" className={`${compact ? "h-8 w-8" : "h-8 w-8"}`}>
+              <Button
+                size="icon"
+                variant="destructive"
+                onClick={() => deleteItem(it.id)}
+                aria-label="Eliminar"
+                title="Eliminar"
+                className={deleteButtonClass}
+              >
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
           </div>
 
-          {/* Fila 2 */}
-          <div className="grid grid-cols-12 gap-2 items-center">
-            <div className="col-span-7 sm:col-span-6">
-              <label className={`block text-muted-foreground ${labelCls} mb-0.5`}>
+          <div className="grid grid-cols-12 items-end gap-3">
+            <div className="col-span-12 sm:col-span-5">
+              <label className={`mb-1 block ${labelCls}`} htmlFor={expInputId}>
                 Vencimiento (dd-mm-aa)
               </label>
               <Input
+                id={expInputId}
                 inputMode="numeric"
                 pattern="[0-9\\-]*"
                 value={expShown as string}
                 onChange={(e) => onEditExpDateDraft(it.id, e)}
-                className={inputCls}
+                className={`${inputCls} w-full`}
                 aria-label="Vencimiento dd-mm-aa"
               />
             </div>
 
-            <div className="col-span-5 sm:col-span-3">
-              <label className={`block text-muted-foreground ${labelCls} mb-0.5`}>Cant.</label>
+            <div className="col-span-6 sm:col-span-3">
+              <label className={`mb-1 block ${labelCls}`} htmlFor={qtyInputId}>
+                Cant.
+              </label>
               <Input
+                id={qtyInputId}
                 inputMode="numeric"
                 pattern="\\d*"
                 value={qtyShown === "" ? "" : String(qtyShown)}
                 onChange={(e) => onEditQtyDraft(it.id, e)}
-                className={inputCls}
+                className={`${inputCls} w-full`}
                 aria-label="Cantidad"
               />
             </div>
 
-            <div className="col-span-12 sm:col-span-3 text-right">
+            <div className="col-span-6 sm:col-span-4 sm:text-right">
               <p className={`text-muted-foreground ${timeCls}`}>
-                { drafts[it.id] ? "Pendiente de aplicar" : (it.confirmed ? "Cambios aplicados" : "Pendiente de aplicar") }
+                {drafts[it.id] ? "Pendiente de aplicar" : it.confirmed ? "Cambios aplicados" : "Pendiente de aplicar"}
                 {" · "}
                 {new Date(it.updatedAt).toLocaleString()}
                 {freezerShown ? " · Freezer" : ""}
@@ -1120,303 +1349,383 @@ export default function VencimientosPage() {
 
   /* =================== Render =================== */
   return (
-    <div className={`p-4 pb-24 mx-auto ${compact ? "max-w-screen-sm" : "max-w-screen-sm"}`}>
-      {/* Header + Acciones */}
-      <div className="relative flex items-center gap-2 mb-3">
-        <h1 className="text-lg font-semibold">Vencimientos</h1>
+    <div className="min-h-screen w-full bg-[radial-gradient(circle_at_top,rgba(125,170,146,0.18),transparent_60%)] pb-10">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-24 pt-6 sm:px-6 lg:px-8">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight text-card-foreground sm:text-4xl">
+            Vencimientos
+          </h1>
+          <p className="text-sm text-muted-foreground sm:text-base">
+            Registro y control de productos próximos a vencer.
+          </p>
+        </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant={compact ? "default" : "secondary"}
-            onClick={() => setCompact((v) => !v)} title="Alternar vista compacta">
-            {compact ? "Vista compacta: ON" : "Vista compacta: OFF"}
-          </Button>
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="space-y-6">
+            <div className="rounded-3xl border border-border/40 bg-card/70 p-4 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur-sm sm:p-6">
+              <div className="space-y-4">
+                <div className="relative">
+                  <SearchIcon className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground/70" />
+                  <Input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar producto o fecha (dd-mm-aa)…"
+                    className="h-12 rounded-full border border-border/40 bg-[rgba(23,33,30,0.85)] pl-12 pr-16 text-sm shadow-[0_18px_42px_-28px_rgba(0,0,0,0.85)] sm:text-base"
+                    aria-label="Buscar productos"
+                  />
+                  {searchQuery ? (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-[rgba(64,82,75,0.45)] p-2 text-muted-foreground transition hover:bg-[rgba(64,82,75,0.65)]"
+                      aria-label="Limpiar búsqueda"
+                      title="Limpiar búsqueda"
+                    >
+                      <XIcon className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
 
-          <Button size="sm" variant="secondary"
-            onClick={() => setShowArchivePanel((v) => !v)}
-            title="Ver historial" className="flex items-center gap-2">
-            <HistoryIcon className="h-4 w-4" /> Historial
-          </Button>
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCompact((v) => !v)}
+                    title="Alternar vista compacta"
+                    className={`rounded-full border-border/40 bg-[rgba(32,43,39,0.75)] px-4 py-2 text-sm font-semibold text-card-foreground transition hover:bg-[rgba(36,48,44,0.85)] ${
+                      compact ? "ring-1 ring-[var(--color-action-secondary)]/70" : ""
+                    }`}
+                  >
+                    {compact ? "Vista compacta: ON" : "Vista compacta: OFF"}
+                  </Button>
 
-          {showArchivePanel && (
-            <div className="absolute right-0 top-full mt-2 w-[min(100vw,640px)] rounded-lg border bg-background shadow-lg z-30"
-                role="dialog" aria-label="Histórico archivados">
-              <div className="p-3 flex items-center gap-2 border-b">
-                <span className="font-semibold">Histórico</span>
-                <span className="text-sm text-muted-foreground">({archives.length})</span>
-                <Input placeholder="Buscar en histórico…" value={archiveQuery}
-                  onChange={(e)=>setArchiveQuery(e.target.value)} className="ml-auto h-8" />
-                <Button size="sm" variant="secondary" onClick={() => downloadArchivesXLSX(archives)}>
-                  Exportar Excel
-                </Button>
-                <Button size="sm" variant="secondary"
-                  onClick={() => downloadJSON(`vencimientos-archivados-${new Date().toISOString().slice(0,10)}.json`, archives)}>
-                  Exportar JSON
-                </Button>
-              </div>
-              {archiveErr && <p className="px-3 pt-2 text-xs text-red-600">{archiveErr}</p>}
-              <div className="max-h-[50vh] overflow-auto p-2">
-                {archives.length === 0 ? (
-                  <p className="text-sm text-muted-foreground px-1 py-2">No hay productos archivados.</p>
-                ) : (
-                  archives
-                    .filter(a => {
-                      const q = normText(archiveQuery);
-                      if (!q) return true;
-                      return normText(a.name).includes(q) || normText(a.expDate).includes(q);
-                    })
-                    .map((a) => (
+                  <div className="relative">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowArchivePanel((v) => !v)}
+                      title="Ver historial"
+                      className="flex items-center gap-2 rounded-full border-border/40 bg-[rgba(32,43,39,0.75)] px-4 py-2 text-sm font-semibold text-card-foreground transition hover:bg-[rgba(36,48,44,0.85)]"
+                    >
+                      <HistoryIcon className="h-4 w-4" /> Historial
+                    </Button>
+
+                    {showArchivePanel && (
                       <div
-                        key={a.id}
-                        className="grid grid-cols-12 gap-2 items-center px-1 py-2 border-b last:border-b-0 text-sm"
+                        className="absolute right-0 top-full z-40 mt-3 w-[min(100vw,360px)] overflow-hidden rounded-2xl border border-border/40 bg-[rgba(28,38,35,0.96)] shadow-[0_32px_64px_-28px_rgba(0,0,0,0.88)] backdrop-blur-lg"
+                        role="dialog"
+                        aria-label="Histórico archivados"
                       >
-                        <div className="col-span-5 truncate" title={a.name}>{a.name}</div>
-                        <div className="col-span-2 text-right">{a.qty}</div>
-                        <div className="col-span-2 text-right">{a.expDate}</div>
-                        <div className="col-span-2 text-right">{a.freezer ? "Freezer" : ""}</div>
-                        <div className="col-span-1 flex justify-end">
+                        <div className="flex items-center gap-2 border-b border-border/40 px-4 py-3">
+                          <span className="text-sm font-semibold text-card-foreground">Histórico</span>
+                          <span className="text-xs text-muted-foreground">({archives.length})</span>
+                          <Input
+                            placeholder="Buscar en histórico…"
+                            value={archiveQuery}
+                            onChange={(e) => setArchiveQuery(e.target.value)}
+                            className="ml-auto h-9 w-full min-w-[140px] rounded-full border border-border/40 bg-[rgba(23,33,30,0.85)] px-4 text-xs sm:w-48"
+                          />
                           <Button
-                            size="icon"
-                            variant="destructive"
-                            className="h-7 w-7"
-                            title="Eliminar de historial"
-                            onClick={async () => {
-                              if (!confirm(`¿Seguro que querés borrar "${a.name}" del historial?`)) return;
-                              setArchives((prev) => prev.filter((x) => x.id !== a.id));
-                              const supabase = supabaseRef.current;
-                              if (supabase) {
-                                const { error } = await supabase.from("expirations_archive").delete().eq("id", a.id);
-                                if (error) {
-                                  alert("No pude borrar en servidor: " + error.message);
-                                  setArchives((prev) => [a, ...prev]); // rollback si falla
-                                }
-                              }
-                            }}
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => downloadArchivesXLSX(archives)}
+                            className="rounded-full border border-border/40 bg-[rgba(36,48,44,0.65)] text-xs text-card-foreground hover:bg-[rgba(36,48,44,0.85)]"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            Exportar Excel
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              downloadJSON(
+                                `vencimientos-archivados-${new Date().toISOString().slice(0, 10)}.json`,
+                                archives
+                              )
+                            }
+                            className="rounded-full border border-border/40 bg-[rgba(36,48,44,0.65)] text-xs text-card-foreground hover:bg-[rgba(36,48,44,0.85)]"
+                          >
+                            Exportar JSON
                           </Button>
                         </div>
+                        {archiveErr && (
+                          <p className="px-4 pt-2 text-xs text-red-500">{archiveErr}</p>
+                        )}
+                        <div className="max-h-[50vh] overflow-auto px-2 py-3">
+                          {archives.length === 0 ? (
+                            <p className="rounded-xl px-3 py-2 text-sm text-muted-foreground">
+                              No hay productos archivados.
+                            </p>
+                          ) : (
+                            archives
+                              .filter((a) => {
+                                const q = normText(archiveQuery);
+                                if (!q) return true;
+                                return normText(a.name).includes(q) || normText(a.expDate).includes(q);
+                              })
+                              .map((a) => (
+                                <div
+                                  key={a.id}
+                                  className="grid grid-cols-12 items-center gap-2 rounded-xl px-2 py-2 text-xs text-card-foreground transition hover:bg-[rgba(36,48,44,0.65)]"
+                                >
+                                  <div className="col-span-5 truncate" title={a.name}>
+                                    {a.name}
+                                  </div>
+                                  <div className="col-span-2 text-right">{a.qty}</div>
+                                  <div className="col-span-2 text-right">{a.expDate}</div>
+                                  <div className="col-span-2 text-right">{a.freezer ? "Freezer" : ""}</div>
+                                  <div className="col-span-1 flex justify-end">
+                                    <Button
+                                      size="icon"
+                                      variant="destructive"
+                                      className="h-7 w-7 rounded-lg"
+                                      title="Eliminar de historial"
+                                      onClick={async () => {
+                                        if (!confirm(`¿Seguro que querés borrar "${a.name}" del historial?`)) return;
+                                        setArchives((prev) => prev.filter((x) => x.id !== a.id));
+                                        const supabase = supabaseRef.current;
+                                        if (supabase) {
+                                          const { error } = await supabase.from("expirations_archive").delete().eq("id", a.id);
+                                          if (error) {
+                                            alert("No pude borrar en servidor: " + error.message);
+                                            setArchives((prev) => [a, ...prev]);
+                                          }
+                                        }
+                                      }}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))
+                          )}
+                        </div>
                       </div>
-                    ))
+                    )}
+                  </div>
+                </div>
+
+                {searchQuery && (
+                  <p className="text-xs text-muted-foreground">
+                    Filtrando por: <span className="font-medium text-card-foreground">{searchQuery}</span>
+                  </p>
                 )}
               </div>
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* Formulario alta */}
-      <Card className={`mb-4 shadow-sm ${compact ? "border" : ""}`}>
-        <CardContent className={`space-y-2 ${compact ? "p-3 pt-2 pb-2" : "p-4 pt-0 pb-0"}`}>
-          <div className="relative" ref={autoBoxRef}>
-            <label htmlFor="prod" className={`block font-medium text-muted-foreground mb-1 ${labelCls}`}>
-              Producto (autocompletar por DESCRIPCIÓN)
-            </label>
-            <Input
-              id="prod"
-              value={name}
-              onChange={(e)=>{setName(e.target.value); updateSuggestions(e.target.value);}}
-              onKeyDown={onKeyDownName}
-              placeholder="Escribe para buscar…"
-              autoComplete="off"
-              aria-autocomplete="list"
-              aria-expanded={openDrop}
-              aria-controls="prod-suggestions"
-              className={inputCls}
-            />
-            {openDrop && suggestions.length > 0 && (
-              <div
-                id="prod-suggestions"
-                role="listbox"
-                aria-label="Sugerencias de producto"
-                className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover text-popover-foreground shadow"
-              >
-                {suggestions.map((s, i) => (
-                  <button
-                    key={s + i}
-                    type="button"
-                    role="option"
-                    aria-selected={i === activeIdx}
-                    onMouseDown={(e) => { e.preventDefault(); setName(s); onSelectSuggestion(s); }}
-                    onMouseEnter={() => setActiveIdx(i)}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground ${
-                      i === activeIdx ? "bg-accent" : ""
-                    }`}
+            <Card className="rounded-3xl border border-border/40 bg-[rgba(32,43,39,0.88)] shadow-[0_24px_60px_-30px_rgba(0,0,0,0.85)]">
+              <CardContent className={`space-y-4 ${compact ? "px-4 py-4" : "px-6 py-6"}`}>
+                <div className="relative" ref={autoBoxRef}>
+                  <label htmlFor="prod" className="mb-2 block text-sm font-semibold text-card-foreground">
+                    Producto (autocompletar por DESCRIPCIÓN)
+                  </label>
+                  <Input
+                    id="prod"
+                    value={name}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      updateSuggestions(e.target.value);
+                    }}
+                    onKeyDown={onKeyDownName}
+                    placeholder="Escribe para buscar…"
+                    autoComplete="off"
+                    aria-autocomplete="list"
+                    aria-expanded={openDrop}
+                    aria-controls="prod-suggestions"
+                    className={`${inputCls} w-full ${compact ? "text-sm" : "text-base"}`}
+                  />
+                  {openDrop && suggestions.length > 0 && (
+                    <div
+                      id="prod-suggestions"
+                      role="listbox"
+                      aria-label="Sugerencias de producto"
+                      className="absolute z-30 mt-2 max-h-60 w-full overflow-auto rounded-2xl border border-border/40 bg-[rgba(28,38,35,0.96)] text-popover-foreground shadow-[0_28px_60px_-28px_rgba(0,0,0,0.85)] backdrop-blur-md"
+                    >
+                      {suggestions.map((s, i) => (
+                        <button
+                          key={s + i}
+                          type="button"
+                          role="option"
+                          aria-selected={i === activeIdx}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            setName(s);
+                            onSelectSuggestion(s);
+                          }}
+                          onMouseEnter={() => setActiveIdx(i)}
+                          className={`w-full px-4 py-2 text-left text-sm transition hover:bg-[rgba(36,48,44,0.75)] ${
+                            i === activeIdx ? "bg-[rgba(36,48,44,0.75)]" : ""
+                          }`}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {error && (
+                    <p className="mt-2 text-xs text-red-500">
+                      {error} (ruta: {PRECIOS_URL})
+                    </p>
+                  )}
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="fecha" className="mb-2 block text-sm font-semibold text-card-foreground">
+                      Vencimiento (dd-mm-aa)
+                    </label>
+                    <Input
+                      id="fecha"
+                      inputMode="numeric"
+                      pattern="[0-9\\-]*"
+                      placeholder="dd-mm-aa"
+                      value={expDate}
+                      onChange={(e) => {
+                        const el = e.currentTarget;
+                        const sel = el.selectionStart ?? el.value.length;
+                        const { masked, caret } = maskWithCaretLoose(expDate, e.target.value, sel);
+                        setExpDate(masked);
+                        requestAnimationFrame(() => {
+                          try {
+                            el.setSelectionRange(caret, caret);
+                          } catch {
+                            /* selection range not supported */
+                          }
+                        });
+                      }}
+                      className={`${inputCls} w-full`}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="qty" className="mb-2 block text-sm font-semibold text-card-foreground">
+                      Cantidad
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="qty"
+                        inputMode="numeric"
+                        pattern="\\d*"
+                        placeholder="1"
+                        value={qty}
+                        onChange={onChangeQty}
+                        className={`${inputCls} flex-1`}
+                      />
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        aria-pressed={newFreezer}
+                        onClick={() => setNewFreezer((v) => !v)}
+                        title={newFreezer ? "Marcado como Freezer" : "Marcar como Freezer"}
+                        className={`h-10 w-10 rounded-xl border transition-colors ${
+                          newFreezer
+                            ? "border-[var(--color-action-secondary)] bg-[var(--color-action-secondary)] text-[var(--background)] hover:bg-[var(--color-action-secondary)]/90"
+                            : "border-border/40 bg-[rgba(64,82,75,0.4)] text-[var(--color-action-secondary)] hover:bg-[rgba(64,82,75,0.6)]"
+                        }`}
+                      >
+                        <Snowflake className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      Consejo: marcá Freezer si va directo a frío y querés separarlo visualmente.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex w-full flex-col gap-2 sm:max-w-md sm:flex-row">
+                    <Button
+                      onClick={onAdd}
+                      className="flex-1 rounded-xl bg-[var(--color-action-secondary)] text-[var(--background)] hover:bg-[var(--color-action-secondary)]/90"
+                    >
+                      Agregar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={onClear}
+                      className="flex-1 rounded-xl border border-border/40 bg-[rgba(36,48,44,0.65)] text-card-foreground hover:bg-[rgba(36,48,44,0.85)]"
+                    >
+                      Limpiar
+                    </Button>
+                  </div>
+                  <span className="text-xs text-muted-foreground sm:text-right">
+                    Estado servidor: {supabaseStatus === "online" ? "🟢 online" : supabaseStatus === "offline" ? "🔴 offline" : "⚪︎ ..."}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="space-y-4">
+              {groupSections.map(({ key, items }) => {
+                const meta = groupMeta[key];
+                const Icon = meta.icon;
+                const isOpen = open[key];
+                return (
+                  <div
+                    key={key}
+                    className="overflow-hidden rounded-3xl border border-border/40 bg-[rgba(28,38,35,0.85)] shadow-[0_20px_55px_-28px_rgba(0,0,0,0.78)]"
                   >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            )}
-            {error && <p className="mt-1 text-xs text-red-600">{error} (ruta: {PRECIOS_URL})</p>}
+                    <button
+                      onClick={() => toggle(key)}
+                      className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition hover:bg-[rgba(36,48,44,0.88)]"
+                      aria-expanded={isOpen}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${meta.bubbleTone}`}>
+                          <Icon className="h-5 w-5" />
+                        </span>
+                        <div>
+                          <p className="text-base font-semibold text-card-foreground">{meta.label}</p>
+                          <p className="text-xs text-muted-foreground">{meta.description}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`inline-flex min-w-[2.5rem] items-center justify-center rounded-full px-3 py-1 text-xs font-semibold ${meta.badgeTone}`}>
+                          {items.length}
+                        </span>
+                        <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                      </div>
+                    </button>
+                    {isOpen && (
+                      <div className="space-y-3 border-t border-border/40 px-3 py-4 sm:px-4">
+                        {items.length === 0 ? (
+                          <p className="rounded-xl bg-[rgba(36,48,44,0.65)] px-3 py-2 text-sm text-muted-foreground">
+                            {meta.empty}
+                          </p>
+                        ) : (
+                          items.map(renderItemCard)
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="fecha" className={`block font-medium text-muted-foreground mb-1 ${labelCls}`}>Vencimiento (dd-mm-aa)</label>
-              <Input id="fecha" inputMode="numeric" pattern="[0-9\\-]*" placeholder="dd-mm-aa" value={expDate}
-                onChange={(e)=>{ const el=e.currentTarget; const sel=el.selectionStart ?? el.value.length;
-                  const { masked, caret } = maskWithCaretLoose(expDate, e.target.value, sel);
-                  setExpDate(masked); requestAnimationFrame(()=>{ try{ el.setSelectionRange(caret, caret);}catch{} }); }}
-                className={inputCls}/>
-            </div>
-            <div>
-              <label htmlFor="qty" className={`block font-medium text-muted-foreground mb-1 ${labelCls}`}>Cantidad</label>
-              <div className="flex items-center gap-2">
-                <Input id="qty" inputMode="numeric" pattern="\\d*" placeholder="1" value={qty} onChange={onChangeQty} className={`${inputCls} flex-1`}/>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant={newFreezer ? undefined : "secondary"}
-                  aria-pressed={newFreezer}
-                  onClick={() => setNewFreezer((v) => !v)}
-                  title={newFreezer ? "Marcado como Freezer" : "Marcar como Freezer"}
-                  className={`${compact ? "h-8 w-8" : "h-9 w-9"} ${newFreezer ? "bg-sky-500 hover:bg-sky-600 text-white" : ""}`}
+          <aside className="flex h-max flex-col gap-4 rounded-3xl border border-border/40 bg-card/70 p-4 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur-sm sm:p-6">
+            <h2 className="text-lg font-semibold text-card-foreground">Resumen general</h2>
+            <div className="space-y-3">
+              {summaryMetrics.map(({ key, value, label, description, icon: Icon, tone, bubble }) => (
+                <div
+                  key={key}
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-border/40 bg-[rgba(28,38,35,0.85)] px-4 py-3 shadow-[0_16px_40px_-32px_rgba(0,0,0,0.8)]"
                 >
-                  <Snowflake className="h-4 w-4" />
-                </Button>
-              </div>
-              <p className="mt-1 text-[10px] text-muted-foreground">
-                Consejo: marcá Freezer si va directo a frío y querés separarlo visualmente.
-              </p>
+                  <div className="flex items-center gap-3">
+                    <span className={`flex h-11 w-11 items-center justify-center rounded-xl ${bubble}`}>
+                      <Icon className={`h-5 w-5 ${tone}`} />
+                    </span>
+                    <div className="text-sm">
+                      <p className="font-semibold text-card-foreground">{label}</p>
+                      <p className="text-xs text-muted-foreground">{description}</p>
+                    </div>
+                  </div>
+                  <span className="text-xl font-semibold text-card-foreground">{value}</span>
+                </div>
+              ))}
             </div>
-          </div>
-
-          <div className="flex gap-2 mt-1 items-center">
-            <Button onClick={onAdd} className={`flex-1 ${compact ? "h-8 text-xs" : ""}`}>Agregar</Button>
-            <Button variant="secondary" onClick={onClear} className={`flex-1 ${compact ? "h-8 text-xs" : ""}`}>Limpiar</Button>
-            <span className={`ml-auto text-muted-foreground ${compact ? "text-[10px]" : "text-xs"}`}>
-              Estado servidor: {supabaseStatus === "online" ? "🟢 online" : supabaseStatus === "offline" ? "🔴 offline" : "⚪︎ ..."}
-            </span>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Buscador global */}
-      <div className="mb-3">
-        <div className="relative">
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar producto o fecha (dd-mm-aa)…"
-            className={`${compact ? "h-8 text-xs pr-8" : "pr-10"}`}
-            aria-label="Buscar productos"
-          />
-          {searchQuery ? (
-            <button
-              type="button"
-              onClick={() => setSearchQuery("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted"
-              aria-label="Limpiar búsqueda"
-              title="Limpiar búsqueda"
-            >
-              <XIcon className="h-4 w-4" />
-            </button>
-          ) : (
-            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 opacity-60">
-              <SearchIcon className="h-4 w-4" />
-            </span>
-          )}
-        </div>
-        {searchQuery && (
-          <p className="mt-1 text-xs text-muted-foreground">
-            Filtrando por: <span className="font-medium">{searchQuery}</span>
-          </p>
-        )}
-      </div>
-
-      {/* ====== Acordeones ====== */}
-      <div className="space-y-3">
-        {/* Freezer */}
-        <div className="border rounded-lg">
-          <button onClick={() => toggle("gf")} className="w-full flex items-center justify-between px-3 py-2 text-left" aria-expanded={open.gf}>
-            <div className="flex items-center gap-2">
-              {open.gf ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              <span className="font-semibold flex items-center gap-1"><Snowflake className="h-4 w-4" /> Freezer</span>
-              <span className="text-sm text-muted-foreground">({freezerItems.length})</span>
-            </div>
-          </button>
-          {open.gf && (
-            <div className="p-2 space-y-2">
-              {freezerItems.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-1">No hay productos marcados como Freezer.</p>
-              ) : freezerItems.map(renderItemCard)}
-            </div>
-          )}
-        </div>
-
-        {/* Vencidos */}
-        <div className="border rounded-lg">
-          <button onClick={() => toggle("gx")} className="w-full flex items-center justify-between px-3 py-2 text-left" aria-expanded={open.gx}>
-            <div className="flex items-center gap-2">
-              {open.gx ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              <span className="font-semibold">Vencidos</span>
-              <span className="text-sm text-muted-foreground">({groups.gx.length})</span>
-            </div>
-          </button>
-          {open.gx && (
-            <div className="p-2 space-y-2">
-              {groups.gx.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-1">Sin productos en este rango.</p>
-              ) : groups.gx.map(renderItemCard)}
-            </div>
-          )}
-        </div>
-
-        {/* 1 a 3 días */}
-        <div className="border rounded-lg">
-          <button onClick={() => toggle("g1")} className="w-full flex items-center justify-between px-3 py-2 text-left" aria-expanded={open.g1}>
-            <div className="flex items-center gap-2">
-              {open.g1 ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              <span className="font-semibold">Vence en 1 a 3 días</span>
-              <span className="text-sm text-muted-foreground">({groups.g1.length})</span>
-            </div>
-          </button>
-          {open.g1 && (
-            <div className="p-2 space-y-2">
-              {groups.g1.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-1">Sin productos en este rango.</p>
-              ) : groups.g1.map(renderItemCard)}
-            </div>
-          )}
-        </div>
-
-        {/* 4 a 10 días */}
-        <div className="border rounded-lg">
-          <button onClick={() => toggle("g2")} className="w-full flex items-center justify-between px-3 py-2 text-left" aria-expanded={open.g2}>
-            <div className="flex items-center gap-2">
-              {open.g2 ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              <span className="font-semibold">Faltan 4 a 10 días</span>
-              <span className="text-sm text-muted-foreground">({groups.g2.length})</span>
-            </div>
-          </button>
-          {open.g2 && (
-            <div className="p-2 space-y-2">
-              {groups.g2.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-1">Sin productos en este rango.</p>
-              ) : groups.g2.map(renderItemCard)}
-            </div>
-          )}
-        </div>
-
-        {/* 11+ días */}
-        <div className="border rounded-lg">
-          <button onClick={() => toggle("g3")} className="w-full flex items-center justify-between px-3 py-2 text-left" aria-expanded={open.g3}>
-            <div className="flex items-center gap-2">
-              {open.g3 ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              <span className="font-semibold">Más adelante (11+ días)</span>
-              <span className="text-sm text-muted-foreground">({groups.g3.length})</span>
-            </div>
-          </button>
-          {open.g3 && (
-            <div className="p-2 space-y-2">
-              {groups.g3.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-1">Sin productos en este rango.</p>
-              ) : groups.g3.map(renderItemCard)}
-            </div>
-          )}
+          </aside>
         </div>
       </div>
-
       <ScrollTopFab />
     </div>
   );

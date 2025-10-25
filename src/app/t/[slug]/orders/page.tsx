@@ -47,6 +47,8 @@ type SavedMeta = {
   storage: "idb" | "local-b64" | "default";
 };
 
+type RawSalesRow = Record<string, string | number | null | undefined>;
+
 /* ========= Utils ========= */
 const NBSP_RX = /[\u00A0\u202F]/g;
 const DIAC_RX = /\p{Diacritic}/gu;
@@ -54,8 +56,12 @@ const normText = (s: string) => s.replace(NBSP_RX, " ").trim();
 const normKey = (s: string) =>
   normText(s).normalize("NFD").replace(DIAC_RX, "").toLowerCase();
 
-function toEpochMs(v: any): number | null {
+function toEpochMs(v: string | number | Date | null | undefined): number | null {
   if (v == null || v === "") return null;
+  if (v instanceof Date) {
+    const time = v.getTime();
+    return Number.isNaN(time) ? null : time;
+  }
   if (typeof v === "number") {
     const d = XLSX.SSF.parse_date_code(v);
     if (!d) return null;
@@ -67,7 +73,7 @@ function toEpochMs(v: any): number | null {
     const s = v.replaceAll(".", "/").replaceAll("-", "/").trim();
     const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
     if (m) {
-      let [_, dd, mm, yyyy] = m;
+      const [, dd, mm, yyyy] = m;
       let year = parseInt(yyyy, 10);
       if (year < 100) year += 2000;
       return Date.UTC(year, parseInt(mm, 10) - 1, parseInt(dd, 10));
@@ -75,12 +81,6 @@ function toEpochMs(v: any): number | null {
     return null;
   }
   return null;
-}
-function ab2b64(buf: ArrayBuffer) {
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
 }
 function b642ab(b64: string) {
   const bin = atob(b64);
@@ -93,6 +93,12 @@ const dateShort = (ts: number) => new Date(ts).toLocaleDateString("es-AR");
 const weekdayFmt = new Intl.DateTimeFormat("es-AR", { weekday: "long" });
 const dateFmt = new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
 const formatLastSale = (ts?: number) => (!ts ? "—" : `${weekdayFmt.format(new Date(ts))} ${dateFmt.format(new Date(ts))}`);
+
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  if (error == null) return "Error desconocido";
+  return String(error);
+};
 
 /* ========= IndexedDB helpers (smart open & auto-upgrade) ========= */
 const IDB_DB_NAME = "gestock";
@@ -133,10 +139,17 @@ async function idbOpenSmart(): Promise<IDBDatabase> {
     }
 
     return db;
-  } catch (err: any) {
+  } catch (err: unknown) {
     // 3) Si fue VersionError (requested<existing), reintento abriendo sin versión
     //    Nota: algunos navegadores lanzan este error antes de llegar a onsuccess.
-    if (err?.name === "VersionError") {
+    if (err instanceof DOMException && err.name === "VersionError") {
+      return await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open(IDB_DB_NAME);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    if (typeof err === "object" && err && "name" in err && (err as { name?: string }).name === "VersionError") {
       return await new Promise<IDBDatabase>((resolve, reject) => {
         const req = indexedDB.open(IDB_DB_NAME);
         req.onsuccess = () => resolve(req.result);
@@ -158,7 +171,7 @@ async function idbGet<T = unknown>(key: string): Promise<T | undefined> {
   });
 }
 
-async function idbSet(key: string, value: any): Promise<void> {
+async function idbSet(key: string, value: ArrayBuffer): Promise<void> {
   const db = await idbOpenSmart();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, "readwrite");
@@ -185,7 +198,7 @@ async function idbDel(key: string): Promise<void> {
 async function parseVentasArrayBuffer(buf: ArrayBuffer): Promise<Map<string, SalesRow[]>> {
   const wb = XLSX.read(buf, { type: "array" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  const raw = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as any[];
+  const raw = XLSX.utils.sheet_to_json<RawSalesRow>(sheet, { defval: "" });
 
   const parsed: SalesRow[] = [];
   for (const r of raw) {
@@ -266,32 +279,7 @@ function useSharedSales() {
 
   // Broadcast entre pestañas
   const bcRef = React.useRef<BroadcastChannel | null>(null);
-  React.useEffect(() => {
-    if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") return undefined;
-    bcRef.current = new BroadcastChannel(SALES_BC_NAME);
-    const bc = bcRef.current;
-    bc.onmessage = async (ev) => {
-      if (ev?.data?.type === "sales-updated" || ev?.data?.type === "sales-cleared") {
-        await loadFromBestSource(); // recarga al recibir cambios
-      }
-    };
-    return () => { bc.close(); bcRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Evento storage (por si cambia el meta desde otra pestaña)
-  React.useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === SALES_META_LS_KEY || e.key === SALES_LS_KEY_LEGACY) {
-        loadFromBestSource();
-      }
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function loadFromBestSource() {
+  const loadFromBestSource = React.useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -303,7 +291,6 @@ function useSharedSales() {
         const map = await parseVentasArrayBuffer(bufFromIdb);
         setByProduct(map);
         setSource({ kind: "imported", filename: meta.filename, meta });
-        setLoading(false);
         return;
       }
 
@@ -325,10 +312,11 @@ function useSharedSales() {
             const map = await parseVentasArrayBuffer(buf);
             setByProduct(map);
             setSource({ kind: "imported", filename: saved.filename, meta: readMeta() ?? undefined });
-            setLoading(false);
             return;
           }
-        } catch { /* ignore */ }
+        } catch {
+          // ignore
+        }
       }
 
       // 3) Fallback: /ventas.xlsx
@@ -339,12 +327,35 @@ function useSharedSales() {
       setByProduct(map);
       const defMeta: SavedMeta = { storage: "default" };
       setSource({ kind: "default", meta: defMeta });
-    } catch (e: any) {
-      setError(e?.message || "Error cargando ventas");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error) || "Error cargando ventas");
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") return undefined;
+    bcRef.current = new BroadcastChannel(SALES_BC_NAME);
+    const bc = bcRef.current;
+    bc.onmessage = async (ev) => {
+      if (ev?.data?.type === "sales-updated" || ev?.data?.type === "sales-cleared") {
+        await loadFromBestSource(); // recarga al recibir cambios
+      }
+    };
+    return () => { bc.close(); bcRef.current = null; };
+  }, [loadFromBestSource]);
+
+  // Evento storage (por si cambia el meta desde otra pestaña)
+  React.useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SALES_META_LS_KEY || e.key === SALES_LS_KEY_LEGACY) {
+        loadFromBestSource();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [loadFromBestSource]);
 
   React.useEffect(() => {
     let alive = true;
@@ -353,8 +364,7 @@ function useSharedSales() {
       await loadFromBestSource();
     })();
     return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadFromBestSource]);
 
   async function importVentas(file: File) {
     try {
@@ -379,9 +389,10 @@ function useSharedSales() {
       bcRef.current?.postMessage({ type: "sales-updated" });
 
       alert("Ventas actualizadas y persistidas (disponibles al recargar y en otras pestañas).");
-    } catch (e: any) {
-      setError(e?.message || "No se pudo importar el archivo de ventas.");
-      alert("No se pudo importar el archivo de ventas.");
+    } catch (error: unknown) {
+      const message = getErrorMessage(error) || "No se pudo importar el archivo de ventas.";
+      setError(message);
+      alert(message);
     } finally {
       setLoading(false);
     }
@@ -404,8 +415,8 @@ function useSharedSales() {
       setSource({ kind: "default" });
 
       bcRef.current?.postMessage({ type: "sales-cleared" });
-    } catch (e: any) {
-      setError(e?.message || "No se pudo volver a la fuente por defecto.");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error) || "No se pudo volver a la fuente por defecto.");
     } finally {
       setLoading(false);
     }
@@ -523,6 +534,11 @@ export default function EstadisticaPage() {
   /* ----- Autocomplete ----- */
   const [query, setQuery] = React.useState("");
   const [openDropdown, setOpenDropdown] = React.useState(false);
+  const productInputId = React.useId();
+  const fromInputId = React.useId();
+  const toInputId = React.useId();
+  const granSelectId = React.useId();
+  const columnsSliderId = React.useId();
   const productOptions = React.useMemo(() => {
     const names: string[] = [];
     for (const [, arr] of byProduct.entries()) if (arr.length > 0) names.push(arr[0].product);
@@ -536,11 +552,11 @@ export default function EstadisticaPage() {
   }, [query, productOptions]);
 
   const selectedId = normKey(selectedName);
-  const rows = byProduct.get(selectedId) ?? [];
-  const stats: Stats = React.useMemo(
-    () => (rows.length ? computeStats(rows) : { avg4w: 0, sum2w: 0, sum30d: 0 }),
-    [rows]
-  ) as Stats;
+  const rows = React.useMemo(() => byProduct.get(selectedId) ?? [], [byProduct, selectedId]);
+  const stats = React.useMemo<Stats>(() => {
+    if (!rows.length) return { avg4w: 0, sum2w: 0, sum30d: 0 };
+    return computeStats(rows);
+  }, [rows]);
 
   /* ----- Quick buttons ----- */
   function setQuick(days: number) {
@@ -693,8 +709,9 @@ export default function EstadisticaPage() {
 <div className="grid gap-3 lg:grid-cols-12 lg:items-end">
   {/* Autocomplete (siempre ocupa la fila completa en mobile) */}
   <div className="relative lg:col-span-4 min-w-0">
-    <label className="text-sm font-medium">Elegí un artículo</label>
+    <label className="text-sm font-medium" htmlFor={productInputId}>Elegí un artículo</label>
     <Input
+      id={productInputId}
       className="w-full"
       placeholder="Buscar producto…"
       value={selectedName || query}
@@ -745,14 +762,14 @@ export default function EstadisticaPage() {
 
   {/* Desde */}
   <div className="min-w-0 lg:col-span-2">
-    <label className="text-sm font-medium">Desde</label>
-    <Input className="w-full" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+    <label className="text-sm font-medium" htmlFor={fromInputId}>Desde</label>
+    <Input id={fromInputId} className="w-full" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
   </div>
 
   {/* Hasta */}
   <div className="min-w-0 lg:col-span-2">
-    <label className="text-sm font-medium">Hasta</label>
-    <Input className="w-full" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+    <label className="text-sm font-medium" htmlFor={toInputId}>Hasta</label>
+    <Input id={toInputId} className="w-full" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
   </div>
 </div>
 
@@ -760,8 +777,9 @@ export default function EstadisticaPage() {
           {/* Granularidad + columnas */}
 <div className="flex flex-wrap items-center gap-3">
   <div className="flex items-center gap-2">
-    <label className="text-sm font-medium">Granularidad</label>
+    <label className="text-sm font-medium" htmlFor={granSelectId}>Granularidad</label>
     <select
+      id={granSelectId}
       className="rounded-lg border border-border/60 bg-card px-3 py-2 text-sm text-foreground shadow-[var(--shadow-card)]"
       value={gran}
       onChange={(e) => setGran(e.target.value as Granularity)}
@@ -772,9 +790,16 @@ export default function EstadisticaPage() {
     </select>
   </div>
   <div className="flex items-center gap-2 min-w-0">
-    <label className="text-sm font-medium">Columnas</label>
+    <label className="text-sm font-medium" htmlFor={columnsSliderId}>Columnas</label>
     <div className="w-48">
-      <Slider value={[colCount]} min={1} max={15} step={1} onValueChange={(v) => setColCount(v[0])} />
+      <Slider
+        id={columnsSliderId}
+        value={[colCount]}
+        min={1}
+        max={15}
+        step={1}
+        onValueChange={(v) => setColCount(v[0])}
+      />
     </div>
     <span className="text-xs text-muted-foreground">{colCount}</span>
   </div>

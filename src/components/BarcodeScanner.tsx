@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { BrowserMultiFormatReader, IScannerControls } from "@zxing/browser";
 
 type Props = {
-  onDetected: (value: string) => void;
+  onDetected: (_value: string) => void;
   onClose?: () => void;
 };
 
@@ -38,7 +38,9 @@ export default function BarcodeScanner({ onDetected, onClose }: Props) {
             if (_controls && !controls) setControls(_controls);
             if (result && !stopped) {
               // feedback háptico si existe
-              (navigator as any).vibrate?.(80);
+              if (typeof navigator.vibrate === "function") {
+                navigator.vibrate(80);
+              }
               const text = result.getText().trim();
               stop();
               onDetected(text);
@@ -48,8 +50,12 @@ export default function BarcodeScanner({ onDetected, onClose }: Props) {
 
         setControls(c);
         setRunning(true);
-      } catch (e: any) {
-        setError(e?.message ?? "No se pudo acceder a la cámara.");
+      } catch (e: unknown) {
+        if (e instanceof Error) {
+          setError(e.message ?? "No se pudo acceder a la cámara.");
+        } else {
+          setError("No se pudo acceder a la cámara.");
+        }
       }
     };
 

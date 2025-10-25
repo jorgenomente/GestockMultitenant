@@ -39,12 +39,6 @@ const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
 const PRECIOS_PUBLIC_URL = `${BASE_PATH ? BASE_PATH : ""}/${PRECIOS_FILENAME}`;
 
 /* =================== Tipos =================== */
-type SaleRow = {
-  ARTÍCULO: string;
-  CANTIDAD: number;
-  SUBTOTAL: number;
-};
-
 type Product = {
   id: string;
   name: string;
@@ -82,7 +76,7 @@ function tokensMatch(query: string, target: string) {
   const t = normalize(target);
   return q.every((tok) => t.includes(tok));
 }
-function numberOrZero(n: any) {
+function numberOrZero(n: unknown) {
   const v = Number(n);
   return Number.isFinite(v) ? v : 0;
 }
@@ -121,7 +115,7 @@ function AutoGrowTextarea({
   className,
 }: {
   value: string;
-  onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  onChange: React.ChangeEventHandler<HTMLTextAreaElement>;
   "aria-label"?: string;
   className?: string;
 }) {
@@ -244,7 +238,7 @@ async function readFromVentasXlsx(): Promise<Product[]> {
     const buf = await res.arrayBuffer();
     const wb = XLSX.read(buf, { type: "array" });
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const raw = XLSX.utils.sheet_to_json<any>(ws, { defval: null });
+    const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
 
     const map = new Map<string, number>();
     for (const row of raw) {
@@ -284,7 +278,9 @@ async function loadCatalogFromPrecios(): Promise<Product[]> {
       const prods = asProducts(apiItems);
       if (prods.length) return prods;
     }
-  } catch {}
+  } catch (error) {
+    console.warn("No se pudo cargar catálogo desde la API de precios", error);
+  }
 
   // 3) /precios.xlsx público
   const fromPublic = await readCatalogFromPublicXlsx();
@@ -340,7 +336,9 @@ export default function EtiquetasPage() {
       try {
         const parsed = JSON.parse(persisted) as LabelItem[];
         setItems(parsed);
-      } catch {}
+      } catch (error) {
+        console.warn("No se pudieron restaurar las etiquetas guardadas", error);
+      }
     }
 
     // Cargar fuente del buscador desde el mismo catálogo que PriceSearch
@@ -453,67 +451,67 @@ export default function EtiquetasPage() {
   };
 
   /* ====== Export XLSX: una sola columna (A:B:C) ====== */
-const exportXlsx = async () => {
-  const ExcelJS = (await import("exceljs")).default;
+  const exportXlsx = async () => {
+    const ExcelJS = (await import("exceljs")).default;
 
-  try {
-    const res = await fetch(TEMPLATE_URL, { cache: "no-store" });
-    let wb = new ExcelJS.Workbook();
+    try {
+      const res = await fetch(TEMPLATE_URL, { cache: "no-store" });
+      let wb = new ExcelJS.Workbook();
 
-    if (res.ok) {
-      const buf = await res.arrayBuffer();
-      await wb.xlsx.load(buf);
-    } else {
-      wb = createFallbackWorkbook(ExcelJS);
-    }
+      if (res.ok) {
+        const buf = await res.arrayBuffer();
+        await wb.xlsx.load(buf);
+      } else {
+        wb = createFallbackWorkbook(ExcelJS.Workbook);
+      }
 
-    const ws = wb.worksheets[0] || wb.addWorksheet("TablaPrecios");
+      const ws = wb.worksheets[0] || wb.addWorksheet("TablaPrecios");
 
-    // Limpieza manteniendo estilos: solo columnas A-C
-    const maxRows = Math.max(ws.rowCount, items.length);
-    for (let r = 1; r <= maxRows; r++) {
-      (["A", "B", "C"] as const).forEach((c) => {
-        const cell = ws.getCell(`${c}${r}`);
-        if (!cell) return;
-        if (c === "B") cell.value = "$";
-        else cell.value = null;
+      // Limpieza manteniendo estilos: solo columnas A-C
+      const maxRows = Math.max(ws.rowCount, items.length);
+      for (let r = 1; r <= maxRows; r++) {
+        (["A", "B", "C"] as const).forEach((c) => {
+          const cell = ws.getCell(`${c}${r}`);
+          if (!cell) return;
+          if (c === "B") cell.value = "$";
+          else cell.value = null;
+        });
+        // Si el template tenía columnas D-G, las vacío y achico
+        (["D", "E", "F", "G"] as const).forEach((c) => {
+          const cell = ws.getCell(`${c}${r}`);
+          if (cell) cell.value = null;
+        });
+      }
+
+      // Escribir ítems 1 por fila
+      items.forEach((it, i) => {
+        const row = i + 1;
+        const safeName = sanitizeCell(it.name);
+        ws.getCell(`A${row}`).value = safeName;
+        ws.getCell(`B${row}`).value = "$";
+        ws.getCell(`C${row}`).value = round2(it.unitPrice);
       });
-      // Si el template tenía columnas D-G, las vacío y achico
-      (["D", "E", "F", "G"] as const).forEach((c) => {
-        const cell = ws.getCell(`${c}${r}`);
-        if (cell) cell.value = null;
+
+      applyStylesAndBreaks(ws, items.length);
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `TablaPrecios_${fmtDate(new Date())}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err) {
+      console.error("Error exportando XLSX:", err);
+      exportPlainXlsxFallback(items);
     }
-
-    // Escribir ítems 1 por fila
-    items.forEach((it, i) => {
-      const row = i + 1;
-      const safeName = sanitizeCell(it.name);
-      ws.getCell(`A${row}`).value = safeName;
-      ws.getCell(`B${row}`).value = "$";
-      ws.getCell(`C${row}`).value = round2(it.unitPrice);
-    });
-
-    applyStylesAndBreaks(ws, ExcelJS, items.length);
-
-    const buffer = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buffer], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `TablaPrecios_${fmtDate(new Date())}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  } catch (err) {
-    console.error("Error exportando XLSX:", err);
-    exportPlainXlsxFallback(items);
-  }
-};
+  };
 
 /* ====== Fallback Workbook: 1 columna ====== */
-function createFallbackWorkbook(ExcelJS: any) {
-  const wb = new ExcelJS.Workbook();
+function createFallbackWorkbook(WorkbookCtor: typeof import("exceljs").Workbook) {
+  const wb = new WorkbookCtor();
   const ws = wb.addWorksheet("TablaPrecios");
 
   // Solo A (nombre), B ($), C (precio)
@@ -567,7 +565,7 @@ function createFallbackWorkbook(ExcelJS: any) {
 }
 
 /* ====== Estilos + quiebres (1 ítem por fila) ====== */
-function applyStylesAndBreaks(ws: any, ExcelJS: any, itemCount: number) {
+function applyStylesAndBreaks(ws: import("exceljs").Worksheet, itemCount: number) {
   const totalRows = itemCount;
 
   const BORDER_WHITE = { top:{style:"thin",color:{argb:"FFFFFFFF"}},
@@ -629,7 +627,7 @@ function applyStylesAndBreaks(ws: any, ExcelJS: any, itemCount: number) {
 
 /* ====== Fallback simple (sin estilos) en 1 columna ====== */
 function exportPlainXlsxFallback(items: LabelItem[]) {
-  const rows: any[] = [];
+  const rows: Array<{ A: string; B: string; C: number }> = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     rows.push({
@@ -914,166 +912,4 @@ function exportPlainXlsxFallback(items: LabelItem[]) {
       </Card>
     </div>
   );
-}
-
-/* =================== Excel helpers (estilos & page breaks) =================== */
-
-function createFallbackWorkbook(ExcelJS: any) {
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet("TablaPrecios");
-
-  ws.columns = [
-    { key: "nameL", width: 42 },
-    { key: "signL", width: 4 },
-    { key: "priceL", width: 10 },
-    { key: "gap",   width: 2 },
-    { key: "nameR", width: 42 },
-    { key: "signR", width: 4 },
-    { key: "priceR", width: 10 },
-  ];
-
-  const BORDER_WHITE = { top:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         left:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         bottom:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         right:{style:"thin",color:{argb:"FFFFFFFF"}} };
-
-  const BORDER_BLACK = { top:{style:"thin",color:{argb:"FF000000"}},
-                         left:{style:"thin",color:{argb:"FF000000"}},
-                         bottom:{style:"thin",color:{argb:"FF000000"}},
-                         right:{style:"thin",color:{argb:"FF000000"}} };
-
-  for (let r = 1; r <= 400; r++) {
-    ws.getRow(r).height = 30;
-
-    ["A","E"].forEach((col) => {
-      const c = ws.getCell(`${col}${r}`);
-      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF000000" } };
-      c.font = { name: "Roboto Mono", size: 14, color: { argb: "FFFFFFFF" } };
-      c.alignment = { vertical: "middle", wrapText: true };
-      c.border = { ...BORDER_WHITE };
-    });
-
-    ["B","F"].forEach((col) => {
-      const c = ws.getCell(`${col}${r}`);
-      c.value = "$";
-      c.font = { name: "Roboto Mono", size: 14, bold: true, color: { argb: "FF000000" } };
-      c.alignment = { vertical: "middle", horizontal: "center" };
-      c.border = { ...BORDER_BLACK };
-    });
-
-    ["C","G"].forEach((col) => {
-      const c = ws.getCell(`${col}${r}`);
-      c.font = { name: "Roboto Mono", size: 14, color: { argb: "FF000000" } };
-      c.alignment = { vertical: "middle", horizontal: "left" };
-      c.border = { ...BORDER_BLACK };
-    });
-  }
-
-  ws.pageSetup = {
-    orientation: "portrait",
-    fitToPage: false,
-    paperSize: 9, // A4
-    margins: { left: 0.25, right: 0.25, top: 0.25, bottom: 0.25, header: 0.1, footer: 0.1 },
-  };
-
-  return wb;
-}
-
-function applyStylesAndBreaks(ws: any, ExcelJS: any, itemCount: number) {
-  const totalRows = Math.ceil(itemCount / 2);
-
-  const BORDER_WHITE = { top:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         left:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         bottom:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         right:{style:"thin",color:{argb:"FFFFFFFF"}} };
-
-  const BORDER_BLACK = { top:{style:"thin",color:{argb:"FF000000"}},
-                         left:{style:"thin",color:{argb:"FF000000"}},
-                         bottom:{style:"thin",color:{argb:"FF000000"}},
-                         right:{style:"thin",color:{argb:"FF000000"}} };
-
-  for (let r = 1; r <= totalRows; r++) {
-    const row = ws.getRow(r);
-    if (!row.height) row.height = 30;
-
-    ["A","E"].forEach((col) => {
-      const c = ws.getCell(`${col}${r}`);
-      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF000000" } };
-      c.font = { name: "Roboto Mono", size: 14, color: { argb: "FFFFFFFF" } };
-      c.alignment = { vertical: "middle", wrapText: true };
-      c.border = { ...BORDER_WHITE };
-    });
-
-    ["B","F"].forEach((col) => {
-      const c = ws.getCell(`${col}${r}`);
-      c.value = "$";
-      c.font = { name: "Roboto Mono", size: 14, bold: true, color: { argb: "FF000000" } };
-      c.alignment = { vertical: "middle", horizontal: "center" };
-      c.border = { ...BORDER_BLACK };
-    });
-
-    ["C","G"].forEach((col) => {
-      const c = ws.getCell(`${col}${r}`);
-      if (c.value == null) c.value = "";
-      c.font = { name: "Roboto Mono", size: 14, color: { argb: "FF000000" } };
-      c.alignment = { vertical: "middle", horizontal: "left" };
-      c.border = { ...BORDER_BLACK };
-    });
-  }
-
-  const breaks: number[] = [];
-  for (let r = 19; r < totalRows; r += 19) breaks.push(r + 1);
-  if (typeof ws.addPageBreaks === "function") {
-    ws.addPageBreaks(breaks.map((row) => ({ row })));
-  } else if (ws.pageSetup) {
-    ws.pageSetup.fitToPage = false;
-    ws.pageSetup.printArea = `A1:G${totalRows}`;
-  }
-
-  ws.columns = [
-    { key: "nameL", width: 42 },
-    { key: "signL", width: 4 },
-    { key: "priceL", width: 10 },
-    { key: "gap",   width: 2 },
-    { key: "nameR", width: 42 },
-    { key: "signR", width: 4 },
-    { key: "priceR", width: 10 },
-  ];
-}
-
-function exportPlainXlsxFallback(items: LabelItem[]) {
-  const rows: any[] = [];
-  for (let i = 0; i < items.length; i += 2) {
-    const left = items[i];
-    const right = items[i + 1];
-
-    rows.push({
-      A: left ? sanitizeCell(left.name) : "",
-      B: left ? "$" : "",
-      C: left ? round2(left.unitPrice) : "",
-      D: "",
-      E: right ? sanitizeCell(right.name) : "",
-      F: right ? "$" : "",
-      G: right ? round2(right.unitPrice) : "",
-    });
-  }
-
-  const ws = XLSX.utils.json_to_sheet(rows, {
-    header: ["A", "B", "C", "D", "E", "F", "G"],
-    skipHeader: true,
-  });
-
-  ws["!cols"] = [
-    { wch: 42 },
-    { wch: 4 },
-    { wch: 10 },
-    { wch: 2 },
-    { wch: 42 },
-    { wch: 4 },
-    { wch: 10 },
-  ];
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "TablaPrecios");
-  XLSX.writeFile(wb, `TablaPrecios_${fmtDate(new Date())}.xlsx`);
 }

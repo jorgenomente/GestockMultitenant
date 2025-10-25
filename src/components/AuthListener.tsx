@@ -65,7 +65,11 @@ export default function AuthListener() {
     );
 
     return () => {
-      try { subscription?.unsubscribe(); } catch {}
+      try {
+        subscription?.unsubscribe();
+      } catch (err) {
+        console.warn("AuthListener cleanup failed", err);
+      }
     };
   }, [router]);
 
