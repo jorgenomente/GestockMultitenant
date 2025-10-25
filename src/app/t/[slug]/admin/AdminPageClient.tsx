@@ -170,7 +170,7 @@ function MultiSelect({
   placeholder = "Seleccionar…",
 }: {
   values: string[];
-  onChange?: unknown;
+  onChange?: (nextValues: string[]) => void;
   options: Option[];
   placeholder?: string;
 }) {
@@ -225,6 +225,12 @@ function MultiSelect({
   );
 }
 
+type MemberApplyPayload = {
+  userId: string;
+  role: MembershipRow["role"];
+  branchIds: string[] | null;
+};
+
 function MemberRow({
   m,
   branchOptions,
@@ -232,7 +238,7 @@ function MemberRow({
 }: {
   m: MembershipRow;
   branchOptions: Option[];
-  onApply?: unknown;
+  onApply?: (payload: MemberApplyPayload) => void;
 }) {
   const [editing, setEditing] = useState(false);
 

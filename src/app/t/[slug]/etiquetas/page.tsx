@@ -521,14 +521,18 @@ function createFallbackWorkbook(WorkbookCtor: typeof import("exceljs").Workbook)
     { key: "price", width: 10 },
   ];
 
-  const BORDER_WHITE = { top:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         left:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         bottom:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         right:{style:"thin",color:{argb:"FFFFFFFF"}} };
-  const BORDER_BLACK = { top:{style:"thin",color:{argb:"FF000000"}},
-                         left:{style:"thin",color:{argb:"FF000000"}},
-                         bottom:{style:"thin",color:{argb:"FF000000"}},
-                         right:{style:"thin",color:{argb:"FF000000"}} };
+  const BORDER_WHITE: Partial<import("exceljs").Borders> = {
+    top: { style: "thin", color: { argb: "FFFFFFFF" } },
+    left: { style: "thin", color: { argb: "FFFFFFFF" } },
+    bottom: { style: "thin", color: { argb: "FFFFFFFF" } },
+    right: { style: "thin", color: { argb: "FFFFFFFF" } },
+  };
+  const BORDER_BLACK: Partial<import("exceljs").Borders> = {
+    top: { style: "thin", color: { argb: "FF000000" } },
+    left: { style: "thin", color: { argb: "FF000000" } },
+    bottom: { style: "thin", color: { argb: "FF000000" } },
+    right: { style: "thin", color: { argb: "FF000000" } },
+  };
 
   for (let r = 1; r <= 800; r++) {
     ws.getRow(r).height = 30;
@@ -565,17 +569,25 @@ function createFallbackWorkbook(WorkbookCtor: typeof import("exceljs").Workbook)
 }
 
 /* ====== Estilos + quiebres (1 ítem por fila) ====== */
+type WorksheetWithPageBreaks = import("exceljs").Worksheet & {
+  addPageBreaks?: (breaks: Array<{ row: number }>) => void;
+};
+
 function applyStylesAndBreaks(ws: import("exceljs").Worksheet, itemCount: number) {
   const totalRows = itemCount;
 
-  const BORDER_WHITE = { top:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         left:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         bottom:{style:"thin",color:{argb:"FFFFFFFF"}},
-                         right:{style:"thin",color:{argb:"FFFFFFFF"}} };
-  const BORDER_BLACK = { top:{style:"thin",color:{argb:"FF000000"}},
-                         left:{style:"thin",color:{argb:"FF000000"}},
-                         bottom:{style:"thin",color:{argb:"FF000000"}},
-                         right:{style:"thin",color:{argb:"FF000000"}} };
+  const BORDER_WHITE: Partial<import("exceljs").Borders> = {
+    top: { style: "thin", color: { argb: "FFFFFFFF" } },
+    left: { style: "thin", color: { argb: "FFFFFFFF" } },
+    bottom: { style: "thin", color: { argb: "FFFFFFFF" } },
+    right: { style: "thin", color: { argb: "FFFFFFFF" } },
+  };
+  const BORDER_BLACK: Partial<import("exceljs").Borders> = {
+    top: { style: "thin", color: { argb: "FF000000" } },
+    left: { style: "thin", color: { argb: "FF000000" } },
+    bottom: { style: "thin", color: { argb: "FF000000" } },
+    right: { style: "thin", color: { argb: "FF000000" } },
+  };
 
   for (let r = 1; r <= totalRows; r++) {
     const row = ws.getRow(r);
@@ -617,8 +629,9 @@ function applyStylesAndBreaks(ws: import("exceljs").Worksheet, itemCount: number
   // Quiebres: mantener misma altura física ⇒ 38 ítems por página
   const breaks: number[] = [];
   for (let r = 38; r < totalRows; r += 38) breaks.push(r + 1);
-  if (typeof ws.addPageBreaks === "function") {
-    ws.addPageBreaks(breaks.map((row) => ({ row })));
+  const wsWithBreaks = ws as WorksheetWithPageBreaks;
+  if (typeof wsWithBreaks.addPageBreaks === "function") {
+    wsWithBreaks.addPageBreaks(breaks.map((row) => ({ row })));
   } else if (ws.pageSetup) {
     ws.pageSetup.fitToPage = false;
     ws.pageSetup.printArea = `A1:C${totalRows}`;
