@@ -40,7 +40,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   Plus, Minus, Search, Download, Upload, Trash2, ArrowLeft,
-  History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package, Loader2,
+  History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package, Loader2, Save,
 } from "lucide-react";
 
 /* =================== Config =================== */
@@ -151,47 +151,45 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel }: StepperPro
 
   return (
     <div className="inline-flex items-center gap-2">
-      <div className="inline-flex items-center gap-1">
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-10 w-10 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)]"
-          aria-label="Restar"
-          onClick={() => onChange(clamp((value || 0) - s))}
-        >
-          <Minus className="h-3.5 w-3.5" />
-        </Button>
-
-        <Input
-          className="h-10 w-24 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-0 text-center text-base font-semibold text-[color:var(--order-card-accent)] focus-visible:ring-0"
-          inputMode="numeric"
-          value={value ?? 0}
-          onChange={(e) => {
-            const n = parseInt(e.target.value || "0", 10) || 0;
-            onChange(snap(n));
-          }}
-          onBlur={(e) => {
-            const n = parseInt(e.target.value || "0", 10) || 0;
-            if (n !== value) onChange(snap(n));
-          }}
-        />
-
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-10 w-10 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)]"
-          aria-label="Sumar"
-          onClick={() => onChange(clamp((value || 0) + s))}
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-
       {suffixLabel && (
-        <span className="text-xs font-medium uppercase tracking-[0.12em] text-[color:var(--order-card-accent)]/70">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--order-card-accent)]/70">
           {suffixLabel}
         </span>
       )}
+
+      <Button
+        variant="outline"
+        size="icon"
+        className="h-9 w-9 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)]"
+        aria-label="Restar"
+        onClick={() => onChange(clamp((value || 0) - s))}
+      >
+        <Minus className="h-3 w-3" />
+      </Button>
+
+      <Input
+        className="h-9 w-16 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-0 text-center text-sm font-semibold text-[color:var(--order-card-accent)] focus-visible:ring-0"
+        inputMode="numeric"
+        value={value ?? 0}
+        onChange={(e) => {
+          const n = parseInt(e.target.value || "0", 10) || 0;
+          onChange(snap(n));
+        }}
+        onBlur={(e) => {
+          const n = parseInt(e.target.value || "0", 10) || 0;
+          if (n !== value) onChange(snap(n));
+        }}
+      />
+
+      <Button
+        variant="outline"
+        size="icon"
+        className="h-9 w-9 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)]"
+        aria-label="Sumar"
+        onClick={() => onChange(clamp((value || 0) + s))}
+      >
+        <Plus className="h-3 w-3" />
+      </Button>
     </div>
   );
 }
@@ -954,11 +952,6 @@ export default function ProviderOrderPage() {
   const actionableItems = React.useMemo(
     () => items.filter((item) => item.product_name !== GROUP_PLACEHOLDER),
     [items]
-  );
-
-  const itemsWithQtyCount = React.useMemo(
-    () => actionableItems.reduce((acc, item) => acc + ((item.qty ?? 0) > 0 ? 1 : 0), 0),
-    [actionableItems]
   );
 
   const computeSalesSinceStock = React.useCallback(
@@ -3237,13 +3230,13 @@ async function exportOrderAsXlsx() {
       >
       {/* Header */}
       <div
-        data-hidden={barsHidden}
-        className={[
-          "sticky top-4 z-30",
+        data-hidden={isDesktop ? barsHidden : undefined}
+        className={clsx(
+          isDesktop ? "sticky top-4 z-30" : "relative",
           "translate-y-0",
           "transition-transform duration-300 will-change-transform",
-          "data-[hidden=true]:-translate-y-full",
-        ].join(" ")}
+          isDesktop && "data-[hidden=true]:-translate-y-full",
+        )}
       >
         <div className="rounded-[26px] border border-[var(--border)] bg-card/95 px-4 py-4 text-[var(--foreground)] shadow-card md:px-6 md:py-6">
           <div className="flex flex-col gap-5">
@@ -3853,81 +3846,79 @@ async function exportOrderAsXlsx() {
      bottom-[calc(env(safe-area-inset-bottom)+var(--bottom-nav-h))]
      transition-transform duration-300 will-change-transform ${barsHidden ? "translate-y-full" : ""}`}
       >
-        <div className="mx-auto w-full max-w-5xl rounded-[28px] border border-[var(--border)] bg-card/95 px-4 py-4 text-[var(--foreground)] shadow-card md:px-6 md:py-5">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <div className="rounded-2xl border border-[var(--border)] bg-muted/40 px-3 py-2 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                Total unidades
+        <div className="mx-auto w-full max-w-5xl rounded-[24px] border border-[var(--border)] bg-card/95 px-4 py-3 text-[var(--foreground)] shadow-card md:px-6 md:py-4">
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-2 items-end gap-2">
+              <div className="rounded-xl border border-[var(--border)] bg-muted/40 px-3 py-2 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Total unidades
+                </div>
+                <div className="mt-1 text-base font-semibold tabular-nums md:text-lg">{grandQty}</div>
               </div>
-              <div className="mt-1 text-lg font-semibold tabular-nums">{grandQty}</div>
-            </div>
-            <div className="rounded-2xl border border-[var(--border)] bg-muted/40 px-3 py-2 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                Productos con cant.
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--primary)]/15 px-3 py-2 text-right shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--primary)]/80">
+                  Total a pagar
+                </div>
+                <div className="mt-1 text-base font-semibold tabular-nums text-[var(--primary)] md:text-lg">{fmtMoney(grandTotal)}</div>
               </div>
-              <div className="mt-1 text-lg font-semibold tabular-nums">{itemsWithQtyCount}</div>
             </div>
-            <div className="rounded-2xl border border-[var(--border)] bg-[var(--primary)]/15 px-3 py-2 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--primary)]/80">
-                Total a pagar
-              </div>
-              <div className="mt-1 text-lg font-semibold tabular-nums text-[var(--primary)]">{fmtMoney(grandTotal)}</div>
-            </div>
-            <div className="rounded-2xl border border-[var(--border)] bg-muted/40 px-3 py-2 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                Fuente ventas
-              </div>
-              <div className="mt-1 truncate text-sm font-medium text-muted-foreground/80">{salesMeta.label}</div>
-            </div>
-          </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <div className="relative">
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx,.xls,.csv,.json"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.currentTarget.files?.[0];
-                  if (f) void handleImportFile(f);
-                }}
-              />
+            <div className="grid grid-cols-4 gap-2">
+              <div className="relative">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv,.json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.currentTarget.files?.[0];
+                    if (f) void handleImportFile(f);
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={importing}
+                  aria-label="Importar"
+                  title="Importar"
+                  className="flex h-10 w-full items-center justify-center rounded-xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
+                >
+                  <Upload className="h-4 w-4" />
+                </Button>
+              </div>
+
               <Button
                 variant="outline"
-                onClick={() => fileRef.current?.click()}
-                disabled={importing}
-                className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] transition hover:bg-muted"
+                onClick={() => void handleCopySimpleList()}
+                aria-label="Copiar"
+                title="Copiar"
+                className="flex h-10 w-full items-center justify-center rounded-xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
               >
-                <Upload className="mr-2 h-4 w-4" /> Importar
+                <Copy className="h-4 w-4" />
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setExportFormat("xlsx");
+                  setExportDialogOpen(true);
+                }}
+                aria-label="Exportar"
+                title="Exportar"
+                className="flex h-10 w-full items-center justify-center rounded-xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
+              >
+                <Download className="h-4 w-4" />
+              </Button>
+
+              <Button
+                onClick={() => void saveSnapshot()}
+                aria-label="Guardar"
+                title="Guardar"
+                className="flex h-10 w-full items-center justify-center rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_16px_36px_-24px_rgba(34,60,48,0.55)] transition hover:bg-[var(--primary)]/90"
+              >
+                <Save className="h-4 w-4" />
               </Button>
             </div>
-
-            <Button
-              variant="outline"
-              onClick={() => void handleCopySimpleList()}
-              className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] transition hover:bg-muted"
-            >
-              <Copy className="mr-2 h-4 w-4" /> Copiar
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={() => {
-                setExportFormat("xlsx");
-                setExportDialogOpen(true);
-              }}
-              className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] transition hover:bg-muted"
-            >
-              <Download className="mr-2 h-4 w-4" /> Exportar
-            </Button>
-
-            <Button
-              onClick={() => void saveSnapshot()}
-              className="h-12 w-full rounded-2xl bg-[var(--primary)] text-sm font-semibold text-[var(--primary-foreground)] shadow-[0_16px_36px_-24px_rgba(34,60,48,0.55)] transition hover:bg-[var(--primary)]/90"
-            >
-              Guardar
-            </Button>
           </div>
         </div>
       </div>
@@ -4136,15 +4127,17 @@ function PriceEditor({
   const since = formatSince(updatedAt);
 
   return (
-    <div className="w-full space-y-1 text-[color:var(--order-card-accent)]">
-      <div className="inline-flex items-center gap-2">
-        <span className="text-[11px] uppercase tracking-[0.14em] text-[color:var(--order-card-accent)] opacity-70">Precio</span>
+    <div className="w-full text-[color:var(--order-card-accent)]">
+      <div className="flex flex-col gap-1">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--order-card-accent)]/70">
+          Precio
+        </span>
 
-        <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+        <div className="inline-flex h-9 w-[96px] items-center justify-between rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
           <Input
-            className="h-8 w-20 border-none bg-transparent px-0 text-right text-sm text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
+            className="h-7 w-12 border-none bg-transparent pl-2 pr-0 text-right text-sm text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
             inputMode="decimal"
-            placeholder="$0"
+            placeholder="0"
             value={val}
             onChange={(e) => {
               setVal(e.target.value);
@@ -4160,7 +4153,7 @@ function PriceEditor({
             size="icon"
             variant="ghost"
             className={clsx(
-              "h-8 w-8 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors",
+              "h-7 w-7 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors",
               dirty ? "hover:border-[color:var(--order-card-accent)]" : "opacity-60"
             )}
             disabled={!dirty}
@@ -4173,7 +4166,7 @@ function PriceEditor({
         </div>
       </div>
 
-      <div className="text-[11px] text-right text-[color:var(--order-card-accent)] opacity-60" title={since.title}>
+      <div className="mt-1 text-[10px] text-right text-[color:var(--order-card-accent)] opacity-60" title={since.title}>
         {updatedAt ? `act. ${since.text}` : "sin cambios"}
       </div>
     </div>
@@ -4256,14 +4249,16 @@ function StockEditor({
     }
   }
   return (
-    <div className="w-full space-y-2 text-[color:var(--order-card-accent)]">
-      <div className="inline-flex items-center gap-2">
-        <span className="text-[11px] uppercase tracking-[0.14em] text-[color:var(--order-card-accent)] opacity-70">Stock</span>
-        <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+    <div className="w-full text-[color:var(--order-card-accent)]">
+      <div className="flex flex-col gap-1">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--order-card-accent)]/70">
+          Stock
+        </span>
+        <div className="inline-flex h-9 w-[96px] items-center justify-between rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
           <Input
-            className="h-8 w-20 border-none bg-transparent px-0 text-right text-sm text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
+            className="h-7 w-12 border-none bg-transparent pl-2 pr-0 text-right text-sm text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
             inputMode="numeric"
-            placeholder="0"
+            placeholder="000"
             value={val}
             onChange={(e) => {
               setVal(e.target.value);
@@ -4286,7 +4281,7 @@ function StockEditor({
             size="icon"
             variant="ghost"
             className={clsx(
-              "h-8 w-8 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors",
+              "h-7 w-7 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors",
               dirty ? "hover:border-[color:var(--order-card-accent)]" : "opacity-60"
             )}
             disabled={!dirty}
@@ -4299,7 +4294,7 @@ function StockEditor({
         </div>
       </div>
 
-      <div className="flex flex-col items-end gap-1 text-[11px] text-[color:var(--order-card-accent)] opacity-60">
+      <div className="mt-1 flex flex-col items-end gap-1 text-[10px] text-[color:var(--order-card-accent)] opacity-60">
         <div className="text-right" title={since.title}>
           {updatedAt ? `Aplicado ${since.text}` : "sin aplicación"}
         </div>
@@ -4776,52 +4771,52 @@ const mergedClassName = [
                     isChecked && "border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-inner-highlight)]"
                   )}
                 >
-                  <div className="absolute right-4 top-4 flex items-center gap-2">
-                    <PackSizeEditor
-                      value={it.pack_size}
-                      onCommit={(n) => onUpdatePackSize(it.id, n)}
-                    />
-                    <Label
-                      htmlFor={`item-check-${it.id}`}
-                      className={clsx(
-                        "inline-flex cursor-pointer items-center justify-center rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-all duration-200 hover:border-[color:var(--order-card-accent)]",
-                        isChecked && "border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-highlight)]"
-                      )}
-                    >
-                      <Checkbox
-                        id={`item-check-${it.id}`}
-                        checked={isChecked}
-                        onCheckedChange={(v) => setItemChecked(it.id, v === true)}
-                        className={clsx(
-                          "size-4 rounded-sm border-[color:var(--order-card-pill-border)] bg-transparent text-transparent shadow-none transition-colors",
-                          isChecked
-                            ? "data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)] data-[state=checked]:text-[color:var(--destructive-foreground)]"
-                            : "focus-visible:ring-[color:var(--order-card-accent)] focus-visible:ring-opacity-30"
-                        )}
-                        aria-label="Marcar como cargado"
-                      />
-                    </Label>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className={clsx(
-                        "h-8 w-8 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-transform",
-                        statsOpen && "rotate-180"
-                      )}
-                      onClick={() => onToggleStats(it.id)}
-                      aria-label={statsOpen ? "Ocultar estadísticas" : "Mostrar estadísticas"}
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                  </div>
-
-                  <div className="flex flex-wrap items-start justify-between gap-3 pr-28">
-                    <div className="min-w-0 flex-1">
+                  <div className="flex flex-col gap-3">
+                    <div className="min-w-0">
                       <ItemTitle
                         name={it.display_name || it.product_name}
                         canonical={it.product_name}
                         onCommit={(label) => onRenameItemLabel(it.id, label)}
                       />
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <PackSizeEditor
+                        value={it.pack_size}
+                        onCommit={(n) => onUpdatePackSize(it.id, n)}
+                      />
+                      <Label
+                        htmlFor={`item-check-${it.id}`}
+                        className={clsx(
+                          "inline-flex cursor-pointer items-center justify-center rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-all duration-200 hover:border-[color:var(--order-card-accent)]",
+                          isChecked && "border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-highlight)]"
+                        )}
+                      >
+                        <Checkbox
+                          id={`item-check-${it.id}`}
+                          checked={isChecked}
+                          onCheckedChange={(v) => setItemChecked(it.id, v === true)}
+                          className={clsx(
+                            "size-4 rounded-sm border-[color:var(--order-card-pill-border)] bg-transparent text-transparent shadow-none transition-colors",
+                            isChecked
+                              ? "data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)] data-[state=checked]:text-[color:var(--destructive-foreground)]"
+                              : "focus-visible:ring-[color:var(--order-card-accent)] focus-visible:ring-opacity-30"
+                          )}
+                          aria-label="Marcar como cargado"
+                        />
+                      </Label>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className={clsx(
+                          "ml-auto h-8 w-8 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-transform",
+                          statsOpen && "rotate-180"
+                        )}
+                        onClick={() => onToggleStats(it.id)}
+                        aria-label={statsOpen ? "Ocultar estadísticas" : "Mostrar estadísticas"}
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
                     </div>
                   </div>
 
@@ -4849,15 +4844,15 @@ const mergedClassName = [
                   )}
 
                   <div className="mt-4 flex flex-col gap-3 border-t border-[color:var(--order-card-divider)] pt-3">
-                    <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-start sm:gap-4">
-                      <div className="sm:pr-2">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex flex-1 min-w-[120px]">
                         <PriceEditor
                           price={it.unit_price}
                           updatedAt={it.price_updated_at}
                           onCommit={(n) => onUpdateUnitPrice(it.id, n)}
                         />
                       </div>
-                      <div className="sm:px-2">
+                      <div className="flex flex-1 min-w-[120px]">
                         <StockEditor
                           value={it.stock_qty ?? null}
                           updatedAt={it.stock_updated_at}
@@ -4866,7 +4861,7 @@ const mergedClassName = [
                           salesSince={pendingSales}
                         />
                       </div>
-                      <div className="flex justify-end sm:justify-self-end">
+                      <div className="flex flex-1 min-w-[150px] justify-end">
                         <Stepper
                           value={it.qty}
                           min={0}

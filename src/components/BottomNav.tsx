@@ -119,9 +119,9 @@ export default function BottomNav() {
       aria-label="Navegación inferior"
       className={clsx(
         "fixed inset-x-0 bottom-0 z-40",
-        "border-t border-[color:var(--color-deep-green)]/25",
-        "bg-[color:var(--color-deep-green-dark)]/98 text-[color:var(--color-dark-text-secondary)]",
-        "shadow-[0_-22px_48px_-26px_rgba(12,24,20,0.72)] backdrop-blur supports-[backdrop-filter]:backdrop-blur",
+        "border-t border-border/60",
+        "bg-sidebar text-muted-foreground",
+        "shadow-[var(--shadow-elevated)] backdrop-blur supports-[backdrop-filter]:backdrop-blur",
         "md:static md:inset-auto md:bottom-auto md:z-0 md:flex md:min-h-dvh md:w-72 md:flex-col md:border-t-0 md:border-r md:border-border/60 md:bg-sidebar md:px-4 md:py-6 md:text-sidebar-foreground md:shadow-none md:backdrop-blur-none"
       )}
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}
@@ -183,16 +183,16 @@ export default function BottomNav() {
                     onClick={item.onClick}
                     className={clsx(
                       "group relative mx-auto flex w-full flex-col items-center justify-center rounded-2xl px-3 py-2",
-                      "text-[color:var(--color-dark-text-secondary)] transition-all hover:bg-white/10",
-                      "outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-action-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--color-deep-green-dark)]",
+                      "text-muted-foreground transition-all hover:bg-[color:var(--surface-muted)]",
+                      "outline-none focus-visible:ring-2 focus-visible:ring-[var(--sidebar-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--sidebar)]",
                       "md:h-11 md:flex-row md:justify-start md:gap-3 md:rounded-xl md:border-l-4 md:border-transparent md:px-3 md:text-sm md:font-medium md:text-muted-foreground md:hover:border-primary md:hover:bg-sidebar-accent/60 md:hover:text-foreground"
                     )}
                     aria-label={item.label}
                   >
-                    <Icon className="h-5 w-5 transition-transform text-[color:var(--color-dark-text-secondary)] group-hover:scale-105 group-hover:text-[color:var(--color-bone-lightest)] md:h-5 md:w-5 md:text-inherit" />
+                    <Icon className="h-5 w-5 transition-transform text-muted-foreground group-hover:scale-105 group-hover:text-sidebar-foreground md:h-5 md:w-5 md:text-inherit" />
                     <span
                       className={clsx(
-                        "mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-dark-text-secondary)] group-hover:text-[color:var(--color-bone-lightest)]",
+                        "mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground group-hover:text-sidebar-foreground",
                         "md:mt-0 md:text-sm md:font-medium md:normal-case md:tracking-normal md:text-muted-foreground"
                       )}
                     >
@@ -208,10 +208,10 @@ export default function BottomNav() {
                     aria-current={isActive ? "page" : undefined}
                     className={clsx(
                       "group relative mx-auto flex w-full flex-col items-center justify-center rounded-2xl px-3 py-2",
-                      "transition-all outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-action-focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--color-deep-green-dark)]",
+                      "transition-all outline-none focus-visible:ring-2 focus-visible:ring-[var(--sidebar-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--sidebar)]",
                       isActive
-                        ? "bg-[color:var(--color-deep-green)] text-[color:var(--color-bone-lightest)] shadow-[0_12px_26px_-16px_rgba(10,28,20,0.8)] md:bg-primary/10 md:text-primary md:border-l-4 md:border-primary"
-                        : "text-[color:var(--color-dark-text-secondary)] hover:bg-white/10 md:text-muted-foreground md:hover:bg-sidebar-accent/60 md:hover:text-foreground md:border-l-4 md:border-transparent",
+                        ? "bg-primary text-primary-foreground shadow-[var(--shadow-elevated)] md:bg-primary/10 md:text-primary md:border-l-4 md:border-primary"
+                        : "text-muted-foreground hover:bg-[color:var(--surface-muted)] md:text-muted-foreground md:hover:bg-sidebar-accent/60 md:hover:text-foreground md:border-l-4 md:border-transparent",
                       "md:h-11 md:flex-row md:items-center md:justify-start md:gap-3 md:rounded-xl md:px-3 md:text-sm md:font-medium"
                     )}
                   >
@@ -219,8 +219,8 @@ export default function BottomNav() {
                       className={clsx(
                         "h-5 w-5 transition-transform",
                         isActive
-                          ? "scale-110 text-[color:var(--color-bone-lightest)] md:text-primary"
-                          : "scale-100 text-[color:var(--color-dark-text-secondary)] group-hover:scale-105 group-hover:text-[color:var(--color-bone-lightest)] md:text-inherit"
+                          ? "scale-110 text-primary-foreground md:text-primary"
+                          : "scale-100 text-muted-foreground group-hover:scale-105 group-hover:text-sidebar-foreground md:text-inherit"
                       )}
                       strokeWidth={isActive ? 2.2 : 1.6}
                     />
@@ -228,8 +228,8 @@ export default function BottomNav() {
                       className={clsx(
                         "mt-0.5 text-[11px] font-semibold uppercase tracking-wide",
                         isActive
-                          ? "text-[color:var(--color-bone-lightest)] md:mt-0 md:tracking-normal md:text-primary"
-                          : "text-[color:var(--color-dark-text-secondary)] group-hover:text-[color:var(--color-bone-lightest)] md:mt-0 md:tracking-normal md:text-muted-foreground",
+                          ? "text-primary-foreground md:mt-0 md:tracking-normal md:text-primary"
+                          : "text-muted-foreground group-hover:text-sidebar-foreground md:mt-0 md:tracking-normal md:text-muted-foreground",
                         "md:font-medium md:normal-case"
                       )}
                     >
@@ -240,7 +240,7 @@ export default function BottomNav() {
                   // Deshabilitado (si faltara slug)
                   <div
                     aria-disabled="true"
-                    className="group mx-auto flex w-full flex-col items-center justify-center rounded-2xl px-3 py-2 md:px-4 md:py-3 cursor-not-allowed bg-white/5 text-white/40"
+                    className="group mx-auto flex w-full flex-col items-center justify-center rounded-2xl px-3 py-2 md:px-4 md:py-3 cursor-not-allowed bg-[color:var(--surface-muted)] text-muted-foreground opacity-60"
                     title={disabledTitle}
                   >
                     <Icon className="h-5 w-5" />
