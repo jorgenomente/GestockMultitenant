@@ -88,6 +88,16 @@
   --surface-accent-strong: rgba(115, 148, 176, 0.28);
   --surface-success-soft: rgba(143, 189, 165, 0.18);
   --surface-success-strong: rgba(143, 189, 165, 0.28);
+  --order-card-background: rgba(231, 233, 223, 0.78);
+  --order-card-border: rgba(217, 226, 212, 0.55);
+  --order-card-inner-background: rgba(187, 214, 190, 0.52);
+  --order-card-inner-border: rgba(170, 204, 175, 0.6);
+  --order-card-inner-highlight: rgba(158, 196, 166, 0.7);
+  --order-card-pill-background: rgba(243, 248, 244, 0.72);
+  --order-card-pill-border: rgba(182, 211, 187, 0.62);
+  --order-card-accent: #2B4637;
+  --order-card-divider: rgba(191, 218, 195, 0.4);
+  --order-card-highlight: rgba(214, 129, 90, 0.45);
 
   /* Typography */
   --font-family-heading: "Manrope", sans-serif;
@@ -247,6 +257,16 @@
   --surface-accent-strong: rgba(169, 201, 164, 0.28);
   --surface-success-soft: rgba(143, 189, 165, 0.18);
   --surface-success-strong: rgba(143, 189, 165, 0.28);
+  --order-card-background: rgba(46, 65, 68, 0.6);
+  --order-card-border: rgba(122, 157, 142, 0.45);
+  --order-card-inner-background: rgba(90, 132, 111, 0.5);
+  --order-card-inner-border: rgba(116, 156, 135, 0.52);
+  --order-card-inner-highlight: rgba(134, 176, 153, 0.7);
+  --order-card-pill-background: rgba(78, 112, 95, 0.55);
+  --order-card-pill-border: rgba(146, 183, 162, 0.55);
+  --order-card-accent: #E4F0EA;
+  --order-card-divider: rgba(112, 159, 137, 0.36);
+  --order-card-highlight: rgba(214, 129, 90, 0.48);
 
   --chart-1: #5A8070;
   --chart-2: #A9C9A4;

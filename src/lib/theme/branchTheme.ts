@@ -191,6 +191,17 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const chartFour = alert;
   const chartFive = primaryHover;
 
+  const orderCardBackground = withAlpha(adjustLightness(card, 0.35), 0.78);
+  const orderCardBorder = withAlpha(adjustLightness(card, 0.45), 0.5);
+  const orderCardInnerBackground = withAlpha(adjustLightness(primary, 0.55), 0.5);
+  const orderCardInnerBorder = withAlpha(adjustLightness(primary, 0.35), 0.6);
+  const orderCardInnerHighlight = withAlpha(adjustLightness(primary, 0.2), 0.7);
+  const orderCardPillBackground = withAlpha(adjustLightness(primary, 0.75), 0.7);
+  const orderCardPillBorder = withAlpha(adjustLightness(primary, 0.45), 0.6);
+  const orderCardAccent = adjustLightness(primary, -0.28);
+  const orderCardDivider = withAlpha(adjustLightness(primary, 0.4), 0.38);
+  const orderCardHighlight = withAlpha(adjustLightness(alert, 0.12), 0.45);
+
   return {
     "--background": background,
     "--foreground": textPrimary,
@@ -267,6 +278,16 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
     "--surface-accent-strong": accentStrongSurface,
     "--surface-success-soft": successSoftSurface,
     "--surface-success-strong": successStrongSurface,
+    "--order-card-background": orderCardBackground,
+    "--order-card-border": orderCardBorder,
+    "--order-card-inner-background": orderCardInnerBackground,
+    "--order-card-inner-border": orderCardInnerBorder,
+    "--order-card-inner-highlight": orderCardInnerHighlight,
+    "--order-card-pill-background": orderCardPillBackground,
+    "--order-card-pill-border": orderCardPillBorder,
+    "--order-card-accent": orderCardAccent,
+    "--order-card-divider": orderCardDivider,
+    "--order-card-highlight": orderCardHighlight,
     "--chart-1": chartPrimary,
     "--chart-2": chartTwo,
     "--chart-3": chartThree,

@@ -136,48 +136,62 @@ const isMissingProviderError = (error: unknown) => {
 
 /* eslint-disable no-unused-vars */
 /* ---------- Subcomponente: Stepper ---------- */
-type StepperProps = { value: number; onChange: (...args: [number]) => void; min?: number; step?: number; };
+type StepperProps = {
+  value: number;
+  onChange: (...args: [number]) => void;
+  min?: number;
+  step?: number;
+  suffixLabel?: string;
+};
 
-function Stepper({ value, onChange, min = 0, step = 1 }: StepperProps) {
+function Stepper({ value, onChange, min = 0, step = 1, suffixLabel }: StepperProps) {
   const s = Math.max(1, Math.floor(step));
   const clamp = (n: number) => Math.max(min, n);
   const snap  = (n: number) => clamp(Math.round(n / s) * s);
 
   return (
-    <div className="inline-flex items-center gap-1.5">
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-8 w-8"
-        aria-label="Restar"
-        onClick={() => onChange(clamp((value || 0) - s))}
-      >
-        <Minus className="h-3.5 w-3.5" />
-      </Button>
+    <div className="inline-flex items-center gap-2">
+      <div className="inline-flex items-center gap-1">
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-10 w-10 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)]"
+          aria-label="Restar"
+          onClick={() => onChange(clamp((value || 0) - s))}
+        >
+          <Minus className="h-3.5 w-3.5" />
+        </Button>
 
-      <Input
-        className="w-14 h-8 text-center"
-        inputMode="numeric"
-        value={value ?? 0}
-        onChange={(e) => {
-          const n = parseInt(e.target.value || "0", 10) || 0;
-          onChange(snap(n));
-        }}
-        onBlur={(e) => {
-          const n = parseInt(e.target.value || "0", 10) || 0;
-          if (n !== value) onChange(snap(n));
-        }}
-      />
+        <Input
+          className="h-10 w-24 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-0 text-center text-base font-semibold text-[color:var(--order-card-accent)] focus-visible:ring-0"
+          inputMode="numeric"
+          value={value ?? 0}
+          onChange={(e) => {
+            const n = parseInt(e.target.value || "0", 10) || 0;
+            onChange(snap(n));
+          }}
+          onBlur={(e) => {
+            const n = parseInt(e.target.value || "0", 10) || 0;
+            if (n !== value) onChange(snap(n));
+          }}
+        />
 
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-8 w-8"
-        aria-label="Sumar"
-        onClick={() => onChange(clamp((value || 0) + s))}
-      >
-        <Plus className="h-3.5 w-3.5" />
-      </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-10 w-10 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)]"
+          aria-label="Sumar"
+          onClick={() => onChange(clamp((value || 0) + s))}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      {suffixLabel && (
+        <span className="text-xs font-medium uppercase tracking-[0.12em] text-[color:var(--order-card-accent)]/70">
+          {suffixLabel}
+        </span>
+      )}
     </div>
   );
 }
@@ -379,7 +393,16 @@ type ItemRow = {
 
 
 type SalesRow = { product: string; qty: number; subtotal?: number; date: number; category?: string; };
-type Stats = { avg4w: number; sum2w: number; sum30d: number; lastQty?: number; lastDate?: number; lastUnitRetail?: number; avgUnitRetail30d?: number; };
+type Stats = {
+  avg4w: number;
+  sum7d: number;
+  sum2w: number;
+  sum30d: number;
+  lastQty?: number;
+  lastDate?: number;
+  lastUnitRetail?: number;
+  avgUnitRetail30d?: number;
+};
 type XlsxModule = typeof import("xlsx");
 type StyledCell = CellObject & { s?: NonNullable<CellObject["s"]> };
 type CssVars = React.CSSProperties & Record<`--${string}`, string>;
@@ -419,6 +442,7 @@ type BulkItemsHandler = (...args: [string[], string]) => Promise<void>;
 type RenameItemHandler = (...args: [string, string]) => Promise<void> | void;
 type ComputeSalesSinceHandler = (...args: [string, number | null]) => number;
 type SetItemCheckedHandler = (...args: [string, boolean]) => void;
+type ToggleStatsHandler = (...args: [string]) => void;
 type GroupSectionProps = {
   groupName: string;
   items: ItemRow[];
@@ -444,6 +468,8 @@ type GroupSectionProps = {
   onMoveDown: () => void;
   checkedMap: Record<string, boolean>;
   setItemChecked: SetItemCheckedHandler;
+  statsOpenMap: Record<string, boolean>;
+  onToggleStats: ToggleStatsHandler;
   containerProps?: React.HTMLAttributes<HTMLDivElement>;
 };
 
@@ -823,15 +849,27 @@ function computeStats(sales: SalesRow[], product: string, now = Date.now()): Sta
   const rows = sales.filter((s) => s.product === product);
   const ms = 24 * 3600 * 1000;
   const sumIn = (from: number) => rows.filter((s) => s.date >= startOfDayUTC(from)).reduce((a, b) => a + (b.qty || 0), 0);
-  const sum2w = sumIn(now - 14 * ms), sum30d = sumIn(now - 30 * ms), sum4w = sumIn(now - 28 * ms), avg4w = sum4w / 4;
+  const sum7d = sumIn(now - 7 * ms);
+  const sum2w = sumIn(now - 14 * ms);
+  const sum30d = sumIn(now - 30 * ms);
+  const sum4w = sumIn(now - 28 * ms);
+  const avg4w = sum4w / 4;
   const last = [...rows].sort((a, b) => b.date - a.date)[0];
   const lastUnitRetail = last && last.qty && last.subtotal != null && last.qty > 0 ? last.subtotal / last.qty : undefined;
   const in30 = rows.filter((s) => s.date >= startOfDayUTC(now - 30 * ms) && s.qty > 0 && s.subtotal != null);
   const sumSub = in30.reduce((a, b) => a + (b.subtotal || 0), 0);
   const sumQty = in30.reduce((a, b) => a + (b.qty || 0), 0);
   const avgUnitRetail30d = sumQty > 0 ? sumSub / sumQty : undefined;
-  return { avg4w: Math.round(avg4w) || 0, sum2w: Math.round(sum2w) || 0, sum30d: Math.round(sum30d) || 0,
-           lastQty: last?.qty ?? undefined, lastDate: last?.date ?? undefined, lastUnitRetail, avgUnitRetail30d };
+  return {
+    avg4w: Math.round(avg4w) || 0,
+    sum7d: Math.round(sum7d) || 0,
+    sum2w: Math.round(sum2w) || 0,
+    sum30d: Math.round(sum30d) || 0,
+    lastQty: last?.qty ?? undefined,
+    lastDate: last?.date ?? undefined,
+    lastUnitRetail,
+    avgUnitRetail30d,
+  };
 }
 const estCost = (st?: Stats, marginPct = 48) =>
   Math.round((st?.lastUnitRetail ?? st?.avgUnitRetail30d ?? 0) * (1 - marginPct / 100));
@@ -898,6 +936,10 @@ export default function ProviderOrderPage() {
   const [stockSalesInput, setStockSalesInput] = React.useState(() => nowLocalIso());
   const [lastStockFromInput, setLastStockFromInput] = React.useState<string | null>(null);
   const [lastStockAppliedAt, setLastStockAppliedAt] = React.useState<string | null>(null);
+  const [statsOpenMap, setStatsOpenMap] = React.useState<Record<string, boolean>>({});
+  const toggleStats = React.useCallback((id: string) => {
+    setStatsOpenMap((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
 
   const salesByProduct = React.useMemo(() => {
     const map = new Map<string, SalesRow[]>();
@@ -912,6 +954,11 @@ export default function ProviderOrderPage() {
   const actionableItems = React.useMemo(
     () => items.filter((item) => item.product_name !== GROUP_PLACEHOLDER),
     [items]
+  );
+
+  const itemsWithQtyCount = React.useMemo(
+    () => actionableItems.reduce((acc, item) => acc + ((item.qty ?? 0) > 0 ? 1 : 0), 0),
+    [actionableItems]
   );
 
   const computeSalesSinceStock = React.useCallback(
@@ -3181,364 +3228,391 @@ async function exportOrderAsXlsx() {
       </Dialog>
 
       <main
-        className="mx-auto w-full max-w-md px-3 pb-[calc(156px+env(safe-area-inset-bottom)+var(--bottom-nav-h))] md:max-w-3xl md:px-6 lg:max-w-4xl lg:px-8"
+        className="mx-auto w-full max-w-5xl bg-[var(--background)] px-4 pb-[calc(156px+env(safe-area-inset-bottom)+var(--bottom-nav-h))] pt-4 text-[var(--foreground)] md:px-8 lg:px-10"
         style={rootStyle}
       >
-     {/* Header */}
-<div
-  data-hidden={barsHidden}
-  className={[
-    "sticky top-0 z-20",
-    "bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b",
-    "transform transition-transform duration-300 will-change-transform",
-    "translate-y-0",
-    "data-[hidden=true]:-translate-y-full",
-  ].join(" ")}
->
-  <div className="p-3">
-    {/* Fila 1: volver + título */}
-    <div className="flex items-center gap-2">
-      <Button variant="ghost" size="icon" onClick={() => router.back()} aria-label="Volver">
-        <ArrowLeft className="h-5 w-5" />
-      </Button>
+      {/* Header */}
+      <div
+        data-hidden={barsHidden}
+        className={[
+          "sticky top-4 z-30",
+          "translate-y-0",
+          "transition-transform duration-300 will-change-transform",
+          "data-[hidden=true]:-translate-y-full",
+        ].join(" ")}
+      >
+        <div className="rounded-3xl border border-[var(--border)] bg-card/95 px-4 py-4 shadow-card md:px-6 md:py-6">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div className="flex items-start gap-3">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => router.back()}
+                  aria-label="Volver"
+                  className="h-10 w-10 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] hover:bg-muted"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </Button>
+                <div className="min-w-0 space-y-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Detalle de pedido
+                  </span>
+                  <div className="text-2xl font-semibold leading-snug text-[var(--foreground)] truncate md:text-3xl">
+                    {providerName}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="uppercase tracking-[0.16em] text-[11px]">Fuente</span>
+                    <span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1 font-medium text-[var(--foreground)]/80">
+                      {salesMeta.source === "imported" ? "Ventas importadas" : "Ventas reales"}
+                    </span>
+                    <span className="truncate text-[var(--foreground)]/60">{salesMeta.label}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col items-end justify-end gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Total pedido
+                </span>
+                <span className="inline-flex items-center rounded-2xl bg-[var(--primary)] px-4 py-2 text-base font-semibold text-[var(--primary-foreground)] shadow-[0_6px_18px_var(--surface-action-primary-strong)] md:text-xl">
+                  {fmtMoney(grandTotal)}
+                </span>
+              </div>
+            </div>
 
-      <div className="flex-1 min-w-0">
-        <div className="text-xs text-muted-foreground">Detalle de pedido</div>
-        <div className="font-semibold text-lg leading-tight truncate">{providerName}</div>
-        <div className="text-[11px] text-muted-foreground">
-          Fuente ventas: {salesMeta.source === "imported" ? "Importada" : "Por defecto"} · {salesMeta.label}
+            <div className="flex flex-wrap items-center gap-2">
+              <Sheet
+                open={historyOpen}
+                onOpenChange={(v) => {
+                  setHistoryOpen(v);
+                  if (v) {
+                    void loadSnapshots();
+                  } else {
+                    cancelEditingSnapshot();
+                  }
+                }}
+              >
+                <SheetTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="Historial"
+                    title="Historial"
+                    className="h-10 w-10 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] hover:bg-muted"
+                  >
+                    <History className="h-4 w-4" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="right" className="flex w-[85vw] max-w-sm flex-col">
+                  <SheetHeader>
+                    <SheetTitle>Historial</SheetTitle>
+                  </SheetHeader>
+                  <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-2">
+                    {snapshots.length === 0 && (
+                      <div className="text-sm text-muted-foreground">Aún no hay versiones guardadas.</div>
+                    )}
+                    {snapshots.map((s) => {
+                      const isEditing = editingSnapshotId === s.id;
+                      const isRenaming = renamingSnapshotId === s.id;
+                      return (
+                        <Card key={s.id}>
+                          <CardContent className="p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                {isEditing ? (
+                                  <Input
+                                    ref={isEditing ? snapshotTitleInputRef : undefined}
+                                    value={snapshotTitleDraft}
+                                    onChange={(e) => setSnapshotTitleDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        void commitSnapshotTitle();
+                                      } else if (e.key === "Escape") {
+                                        e.preventDefault();
+                                        cancelEditingSnapshot();
+                                      }
+                                    }}
+                                    onBlur={() => void commitSnapshotTitle()}
+                                    disabled={isRenaming}
+                                    className="h-8"
+                                  />
+                                ) : (
+                                  <div className="font-medium truncate" title={s.title}>
+                                    {s.title}
+                                  </div>
+                                )}
+                                <div className="text-xs text-muted-foreground">
+                                  {new Date(s.created_at).toLocaleString()}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {isEditing ? (
+                                  <>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      aria-label="Guardar nombre"
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => void commitSnapshotTitle()}
+                                      disabled={isRenaming}
+                                    >
+                                      {isRenaming ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Check className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      aria-label="Cancelar edición"
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => cancelEditingSnapshot()}
+                                      disabled={isRenaming}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label="Renombrar versión"
+                                    onClick={() => startEditingSnapshot(s)}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                <Button size="sm" onClick={() => void openSnapshot(s)} disabled={isRenaming}>
+                                  Abrir
+                                </Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="text-destructive"
+                                      aria-label="Eliminar"
+                                      disabled={isRenaming}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Eliminar versión</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        ¿Seguro querés eliminar esta versión del historial?
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                      <AlertDialogAction asChild>
+                                        <Button
+                                          variant="destructive"
+                                          onClick={() => void deleteSnapshot(s.id)}
+                                        >
+                                          Eliminar
+                                        </Button>
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                </SheetContent>
+              </Sheet>
+
+              <input
+                ref={salesUploadRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0];
+                  if (f) void handleImportSales(f);
+                }}
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Importar ventas actualizadas"
+                onClick={() => salesUploadRef.current?.click()}
+                disabled={importingSales}
+                title="Importar ventas actualizadas"
+                className="h-10 w-10 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] hover:bg-muted"
+              >
+                <Upload className="h-4 w-4" />
+              </Button>
+
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-sm font-medium text-[var(--foreground)] hover:bg-muted"
+                    disabled={zeroing}
+                    title="Poner todas las cantidades en 0"
+                  >
+                    Cant.0
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>¿Poner todas las cantidades en 0?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Esto pondrá en 0 la cantidad de <b>todos</b> los productos del pedido.
+                      No afecta precios ni grupos. ¿Confirmás?
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => void zeroAllQuantities()} disabled={zeroing}>
+                      Sí, poner todo en 0
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-sm font-medium text-[var(--foreground)] hover:bg-muted"
+                    title="Aplicar cantidades sugeridas"
+                  >
+                    Sugerido
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>¿Qué tipo de pedido vas a hacer?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Elegí el período para calcular las cantidades:
+                      <br />• <b>Semanal</b>: promedio semanal (últimas 4 semanas)
+                      <br />• <b>Quincenal</b>: ventas de las últimas 2 semanas
+                      <br />• <b>Mensual</b>: ventas de los últimos 30 días
+                      <br />Si un producto tiene “paquete”, se ajusta al múltiplo del pack.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <AlertDialogCancel asChild>
+                      <Button variant="outline">Cancelar</Button>
+                    </AlertDialogCancel>
+
+                    <AlertDialogAction asChild>
+                      <Button disabled={suggesting} onClick={() => void handlePickSuggested("week")}>
+                        Semanal
+                      </Button>
+                    </AlertDialogAction>
+                    <AlertDialogAction asChild>
+                      <Button disabled={suggesting} onClick={() => void handlePickSuggested("2w")}>
+                        Quincenal
+                      </Button>
+                    </AlertDialogAction>
+                    <AlertDialogAction asChild>
+                      <Button disabled={suggesting} onClick={() => void handlePickSuggested("30d")}>
+                        Mensual
+                      </Button>
+                    </AlertDialogAction>
+                  </div>
+                </AlertDialogContent>
+              </AlertDialog>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-sm font-medium text-[var(--foreground)] hover:bg-muted"
+                title="Guardar el pedido anterior (copia las cantidades actuales)"
+                onClick={() => void snapshotPreviousQuantities()}
+              >
+                Ped Ant.
+              </Button>
+            </div>
+
+            {salesImportError && (
+              <div className="flex items-start gap-3 rounded-2xl border border-[var(--surface-alert-strong)] bg-[var(--surface-alert-soft)] px-4 py-3 text-xs text-[var(--destructive)]">
+                <p className="flex-1 whitespace-pre-wrap break-words">{salesImportError}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopySalesError}
+                  className="shrink-0 rounded-full border border-[var(--destructive)] bg-transparent px-4 text-[var(--destructive)] transition-colors hover:bg-[var(--surface-alert-soft)]"
+                >
+                  Copiar
+                </Button>
+              </div>
+            )}
+
+            <div className="relative mt-1">
+              <Input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Buscar producto…"
+                className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] pl-12 pr-12 text-sm shadow-inner"
+                aria-label="Filtrar productos"
+              />
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              {filter && (
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted/60"
+                  aria-label="Limpiar filtro"
+                  onClick={() => setFilter("")}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-
-    {/* Fila 2: 4 botones en línea */}
-    <div className="mt-2 flex items-center gap-2">
-      {/* 1) Historial */}
-      <Sheet
-        open={historyOpen}
-        onOpenChange={(v) => {
-          setHistoryOpen(v);
-          if (v) {
-            void loadSnapshots();
-          } else {
-            cancelEditingSnapshot();
-          }
-        }}
-      >
-        <SheetTrigger asChild>
-          <Button variant="outline" size="icon" aria-label="Historial" title="Historial">
-            <History className="h-4 w-4" />
-          </Button>
-        </SheetTrigger>
-        <SheetContent side="right" className="flex w-[85vw] max-w-sm flex-col">
-          <SheetHeader>
-            <SheetTitle>Historial</SheetTitle>
-          </SheetHeader>
-          <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-2">
-            {snapshots.length === 0 && (
-              <div className="text-sm text-muted-foreground">Aún no hay versiones guardadas.</div>
-            )}
-            {snapshots.map((s) => {
-              const isEditing = editingSnapshotId === s.id;
-              const isRenaming = renamingSnapshotId === s.id;
-              return (
-                <Card key={s.id}>
-                  <CardContent className="p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        {isEditing ? (
-                          <Input
-                            ref={isEditing ? snapshotTitleInputRef : undefined}
-                            value={snapshotTitleDraft}
-                            onChange={(e) => setSnapshotTitleDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                void commitSnapshotTitle();
-                              } else if (e.key === "Escape") {
-                                e.preventDefault();
-                                cancelEditingSnapshot();
-                              }
-                            }}
-                            onBlur={() => void commitSnapshotTitle()}
-                            disabled={isRenaming}
-                            className="h-8"
-                          />
-                        ) : (
-                          <div className="font-medium truncate" title={s.title}>
-                            {s.title}
-                          </div>
-                        )}
-                        <div className="text-xs text-muted-foreground">
-                          {new Date(s.created_at).toLocaleString()}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {isEditing ? (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Guardar nombre"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => void commitSnapshotTitle()}
-                              disabled={isRenaming}
-                            >
-                              {isRenaming ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Check className="h-4 w-4" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Cancelar edición"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => cancelEditingSnapshot()}
-                              disabled={isRenaming}
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </>
-                        ) : (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Renombrar versión"
-                            onClick={() => startEditingSnapshot(s)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        )}
-                        <Button size="sm" onClick={() => void openSnapshot(s)} disabled={isRenaming}>
-                          Abrir
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive"
-                              aria-label="Eliminar"
-                              disabled={isRenaming}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Eliminar versión</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                ¿Seguro querés eliminar esta versión del historial?
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                              <AlertDialogAction
-                                className="bg-red-600 hover:bg-red-700"
-                                onClick={() => void deleteSnapshot(s.id)}
-                              >
-                                Eliminar
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* 2) Importar ventas (Storage) */}
-      <input
-        ref={salesUploadRef}
-        type="file"
-        accept=".xlsx,.xls,.csv"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.currentTarget.files?.[0];
-          if (f) void handleImportSales(f);
-        }}
-      />
-      <Button
-        variant="outline"
-        size="icon"
-        aria-label="Importar ventas actualizadas"
-        onClick={() => salesUploadRef.current?.click()}
-        disabled={importingSales}
-        title="Importar ventas actualizadas"
-      >
-        <Upload className="h-4 w-4" />
-      </Button>
-
-      {/* 3) Todo en 0 */}
-      <AlertDialog>
-        <AlertDialogTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 rounded-lg shrink-0"
-            disabled={zeroing}
-            title="Poner todas las cantidades en 0"
-          >
-            Cant.0
-          </Button>
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>¿Poner todas las cantidades en 0?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esto pondrá en 0 la cantidad de <b>todos</b> los productos del pedido.
-              No afecta precios ni grupos. ¿Confirmás?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void zeroAllQuantities()} disabled={zeroing}>
-              Sí, poner todo en 0
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* 4) Sugerido */}
-      <AlertDialog>
-        <AlertDialogTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 rounded-lg shrink-0"
-            title="Aplicar cantidades sugeridas"
-          >
-            Sugerido
-          </Button>
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>¿Qué tipo de pedido vas a hacer?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Elegí el período para calcular las cantidades:
-              <br />• <b>Semanal</b>: promedio semanal (últimas 4 semanas)
-              <br />• <b>Quincenal</b>: ventas de las últimas 2 semanas
-              <br />• <b>Mensual</b>: ventas de los últimos 30 días
-              <br />Si un producto tiene “paquete”, se ajusta al múltiplo del pack.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="flex gap-2 justify-end pt-2">
-            <AlertDialogCancel asChild>
-              <Button variant="outline">Cancelar</Button>
-            </AlertDialogCancel>
-
-            <AlertDialogAction asChild>
-              <Button disabled={suggesting} onClick={() => void handlePickSuggested("week")}>
-                Semanal
-              </Button>
-            </AlertDialogAction>
-            <AlertDialogAction asChild>
-              <Button disabled={suggesting} onClick={() => void handlePickSuggested("2w")}>
-                Quincenal
-              </Button>
-            </AlertDialogAction>
-            <AlertDialogAction asChild>
-              <Button disabled={suggesting} onClick={() => void handlePickSuggested("30d")}>
-                Mensual
-              </Button>
-            </AlertDialogAction>
-          </div>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {salesImportError && (
-        <div className="mt-3 flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          <p className="flex-1 whitespace-pre-wrap break-words">{salesImportError}</p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleCopySalesError}
-            className="shrink-0 border-amber-400 text-amber-900 hover:bg-amber-100"
-          >
-            Copiar
-          </Button>
-        </div>
-      )}
-
-      {/* 5) Ped Ant.  ← NUEVO: guarda qty → previous_qty para todos */}
-  <Button
-    variant="outline"
-    size="sm"
-    className="h-8 rounded-lg shrink-0"
-    title="Guardar el pedido anterior (copia las cantidades actuales)"
-    onClick={() => void snapshotPreviousQuantities()}
-  >
-    Ped Ant.
-  </Button>
-          {/* === Buscador global: filtra dentro de todos los grupos === */}
-    <div className="mt-2 relative">
-      <Input
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        placeholder="Filtrar productos en todos los grupos…"
-        className="pl-9 pr-9"
-        aria-label="Filtrar productos"
-      />
-      <Search className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-      {filter && (
-        <button
-          type="button"
-          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted"
-          aria-label="Limpiar filtro"
-          onClick={() => setFilter("")}
-        >
-          <X className="h-4 w-4" />
-        </button>
-      )}
-    </div>
-    </div>
-  </div>
-</div>
 
 
       {/* Crear grupo */}
-      <div className="mt-3">
-        <Label htmlFor="new-group-name" className="text-xs text-muted-foreground">
+      <div className="mt-6 rounded-3xl border border-[var(--border)] bg-card/90 px-5 py-4 shadow-card">
+        <Label htmlFor="new-group-name" className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           Crear grupo
         </Label>
         <GroupCreator onCreate={(name) => { if (name.trim()) void createGroup(name.trim()); }} />
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-6 flex flex-wrap items-center gap-3">
         <Button
           variant="secondary"
-          size="sm"
+          size="lg"
           onClick={handleOpenStockModal}
           disabled={stockProcessing || actionableItems.length === 0}
+          className="h-11 rounded-full bg-[var(--primary)]/90 px-6 text-[var(--primary-foreground)] shadow-[0_8px_18px_var(--surface-action-primary-strong)] hover:bg-[var(--primary)]"
         >
-          {stockProcessing ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+          {stockProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
           Obtener stock
         </Button>
         {actionableItems.length === 0 && (
-          <span className="text-xs text-muted-foreground">
+          <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
             Agregá productos al pedido para habilitar estas acciones.
           </span>
         )}
       </div>
 
       {/* Ordenar items + Casilla maestra */}
-      <div className="mt-2">
-        <Label htmlFor="sort-mode" className="text-xs text-muted-foreground">
+      <div className="mt-6">
+        <Label htmlFor="sort-mode" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
           Ordenar items
         </Label>
         <div className="mt-1 flex items-center gap-2">
           {/* Select de orden, ocupa el espacio */}
           <div className="flex-1">
             <Select value={sortMode} onValueChange={(v) => setSortMode(v as SortMode)}>
-              <SelectTrigger id="sort-mode" className="h-9">
+              <SelectTrigger id="sort-mode" className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-5 text-sm">
                 <SelectValue placeholder="Ordenar por..." />
               </SelectTrigger>
               <SelectContent>
@@ -3554,7 +3628,7 @@ async function exportOrderAsXlsx() {
             {/* Casilla maestra a la derecha */}
             <Label
               htmlFor="check-all"
-              className="inline-flex items-center gap-2 px-2 py-1 rounded-md border hover:bg-muted cursor-pointer"
+              className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-[var(--border)] bg-muted/60 px-3 py-1.5 hover:bg-muted"
               title={allChecked ? "Desmarcar todos" : "Marcar todos"}
             >
               <Checkbox
@@ -3754,6 +3828,8 @@ async function exportOrderAsXlsx() {
                 setItemChecked={setItemChecked}
                 onUpdateStock={updateStock}
                 computeSalesSinceStock={computeSalesSinceStock}
+                statsOpenMap={statsOpenMap}
+                onToggleStats={toggleStats}
                 containerProps={containerProps} // <-- clave
               />
             )}
@@ -3765,76 +3841,92 @@ async function exportOrderAsXlsx() {
 
       {/* Footer */}
       <div
-        className={`fixed left-0 right-0 border-t bg-background/95 backdrop-blur px-3 md:px-6 lg:px-8 py-2 z-50
+        className={`fixed left-0 md:left-72 right-0 border-t border-[var(--border)] bg-card/95 backdrop-blur px-4 md:px-8 lg:px-10 py-3 z-50
      bottom-[calc(env(safe-area-inset-bottom)+var(--bottom-nav-h))]
      transition-transform duration-300 will-change-transform ${barsHidden ? "translate-y-full" : ""}`}
       >
 
-        <div className="mx-auto w-full max-w-md md:max-w-3xl lg:max-w-4xl">
-          <div className="grid grid-cols-2 gap-2 mb-2">
+        <div className="mx-auto w-full max-w-5xl space-y-3">
+          <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
             <div>
-              <div className="text-xs text-muted-foreground">Total unidades</div>
-              <div className="font-semibold tabular-nums">{grandQty}</div>
+              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Total unidades
+              </div>
+              <div className="mt-1 text-lg font-semibold tabular-nums">{grandQty}</div>
             </div>
             <div className="text-right">
-              <div className="text-xs text-muted-foreground">Total</div>
-              <div className="font-semibold text-lg tabular-nums">{fmtMoney(grandTotal)}</div>
+              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Productos con cant.
+              </div>
+              <div className="mt-1 text-lg font-semibold tabular-nums">{itemsWithQtyCount}</div>
+            </div>
+            <div>
+              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Total a pagar
+              </div>
+              <div className="mt-1 text-lg font-semibold tabular-nums text-[var(--primary)]">{fmtMoney(grandTotal)}</div>
+            </div>
+            <div>
+              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Fuente ventas
+              </div>
+              <div className="mt-1 truncate text-sm text-muted-foreground">{salesMeta.label}</div>
             </div>
           </div>
 
           {/* Import/Copy/Export/Save — todos en una sola fila */}
-<div className="mt-2 flex gap-2">
-  {/* Importar */}
-  <div className="relative flex-1">
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".xlsx,.xls,.csv,.json"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.currentTarget.files?.[0];
-        if (f) void handleImportFile(f);
-      }}
-    />
-    <Button
-      variant="outline"
-      onClick={() => fileRef.current?.click()}
-      disabled={importing}
-      className="w-full text-sm"
-    >
-      <Upload className="h-4 w-4 mr-1" /> Importar
-    </Button>
-  </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            {/* Importar */}
+            <div className="relative">
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0];
+                  if (f) void handleImportFile(f);
+                }}
+              />
+              <Button
+                variant="outline"
+                onClick={() => fileRef.current?.click()}
+                disabled={importing}
+                className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] hover:bg-muted"
+              >
+                <Upload className="mr-2 h-4 w-4" /> Importar
+              </Button>
+            </div>
 
-  {/* Copiar */}
-  <Button
-    variant="outline"
-    onClick={() => void handleCopySimpleList()}
-    className="flex-1 w-full text-sm"
-  >
-    <Copy className="h-4 w-4 mr-1" /> Copiar
-  </Button>
+            {/* Copiar */}
+            <Button
+              variant="outline"
+              onClick={() => void handleCopySimpleList()}
+              className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] hover:bg-muted"
+            >
+              <Copy className="mr-2 h-4 w-4" /> Copiar
+            </Button>
 
-  {/* Exportar */}
-  <Button
-    variant="outline"
-    onClick={() => {
-      setExportFormat("xlsx");
-      setExportDialogOpen(true);
-    }}
-    className="flex-1 w-full text-sm"
-  >
-    <Download className="h-4 w-4 mr-1" /> Exportar
-  </Button>
+            {/* Exportar */}
+            <Button
+              variant="outline"
+              onClick={() => {
+                setExportFormat("xlsx");
+                setExportDialogOpen(true);
+              }}
+              className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] hover:bg-muted"
+            >
+              <Download className="mr-2 h-4 w-4" /> Exportar
+            </Button>
 
-  {/* Guardar en historial */}
-  <Button
-    onClick={() => void saveSnapshot()}
-    className="flex-1 w-full text-sm"
-  >
-    Guardar
-  </Button>
-</div>
+            {/* Guardar en historial */}
+            <Button
+              onClick={() => void saveSnapshot()}
+              className="h-12 w-full rounded-2xl bg-[var(--primary)] text-sm font-semibold text-[var(--primary-foreground)] shadow-[0_8px_18px_var(--surface-action-primary-strong)] hover:bg-[var(--primary)]/90"
+            >
+              Guardar
+            </Button>
+          </div>
 
         </div>
       </div>
@@ -3872,10 +3964,10 @@ function ItemTitle({
 
   if (!editing) {
     return (
-      <div className="flex items-start gap-2">
+      <div className="flex items-center gap-2">
         <button
           type="button"
-            className="font-semibold text-lg md:text-xl leading-tight text-left hover:opacity-80"
+          className="max-w-full truncate text-left text-lg font-semibold leading-tight text-[color:var(--order-card-accent)] transition-opacity hover:opacity-80 md:text-xl"
           onClick={() => setEditing(true)}
           title="Tocar para renombrar"
         >
@@ -3883,7 +3975,7 @@ function ItemTitle({
         </button>
         {name !== canonical && (
           <span
-            className="mt-px inline-block rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+            className="inline-block rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-[color:var(--order-card-accent)] opacity-70"
             title={`Clave: ${canonical}`}
           >
             clave: {canonical}
@@ -3894,10 +3986,10 @@ function ItemTitle({
   }
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
       <Input
         ref={inputRef}
-        className="h-8"
+        className="h-8 w-48 max-w-full border-none bg-transparent px-0 text-sm text-[color:var(--order-card-accent)] focus-visible:ring-0"
         value={val}
         onChange={(e) => setVal(e.target.value)}
         onBlur={() => void commit()}
@@ -3907,7 +3999,11 @@ function ItemTitle({
         }}
         aria-label="Nombre visible del producto"
       />
-      <Button size="icon" className="h-8 w-8" onClick={() => void commit()}>
+      <Button
+        size="icon"
+        className="h-8 w-8 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)]"
+        onClick={() => void commit()}
+      >
         <Check className="h-4 w-4" />
       </Button>
     </div>
@@ -3943,7 +4039,7 @@ function PackSizeEditor({
     return (
       <button
         type="button"
-        className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] hover:bg-muted"
+        className="inline-flex items-center gap-1 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 py-1 text-[11px] font-medium text-[color:var(--order-card-accent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] transition-colors hover:border-[color:var(--order-card-accent)]"
         title={value ? `Paquete de ${value}` : "Configurar paquete"}
         onClick={() => setEditing(true)}
       >
@@ -3954,10 +4050,10 @@ function PackSizeEditor({
   }
 
   return (
-    <div className="inline-flex items-center gap-1">
+    <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 py-1 text-[color:var(--order-card-accent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
       <Input
         ref={inputRef}
-        className="h-8 w-16 text-center"
+        className="h-8 w-16 border-none bg-transparent px-0 text-center text-sm text-[color:var(--order-card-accent)] focus-visible:ring-0"
         inputMode="numeric"
         placeholder="ej. 12"
         value={val}
@@ -3969,7 +4065,11 @@ function PackSizeEditor({
         }}
         aria-label="Tamaño del paquete"
       />
-      <Button size="icon" className="h-8 w-8" onClick={() => void commit()}>
+      <Button
+        size="icon"
+        className="h-8 w-8 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)]"
+        onClick={() => void commit()}
+      >
         <Check className="h-4 w-4" />
       </Button>
     </div>
@@ -4035,48 +4135,48 @@ function PriceEditor({
   const since = formatSince(updatedAt);
 
   return (
-  <div className="space-y-1 w-full">
-    <div className="flex items-center justify-between gap-2">
-      {/* Label */}
-      <span className="text-[11px] text-muted-foreground">Precio</span>
+    <div className="w-full space-y-1 text-[color:var(--order-card-accent)]">
+      <div className="inline-flex items-center gap-2">
+        <span className="text-[11px] uppercase tracking-[0.14em] text-[color:var(--order-card-accent)] opacity-70">Precio</span>
 
-      {/* Input + botón */}
-      <div className="flex items-center gap-2">
-        <Input
-          className="h-8 w-24 text-right tabular-nums"
-          inputMode="decimal"
-          placeholder="$0"
-          value={val}
-          onChange={(e) => {
-            setVal(e.target.value);
-            setDirty(true);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && dirty) { e.preventDefault(); void commit(); }
-            if (e.key === "Escape") { e.preventDefault(); setVal(fmtMoney(price ?? 0)); setDirty(false); }
-          }}
-          aria-label="Precio unitario"
-        />
-        <Button
-          size="icon"
-          className="h-8 w-8"
-          variant={dirty ? "default" : "secondary"}
-          disabled={!dirty}
-          onClick={() => void commit()}
-          aria-label="Confirmar precio"
-          title="Confirmar precio"
-        >
-          <Check className="h-4 w-4" />
-        </Button>
+        <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+          <Input
+            className="h-8 w-20 border-none bg-transparent px-0 text-right text-sm text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
+            inputMode="decimal"
+            placeholder="$0"
+            value={val}
+            onChange={(e) => {
+              setVal(e.target.value);
+              setDirty(true);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && dirty) { e.preventDefault(); void commit(); }
+              if (e.key === "Escape") { e.preventDefault(); setVal(fmtMoney(price ?? 0)); setDirty(false); }
+            }}
+            aria-label="Precio unitario"
+          />
+          <Button
+            size="icon"
+            variant="ghost"
+            className={clsx(
+              "h-8 w-8 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors",
+              dirty ? "hover:border-[color:var(--order-card-accent)]" : "opacity-60"
+            )}
+            disabled={!dirty}
+            onClick={() => void commit()}
+            aria-label="Confirmar precio"
+            title="Confirmar precio"
+          >
+            <Check className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      <div className="text-[11px] text-right text-[color:var(--order-card-accent)] opacity-60" title={since.title}>
+        {updatedAt ? `act. ${since.text}` : "sin cambios"}
       </div>
     </div>
-
-    {/* Firma */}
-    <div className="text-[11px] text-muted-foreground text-right" title={since.title}>
-      {updatedAt ? `act. ${since.text}` : "sin cambios"}
-    </div>
-  </div>
-);
+  );
 
 
 
@@ -4155,12 +4255,12 @@ function StockEditor({
     }
   }
   return (
-    <div className="w-full space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-muted-foreground">Stock</span>
-        <div className="flex items-center gap-2">
+    <div className="w-full space-y-2 text-[color:var(--order-card-accent)]">
+      <div className="inline-flex items-center gap-2">
+        <span className="text-[11px] uppercase tracking-[0.14em] text-[color:var(--order-card-accent)] opacity-70">Stock</span>
+        <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
           <Input
-            className="h-8 w-24 text-right tabular-nums"
+            className="h-8 w-20 border-none bg-transparent px-0 text-right text-sm text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
             inputMode="numeric"
             placeholder="0"
             value={val}
@@ -4183,8 +4283,11 @@ function StockEditor({
           />
           <Button
             size="icon"
-            className="h-8 w-8"
-            variant={dirty ? "default" : "secondary"}
+            variant="ghost"
+            className={clsx(
+              "h-8 w-8 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors",
+              dirty ? "hover:border-[color:var(--order-card-accent)]" : "opacity-60"
+            )}
             disabled={!dirty}
             onClick={() => void commit()}
             aria-label="Confirmar stock"
@@ -4195,22 +4298,13 @@ function StockEditor({
         </div>
       </div>
 
-      <div className="flex flex-col items-end gap-1">
-        <div className="text-[11px] text-muted-foreground text-right" title={since.title}>
+      <div className="flex flex-col items-end gap-1 text-[11px] text-[color:var(--order-card-accent)] opacity-60">
+        <div className="text-right" title={since.title}>
           {updatedAt ? `Aplicado ${since.text}` : "sin aplicación"}
         </div>
         {appliedFrom && (
-          <div className="text-[11px] text-muted-foreground text-right" title={appliedFrom.title}>
+          <div className="text-right" title={appliedFrom.title}>
             Ventas descontadas desde {appliedFrom.absolute} ({appliedFrom.relative})
-          </div>
-        )}
-
-        {typeof salesSince === "number" && (
-          <div className="flex w-full items-center justify-between gap-2 text-[11px] text-muted-foreground">
-            <span>Ventas pendientes:</span>
-            <span className="font-medium text-foreground">
-              {qtyFormatter.format(Math.max(0, salesSince))}
-            </span>
           </div>
         )}
       </div>
@@ -4227,7 +4321,8 @@ function GroupSection(props: GroupSectionProps) {
     onBulkAddItems, onBulkRemoveByNames, sortMode,
     onMoveUp, onMoveDown, checkedMap, setItemChecked,
     containerProps, onUpdatePackSize, onUpdateStock,
-    onRenameItemLabel, computeSalesSinceStock
+    onRenameItemLabel, computeSalesSinceStock,
+    statsOpenMap, onToggleStats
   } = props;
 
   // === Estado del texto del buscador (queda ARRIBA del bloque nuevo)
@@ -4375,7 +4470,7 @@ const confirmedCount = React.useMemo(
   }
 
 const mergedClassName = [
-  "border rounded mb-3 overflow-visible",
+  "mb-4 overflow-visible rounded-3xl border border-[var(--border)] bg-card/80 shadow-card",
   containerProps?.className || "",
 ].join(" ");
 
@@ -4391,7 +4486,10 @@ const mergedClassName = [
     className={mergedClassName}
   >
     {/* HEADER */}
-    <AccordionTrigger ref={triggerRef} className="px-3">
+    <AccordionTrigger
+      ref={triggerRef}
+      className="rounded-t-3xl bg-muted/40 px-5 py-4 text-left text-base font-semibold text-[var(--foreground)] transition-colors data-[state=open]:rounded-b-none"
+    >
       <div className="flex w-full items-center gap-3">
         <div className="flex items-center gap-2 min-w-0">
           {!editing ? (
@@ -4426,14 +4524,16 @@ const mergedClassName = [
               onBlur={() => void commitRename()}
             />
           )}
-          <Badge variant="secondary" className="shrink-0">{arrVisible.length}</Badge>
+          <Badge variant="secondary" className="shrink-0 rounded-full border border-[var(--border)] bg-white/70 px-3 py-1 text-[11px] font-medium text-[var(--foreground)]">
+            {arrVisible.length}
+          </Badge>
         {/* NUEVO: cantidad de confirmados */}
   <Badge
     className={[
-      "shrink-0 border",
+      "shrink-0 rounded-full border px-3 py-1 text-[11px]",
       confirmedCount > 0
-        ? "bg-green-100 text-green-700 border-green-200"
-        : "bg-muted text-muted-foreground border-muted"
+        ? "border-[var(--surface-success-strong)] bg-[var(--surface-success-soft)] text-[var(--success)]"
+        : "border-[var(--border)] bg-muted/60 text-muted-foreground"
     ].join(" ")}
     title="Productos confirmados"
   >
@@ -4458,16 +4558,39 @@ const mergedClassName = [
 
 
       {/* TOOLBAR */}
-      <div className="px-3 py-2 flex items-center justify-between border-b bg-muted/30">
+      <div className="flex items-center justify-between border-b border-[var(--border)] bg-muted/40 px-5 py-3">
         <div className="text-sm tabular-nums">{fmtMoney(groupSubtotal)}</div>
         <div className="flex items-center gap-2">
-          <Button type="button" size="icon" variant="secondary" className="h-8 w-8" aria-label="Mover grupo arriba" onClick={() => onMoveUp()} title="Mover hacia arriba">
+          <Button
+            type="button"
+            size="icon"
+            variant="secondary"
+            className="h-9 w-9 rounded-xl border border-[var(--border)] bg-card/80 text-[var(--foreground)] hover:bg-muted/60"
+            aria-label="Mover grupo arriba"
+            onClick={() => onMoveUp()}
+            title="Mover hacia arriba"
+          >
             <ChevronUp className="h-4 w-4" />
           </Button>
-          <Button type="button" size="icon" variant="secondary" className="h-8 w-8" aria-label="Mover grupo abajo" onClick={() => onMoveDown()} title="Mover hacia abajo">
+          <Button
+            type="button"
+            size="icon"
+            variant="secondary"
+            className="h-9 w-9 rounded-xl border border-[var(--border)] bg-card/80 text-[var(--foreground)] hover:bg-muted/60"
+            aria-label="Mover grupo abajo"
+            onClick={() => onMoveDown()}
+            title="Mover hacia abajo"
+          >
             <ChevronDown className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="text-destructive" aria-label="Eliminar grupo" onClick={() => setConfirmOpen(true)} title="Eliminar grupo">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 rounded-xl text-destructive hover:bg-destructive/10"
+            aria-label="Eliminar grupo"
+            onClick={() => setConfirmOpen(true)}
+            title="Eliminar grupo"
+          >
             <Trash2 className="h-4 w-4" />
           </Button>
         </div>
@@ -4496,10 +4619,10 @@ const mergedClassName = [
 
       {/* CONTENIDO */}
       {/* CONTENIDO */}
-      <AccordionContent className="!overflow-visible">
-          <div className="relative px-3 pb-3">
+      <AccordionContent className="!overflow-visible rounded-b-3xl bg-card/70 px-5 pb-6">
+          <div className="space-y-5">
           {/* Buscador */}
-          <div className="relative mb-3">
+          <div className="relative">
             <Input
               ref={inputRef}
               value={q}
@@ -4525,20 +4648,20 @@ const mergedClassName = [
                 }
               }}
               placeholder="Buscar producto…"
-              className="pl-9 pr-9"
+              className="h-10 rounded-full border border-[var(--border)] bg-[var(--input-background)] pl-12 pr-12 text-sm shadow-inner"
               aria-expanded={open}
               aria-controls={`suggestions-${groupName || "sin"}`}
               onFocusCapture={scrollInputToTop}
             />
-            <Search className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             {q && (
               <button
                 type="button"
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted"
                 aria-label="Limpiar búsqueda"
                 onClick={() => { setQ(""); setOpen(false); inputRef.current?.focus(); }}
               >
-                <X className="h-4 w-4" />
+                <X className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
@@ -4633,129 +4756,143 @@ const mergedClassName = [
             const lastStockTs = it.stock_updated_at ? new Date(it.stock_updated_at).getTime() : null;
             const pendingSales = lastStockTs ? computeSalesSinceStock(productLabel, lastStockTs) : 0;
             const isChecked = !!checkedMap[it.id];
+            const metricChipClass = "inline-flex min-w-[140px] items-center justify-between gap-2 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 py-1 text-[11px] text-[color:var(--order-card-accent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]";
+            const statsOpen = !!statsOpenMap[it.id];
 
             return (
               <Card
                 key={it.id}
                 className={clsx(
-                  "mb-2 rounded-2xl transition-[background-color,border-color,box-shadow,color]",
-                  isChecked && "border-[var(--color-success)] bg-[var(--surface-success-soft)] text-foreground shadow-[0_0_0_1px_var(--color-success-light)]"
+                  "group relative mb-3 overflow-hidden rounded-[24px] border border-[color:var(--order-card-border)] bg-[color:var(--order-card-background)] px-0 py-0 shadow-[0_12px_28px_rgba(12,24,20,0.18)] transition-all duration-200",
+                  isChecked
+                    ? "border-[color:var(--order-card-highlight)] shadow-[0_0_0_2px_var(--order-card-highlight),0_18px_32px_rgba(12,24,20,0.24)]"
+                    : "hover:-translate-y-[2px] hover:border-[color:var(--order-card-accent)] hover:shadow-[0_16px_36px_rgba(12,24,20,0.22)]"
                 )}
               >
-                <CardContent className="p-3 relative">
-                  <div className="absolute right-3 top-3">
-                    <Label htmlFor={`item-check-${it.id}`} className="inline-flex items-center gap-2">
+                <CardContent
+                  className={clsx(
+                    "relative m-2 rounded-[20px] border border-[color:var(--order-card-inner-border)] bg-[color:var(--order-card-inner-background)] px-4 py-4 transition-all duration-200",
+                    isChecked && "border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-inner-highlight)]"
+                  )}
+                >
+                  <div className="absolute right-4 top-4 flex items-center gap-2">
+                    <PackSizeEditor
+                      value={it.pack_size}
+                      onCommit={(n) => onUpdatePackSize(it.id, n)}
+                    />
+                    <Label
+                      htmlFor={`item-check-${it.id}`}
+                      className={clsx(
+                        "inline-flex cursor-pointer items-center justify-center rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-all duration-200 hover:border-[color:var(--order-card-accent)]",
+                        isChecked && "border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-highlight)]"
+                      )}
+                    >
                       <Checkbox
                         id={`item-check-${it.id}`}
                         checked={isChecked}
                         onCheckedChange={(v) => setItemChecked(it.id, v === true)}
                         className={clsx(
-                          "transition-colors",
-                          isChecked && "data-[state=checked]:border-[var(--color-success)] data-[state=checked]:bg-[var(--success)] data-[state=checked]:text-[var(--success-foreground)]"
+                          "size-4 rounded-sm border-[color:var(--order-card-pill-border)] bg-transparent text-transparent shadow-none transition-colors",
+                          isChecked
+                            ? "data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)] data-[state=checked]:text-[color:var(--destructive-foreground)]"
+                            : "focus-visible:ring-[color:var(--order-card-accent)] focus-visible:ring-opacity-30"
                         )}
                         aria-label="Marcar como cargado"
                       />
                     </Label>
-                  </div>
-
-                  <div className="grid grid-cols-1 items-start">
-                    <ItemTitle
-  name={it.display_name || it.product_name}
-  canonical={it.product_name}
-  onCommit={(label) => onRenameItemLabel(it.id, label)}
-/>
-{/* 👇 NUEVO: botón/entrada de paquete */}
-    <PackSizeEditor
-  value={it.pack_size}
-  onCommit={(n) => onUpdatePackSize(it.id, n)}  // ⬅️ reemplaza updatePackSize(...)
- />
-
-                  </div>
-
-                  {/* LAYOUT: izquierda = métricas; derecha = Cantidad → Precio → Stock */}
-<div className="mt-2 flex items-start justify-between gap-3">
-  {/* IZQUIERDA: métricas una debajo de otra */}
-  <div className="flex-1 space-y-1">
-    <div className="rounded-md border px-2 py-1 text-[11px]">
-      <span className="text-muted-foreground">Prom/sem (4s): </span>
-      <span className="font-medium tabular-nums">{fmtInt(st.avg4w)}</span>
-    </div>
-    <div className="rounded-md border px-2 py-1 text-[11px]">
-      <span className="text-muted-foreground">Ventas 2 sem: </span>
-      <span className="font-medium tabular-nums">{fmtInt(st.sum2w)}</span>
-    </div>
-    <div className="rounded-md border px-2 py-1 text-[11px]">
-      <span className="text-muted-foreground">Ventas 30 días: </span>
-      <span className="font-medium tabular-nums">{fmtInt(st.sum30d)}</span>
-    </div>
-    <div className="rounded-md border px-2 py-1 text-[11px]">
-      <span className="text-muted-foreground">Últ. venta: </span>
-      <span className="font-medium">
-        {typeof st.lastDate === "number"
-          ? `${formatUTCWeekday(st.lastDate)} ${formatUTCDate(st.lastDate)}`
-          : "—"}
-      </span>
-      {/* NUEVO: Pedido anterior */}
-<div className="rounded-md border px-2 py-1 text-[11px]">
-  <span className="text-muted-foreground">Pedido anterior: </span>
-  <span className="font-medium tabular-nums">
-    {it.previous_qty != null ? fmtInt(it.previous_qty) : "—"}
-  </span>
-</div>
-
-    </div>
-  </div>
-
-  {/* DERECHA: columna vertical alineada */}
-<div className="w-40 sm:w-48 flex flex-col items-end gap-3">
-  {/* Cantidad */}
-  <div className="w-full flex justify-end">
-    <Stepper
-      value={it.qty}
-      min={0}
-      step={it.pack_size || 1}
-      onChange={(n: number) => { void onUpdateQty(it.id, n); }}
-    />
-  </div>
-
-  {/* Precio */}
-  <div className="w-full flex justify-end">
-    <PriceEditor
-      price={it.unit_price}
-      updatedAt={it.price_updated_at}
-      onCommit={(n) => onUpdateUnitPrice(it.id, n)}
-    />
-  </div>
-
-  {/* Stock */}
-  <div className="w-full flex justify-end">
-    <StockEditor
-      value={it.stock_qty ?? null}
-      updatedAt={it.stock_updated_at}
-      previousUpdatedAt={it.previous_qty_updated_at}
-      onCommit={(n) => onUpdateStock(it.id, n)}
-      salesSince={pendingSales}
-    />
-  </div>
-</div>
-
-</div>
-
-
-                  <div className="mt-2 pt-2 border-t flex items-center justify-between">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-[11px] text-muted-foreground">Subtotal</span>
-                      <span className="font-semibold tabular-nums text-base">{fmtMoney(subtotal)}</span>
-                    </div>
                     <Button
-                      variant="ghost"
                       size="icon"
-                      className="text-destructive"
-                      onClick={() => void onRemoveItem(it.id)}
-                      aria-label="Quitar producto"
+                      variant="ghost"
+                      className={clsx(
+                        "h-8 w-8 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-transform",
+                        statsOpen && "rotate-180"
+                      )}
+                      onClick={() => onToggleStats(it.id)}
+                      aria-label={statsOpen ? "Ocultar estadísticas" : "Mostrar estadísticas"}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <ChevronDown className="h-4 w-4" />
                     </Button>
+                  </div>
+
+                  <div className="flex flex-wrap items-start justify-between gap-3 pr-28">
+                    <div className="min-w-0 flex-1">
+                      <ItemTitle
+                        name={it.display_name || it.product_name}
+                        canonical={it.product_name}
+                        onCommit={(label) => onRenameItemLabel(it.id, label)}
+                      />
+                    </div>
+                  </div>
+
+                  {statsOpen && (
+                    <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-3">
+                      {[
+                        { label: "Prom/sem (4s)", value: fmtInt(st.avg4w) },
+                        { label: "Ventas 7 días", value: fmtInt(st.sum7d) },
+                        { label: "Ventas 2 sem", value: fmtInt(st.sum2w) },
+                        { label: "Ventas 30d", value: fmtInt(st.sum30d) },
+                        {
+                          label: "Últ. venta",
+                          value: typeof st.lastDate === "number"
+                            ? `${formatUTCWeekday(st.lastDate)} ${formatUTCDate(st.lastDate)}`
+                            : "—"
+                        },
+                        { label: "Pedido anterior", value: it.previous_qty != null ? fmtInt(it.previous_qty) : "—" },
+                      ].map((metric) => (
+                        <div key={metric.label} className={metricChipClass}>
+                          <span className="text-[color:var(--order-card-accent)] opacity-70">{metric.label}</span>
+                          <span className="font-semibold tabular-nums">{metric.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex flex-col gap-3 border-t border-[color:var(--order-card-divider)] pt-3">
+                    <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-start sm:gap-4">
+                      <div className="sm:pr-2">
+                        <PriceEditor
+                          price={it.unit_price}
+                          updatedAt={it.price_updated_at}
+                          onCommit={(n) => onUpdateUnitPrice(it.id, n)}
+                        />
+                      </div>
+                      <div className="sm:px-2">
+                        <StockEditor
+                          value={it.stock_qty ?? null}
+                          updatedAt={it.stock_updated_at}
+                          previousUpdatedAt={it.previous_qty_updated_at}
+                          onCommit={(n) => onUpdateStock(it.id, n)}
+                          salesSince={pendingSales}
+                        />
+                      </div>
+                      <div className="flex justify-end sm:justify-self-end">
+                        <Stepper
+                          value={it.qty}
+                          min={0}
+                          step={it.pack_size || 1}
+                          suffixLabel="pedido"
+                          onChange={(n: number) => {
+                            void onUpdateQty(it.id, n);
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 rounded-full border border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-highlight)] text-[color:var(--destructive-foreground)] transition-opacity hover:opacity-85"
+                        onClick={() => void onRemoveItem(it.id)}
+                        aria-label="Quitar producto"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--order-card-accent)] opacity-70">Subtotal</span>
+                        <span className="text-lg font-semibold text-[color:var(--order-card-accent)] tabular-nums">{fmtMoney(subtotal)}</span>
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -4769,7 +4906,7 @@ const mergedClassName = [
                 <Button
                   size="icon"
                   variant="default"
-                  className="h-11 w-11 rounded-full shadow-lg pointer-events-auto"
+                  className="h-11 w-11 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_10px_20px_var(--surface-action-primary-strong)] pointer-events-auto hover:bg-[var(--primary)]/90"
                   aria-label="Cerrar este grupo"
                   title="Cerrar este grupo"
                   onClick={() => triggerRef.current?.click()}
@@ -4801,7 +4938,7 @@ function GroupCreator({ onCreate }: GroupCreatorProps) {
 
   return (
     <form
-      className="mt-1 flex gap-2"
+      className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center"
       onSubmit={(e) => {
         e.preventDefault();
         handleCreate();
@@ -4814,12 +4951,16 @@ function GroupCreator({ onCreate }: GroupCreatorProps) {
         onChange={(e) => setName(e.target.value)}
         aria-label="Nombre del nuevo grupo"
         onKeyDown={(e) => {
-          // Evitamos submits raros si la lista de sugerencias abre algún día
           if (e.key === "Enter") e.stopPropagation();
         }}
+        className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 shadow-inner"
       />
-      <Button type="submit" onClick={handleCreate}>
-        <Plus className="h-4 w-4 mr-1" /> Crear
+      <Button
+        type="submit"
+        onClick={handleCreate}
+        className="h-11 rounded-full bg-[var(--primary)] px-6 text-[var(--primary-foreground)] shadow-[0_8px_18px_var(--surface-action-primary-strong)] hover:bg-[var(--primary)]/90"
+      >
+        <Plus className="mr-2 h-4 w-4" /> Crear
       </Button>
     </form>
   );
