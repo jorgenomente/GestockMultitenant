@@ -3245,8 +3245,8 @@ async function exportOrderAsXlsx() {
           "data-[hidden=true]:-translate-y-full",
         ].join(" ")}
       >
-        <div className="rounded-3xl border border-[var(--border)] bg-card/95 px-4 py-4 shadow-card md:px-6 md:py-6">
-          <div className="flex flex-col gap-4">
+        <div className="rounded-[26px] border border-[var(--border)] bg-card/95 px-4 py-4 text-[var(--foreground)] shadow-card md:px-6 md:py-6">
+          <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div className="flex items-start gap-3">
                 <Button
@@ -3254,31 +3254,35 @@ async function exportOrderAsXlsx() {
                   size="icon"
                   onClick={() => router.back()}
                   aria-label="Volver"
-                  className="h-10 w-10 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] hover:bg-muted"
+                  className="h-10 w-10 rounded-2xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
                 >
                   <ArrowLeft className="h-5 w-5" />
                 </Button>
                 <div className="min-w-0 space-y-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                    Detalle de pedido
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                    Pedido a
                   </span>
-                  <div className="text-2xl font-semibold leading-snug text-[var(--foreground)] truncate md:text-3xl">
+                  <div className="truncate text-2xl font-semibold leading-snug md:text-3xl">
                     {providerName}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span className="uppercase tracking-[0.16em] text-[11px]">Fuente</span>
-                    <span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1 font-medium text-[var(--foreground)]/80">
+                    <span className="inline-flex items-center rounded-full bg-muted/60 px-3 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--foreground)]/80">
+                      Fuente
+                    </span>
+                    <span className="inline-flex items-center rounded-full bg-[var(--primary)]/20 px-3 py-0.5 text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--primary)]">
                       {salesMeta.source === "imported" ? "Ventas importadas" : "Ventas reales"}
                     </span>
-                    <span className="truncate text-[var(--foreground)]/60">{salesMeta.label}</span>
+                    <span className="truncate text-muted-foreground/80">
+                      {salesMeta.label}
+                    </span>
                   </div>
                 </div>
               </div>
               <div className="flex flex-col items-end justify-end gap-2">
-                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  Total pedido
+                <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                  Total
                 </span>
-                <span className="inline-flex items-center rounded-2xl bg-[var(--primary)] px-4 py-2 text-base font-semibold text-[var(--primary-foreground)] shadow-[0_6px_18px_var(--surface-action-primary-strong)] md:text-xl">
+                <span className="inline-flex items-center rounded-2xl bg-[var(--primary)] px-5 py-2 text-lg font-semibold text-[var(--primary-foreground)] shadow-[0_14px_36px_-22px_rgba(32,56,44,0.55)] md:text-xl">
                   {fmtMoney(grandTotal)}
                 </span>
               </div>
@@ -3302,7 +3306,7 @@ async function exportOrderAsXlsx() {
                     size="icon"
                     aria-label="Historial"
                     title="Historial"
-                    className="h-10 w-10 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] hover:bg-muted"
+                    className="h-10 w-10 rounded-2xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
                   >
                     <History className="h-4 w-4" />
                   </Button>
@@ -3450,7 +3454,7 @@ async function exportOrderAsXlsx() {
                 onClick={() => salesUploadRef.current?.click()}
                 disabled={importingSales}
                 title="Importar ventas actualizadas"
-                className="h-10 w-10 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] hover:bg-muted"
+                className="h-10 w-10 rounded-2xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
               >
                 <Upload className="h-4 w-4" />
               </Button>
@@ -3460,7 +3464,7 @@ async function exportOrderAsXlsx() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-9 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-sm font-medium text-[var(--foreground)] hover:bg-muted"
+                    className="h-9 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-sm font-semibold text-[var(--foreground)] transition hover:bg-muted"
                     disabled={zeroing}
                     title="Poner todas las cantidades en 0"
                   >
@@ -3487,7 +3491,7 @@ async function exportOrderAsXlsx() {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-sm font-medium text-[var(--foreground)] hover:bg-muted"
+                className="h-9 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-sm font-semibold text-[var(--foreground)] transition hover:bg-muted"
                 title="Guardar el pedido anterior (copia las cantidades actuales)"
                 onClick={() => void snapshotPreviousQuantities()}
               >
@@ -3515,7 +3519,7 @@ async function exportOrderAsXlsx() {
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 placeholder="Buscar producto…"
-                className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] pl-12 pr-12 text-sm shadow-inner"
+                className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] pl-12 pr-12 text-sm text-[var(--foreground)] shadow-inner"
                 aria-label="Filtrar productos"
               />
               <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -3845,42 +3849,39 @@ async function exportOrderAsXlsx() {
 
       {/* Footer */}
       <div
-        className={`fixed left-0 md:left-72 right-0 border-t border-[var(--border)] bg-card/95 backdrop-blur px-4 md:px-8 lg:px-10 py-3 z-50
+        className={`fixed left-0 md:left-72 right-0 px-4 md:px-8 lg:px-10 pb-4 pt-2 z-50
      bottom-[calc(env(safe-area-inset-bottom)+var(--bottom-nav-h))]
      transition-transform duration-300 will-change-transform ${barsHidden ? "translate-y-full" : ""}`}
       >
-
-        <div className="mx-auto w-full max-w-5xl space-y-3">
-          <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
-            <div>
-              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+        <div className="mx-auto w-full max-w-5xl rounded-[28px] border border-[var(--border)] bg-card/95 px-4 py-4 text-[var(--foreground)] shadow-card md:px-6 md:py-5">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="rounded-2xl border border-[var(--border)] bg-muted/40 px-3 py-2 shadow-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                 Total unidades
               </div>
               <div className="mt-1 text-lg font-semibold tabular-nums">{grandQty}</div>
             </div>
-            <div className="text-right">
-              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            <div className="rounded-2xl border border-[var(--border)] bg-muted/40 px-3 py-2 shadow-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                 Productos con cant.
               </div>
               <div className="mt-1 text-lg font-semibold tabular-nums">{itemsWithQtyCount}</div>
             </div>
-            <div>
-              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--primary)]/15 px-3 py-2 shadow-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--primary)]/80">
                 Total a pagar
               </div>
               <div className="mt-1 text-lg font-semibold tabular-nums text-[var(--primary)]">{fmtMoney(grandTotal)}</div>
             </div>
-            <div>
-              <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            <div className="rounded-2xl border border-[var(--border)] bg-muted/40 px-3 py-2 shadow-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                 Fuente ventas
               </div>
-              <div className="mt-1 truncate text-sm text-muted-foreground">{salesMeta.label}</div>
+              <div className="mt-1 truncate text-sm font-medium text-muted-foreground/80">{salesMeta.label}</div>
             </div>
           </div>
 
-          {/* Import/Copy/Export/Save — todos en una sola fila */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            {/* Importar */}
+          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
             <div className="relative">
               <input
                 ref={fileRef}
@@ -3896,42 +3897,38 @@ async function exportOrderAsXlsx() {
                 variant="outline"
                 onClick={() => fileRef.current?.click()}
                 disabled={importing}
-                className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] hover:bg-muted"
+                className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] transition hover:bg-muted"
               >
                 <Upload className="mr-2 h-4 w-4" /> Importar
               </Button>
             </div>
 
-            {/* Copiar */}
             <Button
               variant="outline"
               onClick={() => void handleCopySimpleList()}
-              className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] hover:bg-muted"
+              className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] transition hover:bg-muted"
             >
               <Copy className="mr-2 h-4 w-4" /> Copiar
             </Button>
 
-            {/* Exportar */}
             <Button
               variant="outline"
               onClick={() => {
                 setExportFormat("xlsx");
                 setExportDialogOpen(true);
               }}
-              className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] hover:bg-muted"
+              className="h-12 w-full rounded-2xl border border-[var(--border)] bg-muted/60 text-sm font-semibold text-[var(--foreground)] transition hover:bg-muted"
             >
               <Download className="mr-2 h-4 w-4" /> Exportar
             </Button>
 
-            {/* Guardar en historial */}
             <Button
               onClick={() => void saveSnapshot()}
-              className="h-12 w-full rounded-2xl bg-[var(--primary)] text-sm font-semibold text-[var(--primary-foreground)] shadow-[0_8px_18px_var(--surface-action-primary-strong)] hover:bg-[var(--primary)]/90"
+              className="h-12 w-full rounded-2xl bg-[var(--primary)] text-sm font-semibold text-[var(--primary-foreground)] shadow-[0_16px_36px_-24px_rgba(34,60,48,0.55)] transition hover:bg-[var(--primary)]/90"
             >
               Guardar
             </Button>
           </div>
-
         </div>
       </div>
     </main>
