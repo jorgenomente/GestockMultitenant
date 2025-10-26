@@ -1,43 +1,64 @@
 "use client";
 
 export const THEME_SETTINGS_KEY = "branch-theme";
+export const THEME_PRESETS_SETTINGS_KEY = "branch-theme-presets";
 
 export type BranchThemeFormValues = {
   primary: string;
+  secondary: string;
   accent: string;
+  success: string;
+  alert: string;
   background: string;
   surface: string;
+  card: string;
+  cardForeground: string;
   nav: string;
-  alert: string;
-  secondary: string;
-  success: string;
+  textPrimary: string;
+  textSecondary: string;
+};
+
+export type ThemePreset = {
+  id: string;
+  name: string;
+  description?: string | null;
+  values: BranchThemeFormValues;
+  createdAt?: string | null;
 };
 
 type RawThemeValue = Record<string, unknown> | null | undefined;
 
-const TEXT_PRIMARY = "#F5F5F2";
-const TEXT_SECONDARY = "#B9BBB8";
+const TEXT_PRIMARY_FALLBACK = "#F5F5F2";
+const TEXT_SECONDARY_FALLBACK = "#B9BBB8";
 
 export const DEFAULT_BRANCH_THEME: BranchThemeFormValues = {
   primary: "#7DAA92",
+  secondary: "#4B5B53",
   accent: "#7394B0",
+  success: "#8FBDA5",
+  alert: "#C1643B",
   background: "#1C2623",
   surface: "#3C4A44",
+  card: "#2F3B37",
+  cardForeground: TEXT_PRIMARY_FALLBACK,
   nav: "#2C3A33",
-  alert: "#C1643B",
-  secondary: "#4B5B53",
-  success: "#8FBDA5",
+  textPrimary: TEXT_PRIMARY_FALLBACK,
+  textSecondary: TEXT_SECONDARY_FALLBACK,
 };
 
 export const BRANCH_THEME_FIELDS: Array<keyof BranchThemeFormValues> = [
   "primary",
+  "secondary",
   "accent",
+  "success",
+  "alert",
   "background",
   "surface",
+  "card",
+  "cardForeground",
   "nav",
-  "alert",
-  "secondary",
-  "success",
+  "textPrimary",
+  "textSecondary",
 ];
 
 export function sanitizeHexColor(input: unknown, fallback: string): string {
@@ -68,15 +89,55 @@ export function sanitizeStoredTheme(raw: RawThemeValue): BranchThemeFormValues {
   return sanitized;
 }
 
+export function sanitizeThemePresetList(raw: unknown): ThemePreset[] {
+  const base = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const possible = Array.isArray((base as { presets?: unknown }).presets)
+    ? ((base as { presets?: unknown }).presets as unknown[])
+    : Array.isArray(raw)
+      ? (raw as unknown[])
+      : [];
+
+  const seen = new Set<string>();
+  const sanitized: ThemePreset[] = [];
+
+  for (const entry of possible) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const rawName = record.name;
+    const rawId = record.id;
+    const rawDescription = record.description;
+    const rawCreated = record.createdAt ?? record.created_at ?? record.updatedAt ?? null;
+    const values = sanitizeStoredTheme(record.values as RawThemeValue);
+
+    const name = typeof rawName === "string" ? rawName.trim() : "";
+    if (!name) continue;
+
+    const id = typeof rawId === "string" && rawId.trim() ? rawId.trim() : generatePresetId();
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const description = typeof rawDescription === "string" ? rawDescription.trim() : null;
+    const createdAt = typeof rawCreated === "string" ? rawCreated : null;
+
+    sanitized.push({ id, name, description, values, createdAt });
+  }
+
+  return sanitized;
+}
+
 export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string, string> {
   const primary = sanitizeHexColor(theme.primary, DEFAULT_BRANCH_THEME.primary);
+  const secondary = sanitizeHexColor(theme.secondary, DEFAULT_BRANCH_THEME.secondary);
   const accent = sanitizeHexColor(theme.accent, DEFAULT_BRANCH_THEME.accent);
+  const success = sanitizeHexColor(theme.success, DEFAULT_BRANCH_THEME.success);
+  const alert = sanitizeHexColor(theme.alert, DEFAULT_BRANCH_THEME.alert);
   const background = sanitizeHexColor(theme.background, DEFAULT_BRANCH_THEME.background);
   const surface = sanitizeHexColor(theme.surface, DEFAULT_BRANCH_THEME.surface);
   const nav = sanitizeHexColor(theme.nav, DEFAULT_BRANCH_THEME.nav);
-  const alert = sanitizeHexColor(theme.alert, DEFAULT_BRANCH_THEME.alert);
-  const secondary = sanitizeHexColor(theme.secondary, DEFAULT_BRANCH_THEME.secondary);
-  const success = sanitizeHexColor(theme.success, DEFAULT_BRANCH_THEME.success);
+  const textPrimary = sanitizeHexColor(theme.textPrimary, DEFAULT_BRANCH_THEME.textPrimary || TEXT_PRIMARY_FALLBACK);
+  const textSecondary = sanitizeHexColor(theme.textSecondary, DEFAULT_BRANCH_THEME.textSecondary || TEXT_SECONDARY_FALLBACK);
+  const card = sanitizeHexColor(theme.card, DEFAULT_BRANCH_THEME.card ?? surface);
+  const cardForeground = sanitizeHexColor(theme.cardForeground, textPrimary);
 
   const primaryHover = adjustLightness(primary, -0.08);
   const primaryLight = adjustLightness(primary, 0.12);
@@ -87,10 +148,10 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const primarySecondaryGlow = adjustLightness(primary, 0.28);
 
   const surfaceBorder = adjustLightness(surface, 0.1);
-  const surfaceSwitch = adjustLightness(surface, 0.08);
+  const cardBorder = adjustLightness(card, 0.12);
+  const surfaceSwitch = adjustLightness(card, 0.08);
 
   const navBorder = adjustLightness(nav, 0.12);
-  const navAccent = adjustLightness(nav, 0.18);
 
   const accentSecondary = adjustLightness(accent, -0.12);
   const accentTertiary = adjustLightness(accent, 0.12);
@@ -103,6 +164,27 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const successHover = adjustLightness(success, -0.08);
   const successLight = adjustLightness(success, 0.12);
 
+  const primarySoftSurface = withAlpha(primarySecondary, 0.18);
+  const primaryStrongSurface = withAlpha(primarySecondary, 0.22);
+  const alertSubtleSurface = withAlpha(alert, 0.18);
+  const alertSoftSurface = withAlpha(alert, 0.2);
+  const alertStrongSurface = withAlpha(alert, 0.28);
+  const honeyHighlight = adjustLightness(alert, 0.18);
+  const honeySoftSurface = withAlpha(honeyHighlight, 0.18);
+  const accentSoftSurface = withAlpha(accent, 0.18);
+  const accentStrongSurface = withAlpha(accent, 0.28);
+  const secondarySoftSurface = withAlpha(secondary, 0.18);
+  const secondaryStrongSurface = withAlpha(secondary, 0.28);
+  const successSoftSurface = withAlpha(success, 0.18);
+  const successStrongSurface = withAlpha(success, 0.28);
+  const dataSecondarySoftSurface = withAlpha(accent, 0.18);
+  const dataSecondaryStrongSurface = withAlpha(accent, 0.2);
+  const overlaySurface = withAlpha(surface, 0.9);
+  const overlaySurfaceSoft = withAlpha(adjustLightness(surface, -0.04), 0.72);
+  const overlaySurfaceStrong = withAlpha(surface, 0.95);
+  const mutedSurface = withAlpha(surfaceBorder, 0.4);
+  const mutedSurfaceStrong = withAlpha(surfaceBorder, 0.6);
+
   const chartPrimary = accent;
   const chartTwo = accentTertiary;
   const chartThree = accentSecondary;
@@ -111,41 +193,41 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
 
   return {
     "--background": background,
-    "--foreground": TEXT_PRIMARY,
-    "--card": surface,
-    "--card-foreground": TEXT_PRIMARY,
-    "--popover": surface,
-    "--popover-foreground": TEXT_PRIMARY,
+    "--foreground": textPrimary,
+    "--card": card,
+    "--card-foreground": cardForeground,
+    "--popover": card,
+    "--popover-foreground": cardForeground,
     "--primary": primary,
-    "--primary-foreground": TEXT_PRIMARY,
-    "--secondary": navAccent,
-    "--secondary-foreground": TEXT_PRIMARY,
+    "--primary-foreground": textPrimary,
+    "--secondary": secondary,
+    "--secondary-foreground": textPrimary,
     "--muted": surface,
-    "--muted-foreground": TEXT_SECONDARY,
-    "--accent": primary,
-    "--accent-foreground": TEXT_PRIMARY,
+    "--muted-foreground": textSecondary,
+    "--accent": accent,
+    "--accent-foreground": textPrimary,
     "--destructive": alert,
-    "--destructive-foreground": TEXT_PRIMARY,
+    "--destructive-foreground": textPrimary,
     "--success": success,
-    "--success-foreground": TEXT_PRIMARY,
-    "--border": surfaceBorder,
+    "--success-foreground": textPrimary,
+    "--border": cardBorder,
     "--input": "transparent",
     "--input-background": surfaceSwitch,
     "--switch-background": surfaceSwitch,
     "--ring": alert,
     "--sidebar": nav,
-    "--sidebar-foreground": TEXT_PRIMARY,
+    "--sidebar-foreground": textPrimary,
     "--sidebar-primary": primary,
-    "--sidebar-primary-foreground": TEXT_PRIMARY,
+    "--sidebar-primary-foreground": textPrimary,
     "--sidebar-accent": surface,
-    "--sidebar-accent-foreground": TEXT_PRIMARY,
+    "--sidebar-accent-foreground": textPrimary,
     "--sidebar-border": navBorder,
     "--sidebar-ring": primaryRing,
     "--color-dark-bg-main": background,
     "--color-dark-surface": surface,
     "--color-dark-nav": nav,
-    "--color-dark-text-primary": TEXT_PRIMARY,
-    "--color-dark-text-secondary": TEXT_SECONDARY,
+    "--color-dark-text-primary": textPrimary,
+    "--color-dark-text-secondary": textSecondary,
     "--color-dark-divider": surfaceBorder,
     "--color-action-primary": primary,
     "--color-action-hover": primaryHover,
@@ -166,6 +248,25 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
     "--color-success-light": successLight,
     "--color-data-primary": chartPrimary,
     "--color-data-secondary": accentSecondary,
+    "--surface-overlay": overlaySurface,
+    "--surface-overlay-soft": overlaySurfaceSoft,
+    "--surface-overlay-strong": overlaySurfaceStrong,
+    "--surface-muted": mutedSurface,
+    "--surface-muted-strong": mutedSurfaceStrong,
+    "--surface-action-primary-soft": primarySoftSurface,
+    "--surface-action-primary-strong": primaryStrongSurface,
+    "--surface-alert-subtle": alertSubtleSurface,
+    "--surface-alert-soft": alertSoftSurface,
+    "--surface-alert-strong": alertStrongSurface,
+    "--surface-honey-soft": honeySoftSurface,
+    "--surface-data-secondary-soft": dataSecondarySoftSurface,
+    "--surface-data-secondary-strong": dataSecondaryStrongSurface,
+    "--surface-secondary-soft": secondarySoftSurface,
+    "--surface-secondary-strong": secondaryStrongSurface,
+    "--surface-accent-soft": accentSoftSurface,
+    "--surface-accent-strong": accentStrongSurface,
+    "--surface-success-soft": successSoftSurface,
+    "--surface-success-strong": successStrongSurface,
     "--chart-1": chartPrimary,
     "--chart-2": chartTwo,
     "--chart-3": chartThree,
@@ -278,4 +379,19 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function withAlpha(hex: string, alpha: number): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const clamped = clamp(alpha, 0, 1);
+  const a = Number.isFinite(clamped) ? clamped : 1;
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a.toFixed(3)})`;
+}
+
+function generatePresetId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `preset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }

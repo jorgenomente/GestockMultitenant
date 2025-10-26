@@ -1071,40 +1071,40 @@ export default function VencimientosPage() {
       description: "Productos marcados para frío",
       icon: Snowflake,
       empty: "No hay productos marcados como Freezer.",
-      bubbleTone: "border border-border/40 bg-[rgba(125,170,146,0.22)] text-[var(--color-action-secondary)]",
-      badgeTone: "bg-[rgba(125,170,146,0.22)] text-[var(--color-action-secondary)]",
+      bubbleTone: "border border-border/40 bg-[color:var(--surface-action-primary-strong)] text-[var(--color-action-secondary)]",
+      badgeTone: "bg-[color:var(--surface-action-primary-strong)] text-[var(--color-action-secondary)]",
     },
     gx: {
       label: "Vencidos",
       description: "Atención inmediata",
       icon: AlertTriangle,
       empty: "Sin productos en este rango.",
-      bubbleTone: "border border-border/40 bg-[rgba(193,100,59,0.2)] text-[var(--destructive)]",
-      badgeTone: "bg-[rgba(193,100,59,0.2)] text-[var(--destructive)]",
+      bubbleTone: "border border-border/40 bg-[color:var(--surface-alert-soft)] text-[var(--destructive)]",
+      badgeTone: "bg-[color:var(--surface-alert-soft)] text-[var(--destructive)]",
     },
     g1: {
       label: "Vence en 1 a 3 días",
       description: "Prioridad alta",
       icon: Flame,
       empty: "Sin productos en este rango.",
-      bubbleTone: "border border-border/40 bg-[rgba(234,152,68,0.18)] text-[#F7C58C]",
-      badgeTone: "bg-[rgba(234,152,68,0.18)] text-[#F7C58C]",
+      bubbleTone: "border border-border/40 bg-[color:var(--surface-honey-soft)] text-[var(--color-honey-light)]",
+      badgeTone: "bg-[color:var(--surface-honey-soft)] text-[var(--color-honey-light)]",
     },
     g2: {
       label: "Faltan 4 a 10 días",
       description: "Planificá seguimiento",
       icon: Clock4,
       empty: "Sin productos en este rango.",
-      bubbleTone: "border border-border/40 bg-[rgba(125,170,146,0.18)] text-[var(--color-action-secondary)]",
-      badgeTone: "bg-[rgba(125,170,146,0.18)] text-[var(--color-action-secondary)]",
+      bubbleTone: "border border-border/40 bg-[color:var(--surface-action-primary-soft)] text-[var(--color-action-secondary)]",
+      badgeTone: "bg-[color:var(--surface-action-primary-soft)] text-[var(--color-action-secondary)]",
     },
     g3: {
       label: "Más adelante (11+ días)",
       description: "Control de largo plazo",
       icon: CalendarClock,
       empty: "Sin productos en este rango.",
-      bubbleTone: "border border-border/40 bg-[rgba(90,123,153,0.18)] text-[#9DBAD1]",
-      badgeTone: "bg-[rgba(90,123,153,0.18)] text-[#9DBAD1]",
+      bubbleTone: "border border-border/40 bg-[color:var(--surface-data-secondary-soft)] text-[var(--color-data-primary)]",
+      badgeTone: "bg-[color:var(--surface-data-secondary-soft)] text-[var(--color-data-primary)]",
     },
   };
 
@@ -1125,7 +1125,7 @@ export default function VencimientosPage() {
         description: "Productos en frío",
         icon: Snowflake,
         tone: "text-[var(--color-action-secondary)]",
-        bubble: "bg-[rgba(125,170,146,0.2)] border border-border/40",
+        bubble: "bg-[color:var(--surface-action-primary-soft)] border border-border/40",
       },
       {
         key: "expired" as const,
@@ -1134,7 +1134,7 @@ export default function VencimientosPage() {
         description: "Revisá urgente",
         icon: AlertTriangle,
         tone: "text-[var(--destructive)]",
-        bubble: "bg-[rgba(193,100,59,0.2)] border border-border/40",
+        bubble: "bg-[color:var(--surface-alert-soft)] border border-border/40",
       },
       {
         key: "next" as const,
@@ -1143,7 +1143,7 @@ export default function VencimientosPage() {
         description: "Seguimiento cercano",
         icon: Clock4,
         tone: "text-[var(--color-action-secondary)]",
-        bubble: "bg-[rgba(125,170,146,0.18)] border border-border/40",
+        bubble: "bg-[color:var(--surface-action-primary-soft)] border border-border/40",
       },
       {
         key: "later" as const,
@@ -1151,8 +1151,8 @@ export default function VencimientosPage() {
         value: groups.g3.length,
         description: "Control a futuro",
         icon: CalendarClock,
-        tone: "text-[#9DBAD1]",
-        bubble: "bg-[rgba(90,123,153,0.2)] border border-border/40",
+        tone: "text-[var(--color-data-primary)]",
+        bubble: "bg-[color:var(--surface-data-secondary-strong)] border border-border/40",
       },
     ],
     [freezerItems.length, groups.g1.length, groups.g2.length, groups.g3.length, groups.gx.length]
@@ -1226,7 +1226,7 @@ export default function VencimientosPage() {
     }`;
 
     const archiveButtonClass =
-      "h-9 w-9 rounded-xl border border-border/40 bg-[rgba(193,100,59,0.18)] text-[var(--destructive)] transition-colors hover:bg-[rgba(193,100,59,0.28)]";
+      "h-9 w-9 rounded-xl border border-border/40 bg-[color:var(--surface-alert-subtle)] text-[var(--destructive)] transition-colors hover:bg-[color:var(--surface-alert-strong)]";
 
     const applyButtonClass = `h-9 w-9 rounded-xl border border-[var(--color-action-secondary)] bg-[var(--color-action-secondary)] text-[var(--background)] transition-colors hover:bg-[var(--color-action-secondary)]/90 ${
       !hasDraft && it.confirmed ? "opacity-70" : ""

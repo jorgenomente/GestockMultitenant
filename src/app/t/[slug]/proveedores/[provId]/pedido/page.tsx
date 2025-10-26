@@ -1169,10 +1169,13 @@ export default function ProviderOrderPage() {
     if (typeof window !== "undefined") window.prompt("Copiá el mensaje de error:", salesImportError);
   }, [salesImportError]);
   // ===== Altura del BottomNav y estilo root (variable CSS global en la página) =====
-const bottomNavHeightPx = 76; // ajustá 72–84px según mida tu BottomNav real
-const rootStyle: CssVars = {
-  "--bottom-nav-h": `${bottomNavHeightPx}px`,
-};
+  const bottomNavHeightPx = 76; // ajustá 72–84px según mida tu BottomNav real
+  const rootStyle = React.useMemo<CssVars>(
+    () => ({
+      "--bottom-nav-h": isDesktop ? "0px" : `${bottomNavHeightPx}px`,
+    }),
+    [isDesktop, bottomNavHeightPx],
+  );
 
   React.useEffect(() => {
     if (tenantIdFromQuery && tenantIdFromQuery !== contextIds.tenantId) {
@@ -3178,7 +3181,7 @@ async function exportOrderAsXlsx() {
       </Dialog>
 
       <main
-        className="mx-auto max-w-md px-3 pb-[calc(156px+env(safe-area-inset-bottom)+var(--bottom-nav-h))]"
+        className="mx-auto w-full max-w-md px-3 pb-[calc(156px+env(safe-area-inset-bottom)+var(--bottom-nav-h))] md:max-w-3xl md:px-6 lg:max-w-4xl lg:px-8"
         style={rootStyle}
       >
      {/* Header */}
@@ -3762,14 +3765,12 @@ async function exportOrderAsXlsx() {
 
       {/* Footer */}
       <div
-  className={
-    `fixed left-0 right-0 border-t bg-background/95 backdrop-blur px-3 py-2 z-50
+        className={`fixed left-0 right-0 border-t bg-background/95 backdrop-blur px-3 md:px-6 lg:px-8 py-2 z-50
      bottom-[calc(env(safe-area-inset-bottom)+var(--bottom-nav-h))]
-     transition-transform duration-300 will-change-transform ${barsHidden ? "translate-y-full" : ""}`
-  }
->
+     transition-transform duration-300 will-change-transform ${barsHidden ? "translate-y-full" : ""}`}
+      >
 
-        <div className="mx-auto max-w-md">
+        <div className="mx-auto w-full max-w-md md:max-w-3xl lg:max-w-4xl">
           <div className="grid grid-cols-2 gap-2 mb-2">
             <div>
               <div className="text-xs text-muted-foreground">Total unidades</div>
@@ -4636,9 +4637,10 @@ const mergedClassName = [
             return (
               <Card
                 key={it.id}
-                className={`mb-2 rounded-2xl transition-colors ${
-                  isChecked ? "bg-green-50 border-green-200" : ""
-                }`}
+                className={clsx(
+                  "mb-2 rounded-2xl transition-[background-color,border-color,box-shadow,color]",
+                  isChecked && "border-[var(--color-success)] bg-[var(--surface-success-soft)] text-foreground shadow-[0_0_0_1px_var(--color-success-light)]"
+                )}
               >
                 <CardContent className="p-3 relative">
                   <div className="absolute right-3 top-3">
@@ -4647,7 +4649,10 @@ const mergedClassName = [
                         id={`item-check-${it.id}`}
                         checked={isChecked}
                         onCheckedChange={(v) => setItemChecked(it.id, v === true)}
-                        className={isChecked ? "data-[state=checked]:text-green-600" : ""}
+                        className={clsx(
+                          "transition-colors",
+                          isChecked && "data-[state=checked]:border-[var(--color-success)] data-[state=checked]:bg-[var(--success)] data-[state=checked]:text-[var(--success-foreground)]"
+                        )}
                         aria-label="Marcar como cargado"
                       />
                     </Label>
@@ -4759,8 +4764,8 @@ const mergedClassName = [
 
           {/* Botón flotante para cerrar el grupo */}
           {!open && (
-            <div className="fixed inset-x-0 z-70 pointer-events-none bottom-[calc(env(safe-area-inset-bottom)+var(--bottom-nav-h)+120px)]">
-              <div className="mx-auto max-w-md px-3 flex justify-end">
+            <div className="fixed inset-x-0 z-70 pointer-events-none bottom-[calc(env(safe-area-inset-bottom)+var(--bottom-nav-h)+120px)] px-3 md:px-6 lg:px-8">
+              <div className="mx-auto w-full max-w-md md:max-w-3xl lg:max-w-4xl flex justify-end">
                 <Button
                   size="icon"
                   variant="default"

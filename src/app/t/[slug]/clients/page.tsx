@@ -171,9 +171,12 @@ function TagsInput({
 
   return (
     <div className="space-y-1 relative">
-      <div className="flex flex-wrap gap-2 rounded-md border p-2">
+      <div className="flex flex-wrap gap-2 rounded-md border border-border p-2 bg-[color:var(--surface-overlay-strong)]">
         {value.map((t) => (
-          <span key={t} className="inline-flex items-center gap-1 bg-gray-100 px-2 py-1 rounded-full text-sm">
+          <span
+            key={t}
+            className="inline-flex items-center gap-1 rounded-full bg-[color:var(--surface-overlay-soft)] px-2 py-1 text-sm text-muted-foreground"
+          >
             {t}
             <button
               type="button"
@@ -211,14 +214,16 @@ function TagsInput({
         <ul
           id={listboxId}
           role="listbox"
-          className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-white shadow-md"
+          className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-[color:var(--surface-overlay-strong)] shadow-md"
         >
           {filteredSuggestions.map((opt, i) => (
             <li
               key={opt}
               role="option"
               aria-selected={i === activeIdx}
-              className={`px-3 py-2 text-sm cursor-pointer ${i === activeIdx ? "bg-gray-100" : ""}`}
+              className={`cursor-pointer px-3 py-2 text-sm transition-colors ${
+                i === activeIdx ? "bg-[color:var(--surface-overlay-soft)]" : ""
+              }`}
               onMouseEnter={() => setActiveIdx(i)}
               onMouseDown={(e) => {
                 // onMouseDown para que no pierda el foco antes de aplicar
@@ -232,7 +237,7 @@ function TagsInput({
         </ul>
       )}
 
-      {hint && <p className="text-[11px] text-gray-500">{hint}</p>}
+      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -240,10 +245,14 @@ function TagsInput({
 /* ========= Estado → estilos ========= */
 function OrderStatusBadge({ status }: { status: ClientOrder["status"] }) {
   const map = {
-    pendiente: "bg-yellow-100 text-yellow-800 border border-yellow-200",
-    guardado: "bg-blue-100 text-blue-800 border border-blue-200",
-    entregado: "bg-green-100 text-green-800 border border-green-200",
-    cancelado: "bg-rose-100 text-rose-800 border border-rose-200",
+    pendiente:
+      "border border-[color:var(--surface-secondary-strong)] bg-[color:var(--surface-secondary-soft)] text-[color:var(--color-secondary)]",
+    guardado:
+      "border border-[color:var(--surface-accent-strong)] bg-[color:var(--surface-accent-soft)] text-[color:var(--color-data-primary)]",
+    entregado:
+      "border border-[color:var(--surface-success-strong)] bg-[color:var(--surface-success-soft)] text-[color:var(--color-success)]",
+    cancelado:
+      "border border-[color:var(--surface-alert-strong)] bg-[color:var(--surface-alert-subtle)] text-[color:var(--destructive)]",
   } as const;
   return <span className={`${map[status]} rounded-full px-2 py-0.5 text-xs`}>{status}</span>;
 }
@@ -500,28 +509,28 @@ export default function ClientsPage() {
   }
 
   if (branchLoading) {
-    return <div className="p-4 text-sm text-gray-600">Cargando sucursales…</div>;
+    return <div className="p-4 text-sm text-muted-foreground">Cargando sucursales…</div>;
   }
 
   if (branchError) {
-    return <div className="p-4 text-sm text-red-600">{branchError}</div>;
+    return <div className="p-4 text-sm text-[color:var(--destructive)]">{branchError}</div>;
   }
 
   if (!currentBranch) {
-    return <div className="p-4 text-sm text-gray-600">No hay sucursal seleccionada.</div>;
+    return <div className="p-4 text-sm text-muted-foreground">No hay sucursal seleccionada.</div>;
   }
 
   if (!tenantId || !branchId) {
-    return <div className="p-4 text-sm text-gray-600">No hay tenant disponible.</div>;
+    return <div className="p-4 text-sm text-muted-foreground">No hay tenant disponible.</div>;
   }
 
   return (
     <div className="pb-24">
-      <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
+      <header className="sticky top-0 z-10 border-b bg-[color:var(--surface-overlay)] backdrop-blur">
         <div className="p-4 flex items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-bold">Clientes</h1>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               Crea pedidos (checklist) y asigna proveedor por ítem usando <b>@</b>.
             </p>
           </div>
@@ -536,12 +545,12 @@ export default function ClientsPage() {
             <form onSubmit={form.handleSubmit(onSubmit)} className="grid grid-cols-1 gap-3">
               <Input placeholder="Nombre" {...form.register("name")} />
               {form.formState.errors.name && (
-                <p className="text-xs text-red-600">{form.formState.errors.name.message}</p>
+                <p className="text-xs text-[color:var(--destructive)]">{form.formState.errors.name.message}</p>
               )}
 
               <Input placeholder="Teléfono" {...form.register("phone")} />
               {form.formState.errors.phone && (
-                <p className="text-xs text-red-600">{form.formState.errors.phone.message}</p>
+                <p className="text-xs text-[color:var(--destructive)]">{form.formState.errors.phone.message}</p>
               )}
 
               <div className="space-y-1">
@@ -561,7 +570,7 @@ export default function ClientsPage() {
                   inputId="client-articles-input"
                 />
                 {form.formState.errors.articles && (
-                  <p className="text-xs text-red-600">
+                  <p className="text-xs text-[color:var(--destructive)]">
                     {form.formState.errors.articles.message as string}
                   </p>
                 )}
@@ -610,8 +619,8 @@ export default function ClientsPage() {
         aria-label="Limpiar búsqueda"
         title="Limpiar"
         className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-2
-                   text-gray-500 hover:text-gray-900
-                   focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2
+                   text-muted-foreground hover:text-foreground
+                   focus-visible:ring-2 focus-visible:ring-[color:var(--ring)] focus-visible:ring-offset-2
                    focus:outline-none"
       >
         <X className="w-4 h-4" />
@@ -619,16 +628,16 @@ export default function ClientsPage() {
     )}
   </div>
 
-  <p className="text-[11px] text-gray-500 mt-1">{filteredClients.length} resultado(s)</p>
+  <p className="mt-1 text-[11px] text-muted-foreground">{filteredClients.length} resultado(s)</p>
 </section>
 
 
 
       {/* Tarjetas por cliente */}
       <section className="p-4 space-y-4">
-        {loading && <p className="text-sm text-gray-600">Cargando…</p>}
+        {loading && <p className="text-sm text-muted-foreground">Cargando…</p>}
         {!loading && filteredClients.length === 0 && (
-          <p className="text-sm text-gray-600">Sin resultados.</p>
+          <p className="text-sm text-muted-foreground">Sin resultados.</p>
         )}
         {filteredClients.map((c) => (
           <ClientCard
@@ -768,14 +777,14 @@ function ClientCard({
   }
 
   return (
-    <Card className="shadow-sm relative rounded-lg">
+    <Card className="relative rounded-lg shadow-sm">
       {/* 🗑️ Eliminar cliente (icono discreto) */}
       <button
         type="button"
         title="Eliminar cliente"
         aria-label="Eliminar cliente"
-        className="absolute right-2 top-2 text-gray-400 hover:text-rose-700 p-1 rounded-md
-                   focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus:outline-none"
+        className="absolute right-2 top-2 rounded-md p-1 text-muted-foreground hover:text-[color:var(--destructive)]
+                   focus-visible:ring-2 focus-visible:ring-[color:var(--ring)] focus-visible:ring-offset-2 focus:outline-none"
         onClick={() => onDeleteClient(client.id)}
       >
         <Trash2 className="w-4 h-4" />
@@ -788,8 +797,8 @@ function ClientCard({
             {pendingProviders.map((p) => (
               <span
                 key={p}
-                className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50
-                           px-1.5 py-0.5 text-[10px] leading-none text-amber-800"
+                className="inline-flex items-center rounded-full border border-[color:var(--surface-secondary-strong)]
+                           bg-[color:var(--surface-secondary-soft)] px-1.5 py-0.5 text-[10px] leading-none text-[color:var(--color-secondary)]"
                 title="Proveedor con ítems pendientes"
               >
                 {p}
@@ -830,12 +839,12 @@ function ClientCard({
             ) : (
               <>
                 <h2 className="text-sm font-semibold truncate">{client.name}</h2>
-                <p className="text-[11px] text-gray-600 truncate">{client.phone || "Sin teléfono"}</p>
+                <p className="text-[11px] text-muted-foreground truncate">{client.phone || "Sin teléfono"}</p>
               </>
             )}
           </div>
 
-          <div className="ml-2 flex items-center gap-2 text-[11px] text-gray-500">
+          <div className="ml-2 flex items-center gap-2 text-[11px] text-muted-foreground">
             <span>{client.orders.length} pedido(s)</span>
             {!editMode && (
               <Button size="sm" variant="secondary" className="h-8 px-3" onClick={() => setEditMode(true)}>
@@ -852,7 +861,7 @@ function ClientCard({
             value={orderItems}
             onChange={setOrderItems}
             placeholder='Ítems… usá "Producto @ Proveedor" si corresponde'
-            hint={<span className="text-[10px] text-gray-500">Escribí <b>@</b> para autocompletar proveedores ya cargados.</span>}
+            hint={<span className="text-[10px] text-muted-foreground">Escribí <b>@</b> para autocompletar proveedores ya cargados.</span>}
             providerOptions={providerList}
           />
           <div className="flex justify-end">
@@ -865,7 +874,7 @@ function ClientCard({
         {/* Pedidos del cliente — más compacto */}
         <div className="space-y-2">
           <p className="text-xs font-medium">Pedidos</p>
-          {client.orders.length === 0 && <p className="text-[11px] text-gray-500">Sin pedidos.</p>}
+          {client.orders.length === 0 && <p className="text-[11px] text-muted-foreground">Sin pedidos.</p>}
           {client.orders.map((o) => (
             <OrderAccordion
               key={o.id}
@@ -898,28 +907,30 @@ function OrderAccordion({
   const [open, setOpen] = React.useState(false);
 
   // 🎨 estilos por estado
-  const borderMap: Record<ClientOrder["status"], string> = {
-    pendiente: "border-orange-300",
-    guardado: "border-blue-300",
-    entregado: "border-green-300",
-    cancelado: "border-rose-300",
-  };
-  const headerBgMap: Record<ClientOrder["status"], string> = {
-    pendiente: "bg-orange-50",
-    guardado: "bg-blue-50",
-    entregado: "bg-green-50",
-    cancelado: "bg-rose-50",
-  };
-  const ringMap: Record<ClientOrder["status"], string> = {
-    pendiente: "focus-visible:outline-orange-300",
-    guardado: "focus-visible:outline-blue-300",
-    entregado: "focus-visible:outline-green-300",
-    cancelado: "focus-visible:outline-rose-300",
-  };
+  const tone = {
+    pendiente: {
+      border: "border-[color:var(--surface-secondary-strong)]",
+      header: "bg-[color:var(--surface-secondary-soft)]",
+      ring: "focus-visible:outline-[color:var(--surface-secondary-strong)]",
+    },
+    guardado: {
+      border: "border-[color:var(--surface-accent-strong)]",
+      header: "bg-[color:var(--surface-accent-soft)]",
+      ring: "focus-visible:outline-[color:var(--surface-accent-strong)]",
+    },
+    entregado: {
+      border: "border-[color:var(--surface-success-strong)]",
+      header: "bg-[color:var(--surface-success-soft)]",
+      ring: "focus-visible:outline-[color:var(--surface-success-strong)]",
+    },
+    cancelado: {
+      border: "border-[color:var(--surface-alert-strong)]",
+      header: "bg-[color:var(--surface-alert-subtle)]",
+      ring: "focus-visible:outline-[color:var(--surface-alert-strong)]",
+    },
+  } as const;
 
-  const borderCls = borderMap[order.status];
-  const headerBgCls = headerBgMap[order.status];
-  const ringCls = ringMap[order.status];
+  const currentTone = tone[order.status];
 
   async function deleteOrder() {
     const ok = window.confirm("¿Eliminar este pedido y todos sus ítems?");
@@ -982,18 +993,18 @@ function OrderAccordion({
     <details
       open={open}
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      className={`rounded-md border ${borderCls} transition-colors`}
+      className={`rounded-md border border-border ${currentTone.border} transition-colors`}
     >
       <summary
-        className={`cursor-pointer list-none p-2 flex items-center justify-between rounded-md ${headerBgCls}
-                    outline-none focus-visible:outline-2 ${ringCls}`}
+        className={`flex cursor-pointer items-center justify-between rounded-md p-2 ${currentTone.header}
+                    list-none outline-none focus-visible:outline-2 ${currentTone.ring}`}
       >
         <div className="flex items-center gap-2">
           <button
             type="button"
             title="Eliminar pedido"
             aria-label="Eliminar pedido"
-            className="text-gray-500 hover:text-rose-700"
+            className="text-muted-foreground hover:text-[color:var(--destructive)]"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -1009,7 +1020,7 @@ function OrderAccordion({
           <OrderStatusBadge status={order.status} />
         </div>
 
-        <span className="text-xs text-gray-500">{order.items.length} ítem(s)</span>
+        <span className="text-xs text-muted-foreground">{order.items.length} ítem(s)</span>
       </summary>
 
       <div className="p-2 border-t border-transparent space-y-3">
@@ -1018,23 +1029,23 @@ function OrderAccordion({
 
         {/* === Comentarios === */}
         <div className="space-y-2">
-          <p className="text-xs text-gray-600">Comentarios</p>
+          <p className="text-xs text-muted-foreground">Comentarios</p>
 
           <ul className="space-y-2">
             {comments.map((c) => (
               <li
                 key={c.id}
-                className="flex items-start justify-between gap-2 rounded border p-2 bg-gray-50"
+                className="flex items-start justify-between gap-2 rounded border border-border bg-[color:var(--surface-overlay-strong)] p-2"
               >
                 <div className="flex flex-col">
                   <span className="text-sm">{c.comment}</span>
-                  <span className="text-[10px] text-gray-500">
+                  <span className="text-[10px] text-muted-foreground">
                     {new Date(c.created_at).toLocaleString()}
                   </span>
                 </div>
                 <button
                   type="button"
-                  className="text-gray-400 hover:text-rose-600"
+                  className="text-muted-foreground hover:text-[color:var(--destructive)]"
                   onClick={() => deleteComment(c.id)}
                 >
                   <X className="w-4 h-4" />
@@ -1043,7 +1054,7 @@ function OrderAccordion({
             ))}
 
             {comments.length === 0 && (
-              <li className="text-xs text-gray-500">Sin comentarios.</li>
+              <li className="text-xs text-muted-foreground">Sin comentarios.</li>
             )}
           </ul>
 
@@ -1083,9 +1094,9 @@ function OrderStatusSelector({
     await onChange();
   }
 
-  const base = "px-2 py-1 rounded text-xs border";
-  const active = "bg-black text-white border-black";
-  const inactive = "bg-white text-gray-700";
+  const base = "px-2 py-1 rounded text-xs border transition-colors";
+  const active = "border-[color:var(--color-action-secondary)] bg-[var(--color-action-secondary)] text-[var(--background)]";
+  const inactive = "border-border bg-[color:var(--surface-overlay-soft)] text-muted-foreground";
 
   return (
     <div className="flex items-center gap-2">
@@ -1212,7 +1223,7 @@ function OrderItemsList({
                     disabled={disabled}
                   />
                 ) : (
-                  <span className={`text-sm truncate ${oi.done ? "line-through text-gray-500" : ""}`}>{oi.article}</span>
+                  <span className={`text-sm truncate ${oi.done ? "line-through text-muted-foreground" : ""}`}>{oi.article}</span>
                 )}
               </div>
               <div className="flex items-center gap-2">
@@ -1247,9 +1258,9 @@ function OrderItemsList({
                 </div>
               ) : (
                 <div className="flex items-center gap-2 w-full">
-                  <span className="text-xs text-gray-600">
+                  <span className="text-xs text-muted-foreground">
                     Proveedor:{" "}
-                    <span className="px-2 py-0.5 border rounded-full text-xs">
+                    <span className="rounded-full border border-[color:var(--surface-muted-strong)] bg-[color:var(--surface-overlay-soft)] px-2 py-0.5 text-xs text-foreground">
                       {oi.provider ?? "—"}
                     </span>
                   </span>
@@ -1265,7 +1276,7 @@ function OrderItemsList({
 
       {/* Agregar más ítems a este pedido */}
       <div className="space-y-2">
-        <p className="text-xs text-gray-600">Agregar más ítems a este pedido</p>
+        <p className="text-xs text-muted-foreground">Agregar más ítems a este pedido</p>
         <TagsInput
           value={newItems}
           onChange={setNewItems}
