@@ -1084,11 +1084,12 @@ export default function ProviderOrderPage() {
 
     try {
       for (const row of rowsToPersist) {
+        const previousQty = row.qtyOrdered;
         const payload = {
           stock_qty: row.stockResult,
           stock_updated_at: nowIso,
-          previous_qty: row.addition,
-          previous_qty_updated_at: fromIso,
+          previous_qty: previousQty,
+          previous_qty_updated_at: nowIso,
         };
         const { error } = await supabase.from(itemsTable).update(payload).eq("id", row.item.id);
         if (error) throw error;
@@ -1121,8 +1122,8 @@ export default function ProviderOrderPage() {
             ...item,
             stock_qty: match.stockResult,
             stock_updated_at: nowIso,
-            previous_qty: match.addition,
-            previous_qty_updated_at: fromIso,
+            previous_qty: match.qtyOrdered,
+            previous_qty_updated_at: nowIso,
           };
         })
       );
@@ -1975,7 +1976,10 @@ async function applySuggested(mode: "week" | "2w" | "30d"): Promise<boolean> {
       else if (mode === "2w") n = st.sum2w || 0;
       else n = st.sum30d || 0;
 
-      return Math.max(0, snapToPack(n, it.pack_size));
+      const inStock = Number(it.stock_qty ?? 0);
+      const net = Math.max(0, (n || 0) - inStock);
+
+      return Math.max(0, snapToPack(net, it.pack_size));
     };
 
     // nuevo estado local
@@ -3480,52 +3484,6 @@ async function exportOrderAsXlsx() {
                 </AlertDialogContent>
               </AlertDialog>
 
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-sm font-medium text-[var(--foreground)] hover:bg-muted"
-                    title="Aplicar cantidades sugeridas"
-                  >
-                    Sugerido
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>¿Qué tipo de pedido vas a hacer?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Elegí el período para calcular las cantidades:
-                      <br />• <b>Semanal</b>: promedio semanal (últimas 4 semanas)
-                      <br />• <b>Quincenal</b>: ventas de las últimas 2 semanas
-                      <br />• <b>Mensual</b>: ventas de los últimos 30 días
-                      <br />Si un producto tiene “paquete”, se ajusta al múltiplo del pack.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <div className="flex justify-end gap-2 pt-2">
-                    <AlertDialogCancel asChild>
-                      <Button variant="outline">Cancelar</Button>
-                    </AlertDialogCancel>
-
-                    <AlertDialogAction asChild>
-                      <Button disabled={suggesting} onClick={() => void handlePickSuggested("week")}>
-                        Semanal
-                      </Button>
-                    </AlertDialogAction>
-                    <AlertDialogAction asChild>
-                      <Button disabled={suggesting} onClick={() => void handlePickSuggested("2w")}>
-                        Quincenal
-                      </Button>
-                    </AlertDialogAction>
-                    <AlertDialogAction asChild>
-                      <Button disabled={suggesting} onClick={() => void handlePickSuggested("30d")}>
-                        Mensual
-                      </Button>
-                    </AlertDialogAction>
-                  </div>
-                </AlertDialogContent>
-              </AlertDialog>
-
               <Button
                 variant="outline"
                 size="sm"
@@ -3596,6 +3554,52 @@ async function exportOrderAsXlsx() {
           {stockProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
           Obtener stock
         </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="outline"
+              size="lg"
+              className="h-11 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] hover:bg-muted"
+              title="Aplicar cantidades sugeridas"
+              disabled={suggesting}
+            >
+              Sugerido
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>¿Qué tipo de pedido vas a hacer?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Elegí el período para calcular las cantidades:
+                <br />• <b>Semanal</b>: promedio semanal (últimas 4 semanas)
+                <br />• <b>Quincenal</b>: ventas de las últimas 2 semanas
+                <br />• <b>Mensual</b>: ventas de los últimos 30 días
+                <br />Si un producto tiene “paquete”, se ajusta al múltiplo del pack.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="flex justify-end gap-2 pt-2">
+              <AlertDialogCancel asChild>
+                <Button variant="outline">Cancelar</Button>
+              </AlertDialogCancel>
+
+              <AlertDialogAction asChild>
+                <Button disabled={suggesting} onClick={() => void handlePickSuggested("week")}>
+                  Semanal
+                </Button>
+              </AlertDialogAction>
+              <AlertDialogAction asChild>
+                <Button disabled={suggesting} onClick={() => void handlePickSuggested("2w")}>
+                  Quincenal
+                </Button>
+              </AlertDialogAction>
+              <AlertDialogAction asChild>
+                <Button disabled={suggesting} onClick={() => void handlePickSuggested("30d")}>
+                  Mensual
+                </Button>
+              </AlertDialogAction>
+            </div>
+          </AlertDialogContent>
+        </AlertDialog>
         {actionableItems.length === 0 && (
           <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
             Agregá productos al pedido para habilitar estas acciones.
