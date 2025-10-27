@@ -63,6 +63,199 @@ type PriceItemFromAny = {
   updatedAtLabel?: string;
 };
 
+/* ===== Helpers compartidos con PriceSearch para deduplicar ===== */
+const NBSP_RX = /[\u202F\u00A0]/g;
+
+const stripInvisibles = (s: string) => s.replace(NBSP_RX, " ");
+
+const normText = (s: unknown) =>
+  !s
+    ? ""
+    : String(s)
+        .normalize("NFD")
+        .replace(/\p{Diacritic}/gu, "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+
+const excelSerialToMs = (n: number) => Date.UTC(1899, 11, 30) + Math.round(n * 86400000);
+
+const MIN_BARCODE_DIGITS_FOR_KEY = 8;
+
+const barcodeKeyValue = (barcode?: string) => {
+  if (!barcode) return "";
+  const trimmed = stripInvisibles(barcode).trim();
+  if (!trimmed) return "";
+  if (/[A-Za-z]/.test(trimmed)) return normText(trimmed);
+  const digits = trimmed.replace(/\D+/g, "");
+  return digits.length >= MIN_BARCODE_DIGITS_FOR_KEY ? digits : "";
+};
+
+const keyFor = (name: string, barcode?: string, code?: string) => {
+  const barKey = barcodeKeyValue(barcode);
+  if (barKey) return barKey;
+  const codeKey = code ? normText(code) : "";
+  if (codeKey) return codeKey;
+  const nameKey = normText(name);
+  return nameKey || name.trim();
+};
+
+function normBarcode(val: unknown): string | undefined {
+  if (val == null) return undefined;
+  let s =
+    typeof val === "number"
+      ? Math.round(val).toLocaleString("en-US", { useGrouping: false })
+      : stripInvisibles(String(val));
+  s = s.trim();
+  if (!s) return undefined;
+  const compact = s.replace(/\s+/g, " ");
+  const hasLetters = /[A-Za-z]/.test(compact);
+  if (hasLetters) return compact;
+  const digits = compact.replace(/\D+/g, "");
+  return digits || undefined;
+}
+
+function parseUpdatedAt(value: unknown): number {
+  if (value == null) return 0;
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const n = value;
+
+    if (n > 1e11) return n;
+
+    if (n > 1e9 && n < 1e11) return n * 1000;
+
+    if (n > 20000 && n < 80000) {
+      const t = excelSerialToMs(n);
+      return t < Date.UTC(2005, 0, 1) ? 0 : t;
+    }
+
+    return 0;
+  }
+
+  if (typeof value !== "string") return 0;
+
+  const raw = stripInvisibles(value).trim();
+  if (!raw) return 0;
+  if (/^0?1\/0?1\/0{2}(\s+0{2}:0{2}(:0{2})?)?$/i.test(raw)) return 0;
+  const s = raw.replace(/\s+/g, " ");
+
+  let m =
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)$/i.exec(
+      s
+    );
+  if (m) {
+    const [, dd, MM, yyyy, hh, mm, ssOpt, ap] = m;
+    let H = parseInt(hh, 10);
+    const min = parseInt(mm, 10);
+    const sec = ssOpt ? parseInt(ssOpt, 10) : 0;
+    if (/PM/i.test(ap) && H !== 12) H += 12;
+    if (/AM/i.test(ap) && H === 12) H = 0;
+    const t = Date.UTC(+yyyy, +MM - 1, +dd, H, min, sec);
+    return t < Date.UTC(2005, 0, 1) ? 0 : t;
+  }
+
+  m =
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([ap])\s*\.?\s*m\.?$/i.exec(
+      s
+    );
+  if (m) {
+    const [, dd, MM, yyyy, hh, mm, ssOpt, ap] = m;
+    let H = parseInt(hh, 10);
+    const min = parseInt(mm, 10);
+    const sec = ssOpt ? parseInt(ssOpt, 10) : 0;
+    if (/p/i.test(ap) && H !== 12) H += 12;
+    if (/a/i.test(ap) && H === 12) H = 0;
+    const t = Date.UTC(+yyyy, +MM - 1, +dd, H, min, sec);
+    return t < Date.UTC(2005, 0, 1) ? 0 : t;
+  }
+
+  m =
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(
+      s
+    );
+  if (m) {
+    const [, dd, MM, yyyy, HH, mm, ssOpt] = m;
+    const t = Date.UTC(
+      +yyyy,
+      +MM - 1,
+      +dd,
+      parseInt(HH, 10),
+      parseInt(mm, 10),
+      ssOpt ? parseInt(ssOpt, 10) : 0
+    );
+    return t < Date.UTC(2005, 0, 1) ? 0 : t;
+  }
+
+  m =
+    /^(\d{1,2})-(\d{1,2})-(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(
+      s
+    );
+  if (m) {
+    const [, dd, MM, yyyy, HH, mm, ssOpt] = m;
+    const t = Date.UTC(
+      +yyyy,
+      +MM - 1,
+      +dd,
+      parseInt(HH, 10),
+      parseInt(mm, 10),
+      ssOpt ? parseInt(ssOpt, 10) : 0
+    );
+    return t < Date.UTC(2005, 0, 1) ? 0 : t;
+  }
+
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{2})\s+(\d{1,2}):(\d{2})$/.exec(s);
+  if (m) {
+    const [, dd, MM, yy, HH, mm] = m;
+    const yyyy = 2000 + parseInt(yy, 10);
+    const t = Date.UTC(+yyyy, +MM - 1, +dd, parseInt(HH, 10), parseInt(mm, 10));
+    return t < Date.UTC(2005, 0, 1) ? 0 : t;
+  }
+
+  const parsed = Date.parse(s.replace(/(\d{1,2})\/(\d{1,2})\//, "$2/$1/"));
+  return Number.isFinite(parsed) && parsed >= Date.UTC(2005, 0, 1) ? parsed : 0;
+}
+
+function reduceLatestByDate(list: PriceItemFromAny[]): PriceItemFromAny[] {
+  const map = new Map<string, PriceItemFromAny>();
+
+  for (const it of list) {
+    const key = keyFor(it.name ?? "", it.barcode, it.code);
+    if (!key) continue;
+
+    const current = map.get(key);
+    if (!current) {
+      map.set(key, it);
+      continue;
+    }
+
+    const currentTs = current.updatedAt ?? 0;
+    const candidateTs = it.updatedAt ?? 0;
+
+    if (candidateTs > currentTs) {
+      map.set(key, it);
+      continue;
+    }
+
+    if (candidateTs === currentTs) {
+      const currentScore = (current.barcode ? 1 : 0) + (current.code ? 1 : 0);
+      const candidateScore = (it.barcode ? 1 : 0) + (it.code ? 1 : 0);
+      if (candidateScore > currentScore) {
+        map.set(key, it);
+        continue;
+      }
+
+      if (it.price < current.price) {
+        map.set(key, it);
+      }
+    }
+  }
+
+  return Array.from(map.values()).sort(
+    (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
+  );
+}
+
 /* =================== Utils =================== */
 function normalize(str: string) {
   return (str || "")
@@ -169,14 +362,72 @@ function readCatalogFromLS(): PriceItemFromAny[] | null {
 /** Normaliza un arreglo de PriceItem a Product[] */
 function asProducts(arr: PriceItemFromAny[] | null | undefined): Product[] {
   if (!arr?.length) return [];
-  return arr
-    .filter((x) => x?.name && Number.isFinite(Number(x.price)))
-    .map((x) => ({ id: uuid(), name: String(x.name).trim(), unitPrice: Number(x.price) }))
+
+  const normalized = arr
+    .map((raw) => {
+      if (!raw) return null;
+
+      const name = String(raw.name ?? "").trim();
+      if (!name) return null;
+
+      const priceValue = Number(raw.price);
+      if (!Number.isFinite(priceValue)) return null;
+
+      const codeValue = raw.code;
+      const code = codeValue != null ? String(codeValue).trim() || undefined : undefined;
+
+      const barcodeValue = raw.barcode;
+      const barcode = barcodeValue != null ? normBarcode(barcodeValue) : undefined;
+
+      const rawRecord = raw as Record<string, unknown>;
+      const updatedCandidates: unknown[] = [
+        raw.updatedAt,
+        rawRecord["updatedAtMs"],
+        rawRecord["updated"],
+        rawRecord["updatedAtLabel"],
+        rawRecord["fechaUltimaActualizacion"],
+        rawRecord["fecha ultima actualización"],
+        rawRecord["ultima actualizacion"],
+        rawRecord["última actualización"],
+        rawRecord["desde"],
+      ];
+
+      let updatedAt = 0;
+      for (const cand of updatedCandidates) {
+        const ts = parseUpdatedAt(cand);
+        if (ts > updatedAt) updatedAt = ts;
+      }
+
+      const id = keyFor(name, barcode, code);
+      if (!id) return null;
+
+      return {
+        id,
+        name,
+        code,
+        barcode,
+        price: priceValue,
+        updatedAt,
+      } satisfies PriceItemFromAny;
+    })
+    .filter(Boolean) as PriceItemFromAny[];
+
+  if (!normalized.length) return [];
+
+  const latest = reduceLatestByDate(normalized);
+
+  return latest
+    .map((item) => ({
+      id: item.id ?? keyFor(item.name, item.barcode, item.code),
+      name: item.name,
+      unitPrice: Number(item.price),
+    }))
+    .filter((product) => product.id && Number.isFinite(product.unitPrice))
     .sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
 
 /** Fallback a /precios.xlsx (público) usando detección flexible de columnas */
-async function readCatalogFromPublicXlsx(): Promise<Product[]> {
+async function readCatalogFromPublicXlsx(): Promise<PriceItemFromAny[]> {
   try {
     const res = await fetch(`${PRECIOS_PUBLIC_URL}?v=${Date.now()}`, { cache: "no-store" });
     if (!res.ok) throw new Error("PUBLIC precios.xlsx HTTP " + res.status);
@@ -199,39 +450,63 @@ async function readCatalogFromPublicXlsx(): Promise<Product[]> {
     const aliases = {
       name: ["descripcion", "descripción", "nombre", "detalle", "producto", "articulo", "artículo"],
       price: ["precio", "precio venta", "precio final", "pvp", "importe"],
-    };
+      code: ["codigo", "código", "cod", "sku"],
+      barcode: ["codigo barras", "código barras", "cod barras", "barcode", "ean"],
+      since: ["desde", "vigencia desde", "fecha desde", "inicio vigencia"],
+    } as const;
     const keys = Object.keys(rows[0] ?? {});
     let nameCol: string | null = null;
     let priceCol: string | null = null;
+    let codeCol: string | null = null;
+    let barcodeCol: string | null = null;
+    let sinceCol: string | null = null;
     for (const k of keys) {
       if (!nameCol && aliases.name.some((a) => headerMatches(k, a))) nameCol = k;
       if (!priceCol && aliases.price.some((a) => headerMatches(k, a))) priceCol = k;
-      if (nameCol && priceCol) break;
+      if (!codeCol && aliases.code.some((a) => headerMatches(k, a))) codeCol = k;
+      if (!barcodeCol && aliases.barcode.some((a) => headerMatches(k, a))) barcodeCol = k;
+      if (!sinceCol && aliases.since.some((a) => headerMatches(k, a))) sinceCol = k;
     }
     if (!nameCol) nameCol = keys[0] ?? "nombre";
     if (!priceCol) priceCol = "precio";
 
-    const list: PriceItemFromAny[] = rows.map((r) => {
-      const rawName = String(r[nameCol as string] ?? "").trim();
-      const rawPrice = r[priceCol as string];
-      let price = 0;
-      if (typeof rawPrice === "number") price = rawPrice;
-      else if (typeof rawPrice === "string") {
-        const clean = rawPrice.replace(/\./g, "").replace(/,/g, ".");
-        const n = Number(clean.replace(/[^\d.]/g, ""));
-        price = Number.isFinite(n) ? n : 0;
-      }
-      return { name: rawName, price };
-    });
+    const list: PriceItemFromAny[] = rows
+      .map((r) => {
+        const rawName = String(r[nameCol as string] ?? "").trim();
+        if (!rawName) return null;
 
-    return asProducts(list);
+        const rawPrice = r[priceCol as string];
+        let price = 0;
+        if (typeof rawPrice === "number") price = rawPrice;
+        else if (typeof rawPrice === "string") {
+          const clean = rawPrice.replace(/\./g, "").replace(/,/g, ".");
+          const n = Number(clean.replace(/[^\d.]/g, ""));
+          price = Number.isFinite(n) ? n : 0;
+        }
+        if (!Number.isFinite(price) || price <= 0) return null;
+
+        const codeValue = codeCol ? r[codeCol] : undefined;
+        const barcodeValue = barcodeCol ? r[barcodeCol] : undefined;
+        const sinceValue = sinceCol ? r[sinceCol] : undefined;
+
+        return {
+          name: rawName,
+          price,
+          code: codeValue != null ? String(codeValue).trim() || undefined : undefined,
+          barcode: barcodeValue != null ? String(barcodeValue).trim() || undefined : undefined,
+          updatedAt: parseUpdatedAt(sinceValue ?? undefined),
+        } satisfies PriceItemFromAny;
+      })
+      .filter(Boolean) as PriceItemFromAny[];
+
+    return list;
   } catch {
     return [];
   }
 }
 
 /** ÚLTIMO fallback: tu ventas.xlsx actual (consolidado por ARTÍCULO) */
-async function readFromVentasXlsx(): Promise<Product[]> {
+async function readFromVentasXlsx(): Promise<PriceItemFromAny[]> {
   try {
     const res = await fetch(VENTAS_URL, { cache: "no-store" });
     if (!res.ok) throw new Error("VENTAS HTTP " + res.status);
@@ -251,13 +526,12 @@ async function readFromVentasXlsx(): Promise<Product[]> {
         if (Number.isFinite(unit) && unit > 0) map.set(name, unit);
       }
     }
-    const products: Product[] = Array.from(map.entries()).map(([name, unitPrice]) => ({
-      id: uuid(),
+    const items: PriceItemFromAny[] = Array.from(map.entries()).map(([name, unitPrice]) => ({
       name,
-      unitPrice,
+      price: unitPrice,
+      updatedAt: 0,
     }));
-    products.sort((a, b) => a.name.localeCompare(b.name, "es"));
-    return products;
+    return items;
   } catch {
     return [];
   }
@@ -274,8 +548,12 @@ async function loadCatalogFromPrecios(): Promise<Product[]> {
     const res = await fetch(`${PRECIOS_API_URL}`, { cache: "no-store" });
     if (res.ok) {
       const cat = await res.json(); // { items: PriceItem[] } o similar
-      const apiItems: PriceItemFromAny[] = cat?.items ?? cat;
-      const prods = asProducts(apiItems);
+      const rawItems = Array.isArray(cat?.items)
+        ? (cat.items as PriceItemFromAny[])
+        : Array.isArray(cat)
+        ? (cat as PriceItemFromAny[])
+        : [];
+      const prods = asProducts(rawItems);
       if (prods.length) return prods;
     }
   } catch (error) {
@@ -284,10 +562,12 @@ async function loadCatalogFromPrecios(): Promise<Product[]> {
 
   // 3) /precios.xlsx público
   const fromPublic = await readCatalogFromPublicXlsx();
-  if (fromPublic.length) return fromPublic;
+  const publicProducts = asProducts(fromPublic);
+  if (publicProducts.length) return publicProducts;
 
   // 4) ventas.xlsx (fallback final)
-  return await readFromVentasXlsx();
+  const fromVentas = await readFromVentasXlsx();
+  return asProducts(fromVentas);
 }
 
 /* =================== Página =================== */
@@ -570,7 +850,7 @@ function createFallbackWorkbook(WorkbookCtor: typeof import("exceljs").Workbook)
 
 /* ====== Estilos + quiebres (1 ítem por fila) ====== */
 type WorksheetWithPageBreaks = import("exceljs").Worksheet & {
-  addPageBreaks?: (breaks: Array<{ row: number }>) => void;
+  addPageBreaks?: import("exceljs").Worksheet["addPageBreaks"];
 };
 
 function applyStylesAndBreaks(ws: import("exceljs").Worksheet, itemCount: number) {

@@ -81,10 +81,10 @@ export async function parseSalesArrayBuffer(ab: ArrayBuffer): Promise<SalesRow[]
   const XLSX = await import("xlsx");
   const wb = XLSX.read(ab, { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows: any[] = XLSX.utils.sheet_to_json(ws, { raw: true });
+  const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { raw: true });
 
   const candidates = rows.map((r) => {
-    const obj: any = {};
+    const obj: Record<string, unknown> = {};
     for (const k of Object.keys(r)) obj[k.toLowerCase().replace(NBSP_RX, " ").trim()] = r[k];
     return obj;
   });

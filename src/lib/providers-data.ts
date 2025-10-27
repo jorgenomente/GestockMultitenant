@@ -29,7 +29,8 @@ export function formatCurrency(n: number) {
 
 export function groupBy<T, K extends string | number>(
   items: T[],
-  getKey: (x: T) => K
+  // eslint-disable-next-line no-unused-vars
+  getKey: (item: T) => K
 ): Record<K, T[]> {
   return items.reduce((acc, it) => {
     const k = getKey(it);
@@ -55,7 +56,9 @@ export async function fetchProviders(): Promise<ProviderRow[]> {
 
     if (error) {
       console.warn(`[presupuesto] No se pudo leer ${TABLE_NAME}:`, {
-        message: error.message, code: (error as any).code, details: (error as any).details
+        message: error.message,
+        code: error.code,
+        details: error.details,
       });
       return []; // devolvemos vacío para que la UI no truene
     }
@@ -65,10 +68,17 @@ export async function fetchProviders(): Promise<ProviderRow[]> {
       return MOCK;
     }
     return data as ProviderRow[];
-  } catch (e: any) {
-    console.warn(`[presupuesto] Excepción leyendo ${TABLE_NAME}:`, {
-      name: e?.name, message: e?.message
-    });
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      console.warn(`[presupuesto] Excepción leyendo ${TABLE_NAME}:`, {
+        name: err.name,
+        message: err.message,
+      });
+    } else {
+      console.warn(`[presupuesto] Excepción leyendo ${TABLE_NAME}:`, {
+        value: err,
+      });
+    }
     return []; // fallback silencioso
   }
 }

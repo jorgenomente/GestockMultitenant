@@ -52,7 +52,6 @@ export function weekLabelFromId(weekId: WeekId) {
 // Lista de semanas para el selector (pasadas y futuras)
 export function listWeeksAround(anchorId: WeekId, past = 16, future = 4) {
   const [y, w] = anchorId.split("-W");
-  const label = weekLabelFromId(anchorId);
 
   // lunes base
   const jan4 = Date.UTC(Number(y), 0, 4);

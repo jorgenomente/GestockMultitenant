@@ -506,10 +506,25 @@ export default function PriceSearch({ slug }: { slug: string }) {
   const LIMIT = 10;
 
   const fileRef = React.useRef<HTMLInputElement | null>(null);
+  const searchSectionRef = React.useRef<HTMLElement | null>(null);
   const [scannerOpen, setScannerOpen] = React.useState(false);
+
+  const scrollSearchIntoView = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (window.innerWidth >= 768) return;
+    const node = searchSectionRef.current;
+    if (!node) return;
+    window.requestAnimationFrame(() => {
+      const rect = node.getBoundingClientRect();
+      const desiredTop = Math.max(rect.top + window.scrollY - 12, 0);
+      if (Math.abs(window.scrollY - desiredTop) < 4) return;
+      window.scrollTo({ top: desiredTop, behavior: "smooth" });
+    });
+  }, []);
 
   const focusSearchInput = React.useCallback(() => {
     if (typeof window === "undefined") return;
+    scrollSearchIntoView();
     window.requestAnimationFrame(() => {
       const node = document.getElementById(INPUT_ID) as HTMLInputElement | null;
       if (!node) return;
@@ -521,7 +536,11 @@ export default function PriceSearch({ slug }: { slug: string }) {
         logDebug("No se pudo posicionar el cursor en la búsqueda", selectionError);
       }
     });
-  }, []);
+  }, [scrollSearchIntoView]);
+
+  const handleSearchFocus = React.useCallback(() => {
+    scrollSearchIntoView();
+  }, [scrollSearchIntoView]);
 
   const handleScannerClose = React.useCallback(() => {
     setScannerOpen(false);
@@ -595,7 +614,10 @@ export default function PriceSearch({ slug }: { slug: string }) {
     <>
       <div className="w-full bg-background">
         <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 md:space-y-8 md:py-8">
-          <section className="rounded-3xl border border-border/50 bg-muted/20 p-5 shadow-[0_25px_60px_-35px_rgba(0,0,0,0.45)] md:p-7">
+          <section
+            ref={searchSectionRef}
+            className="sticky top-0 z-40 rounded-3xl border border-border/50 bg-background/95 p-5 shadow-[0_25px_60px_-35px_rgba(0,0,0,0.45)] backdrop-blur supports-[backdrop-filter]:bg-background/80 md:static md:bg-muted/20 md:p-7 md:backdrop-blur-none"
+          >
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="space-y-1">
                 <h1 className="text-2xl font-semibold text-foreground md:text-3xl">Consulta de precios</h1>
@@ -629,6 +651,8 @@ export default function PriceSearch({ slug }: { slug: string }) {
                 <Input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
+                  onFocus={handleSearchFocus}
+                  onClick={handleSearchFocus}
                   placeholder="Buscar producto, categoría o código…"
                   className="h-12 rounded-2xl border border-border/50 bg-background/70 pl-11 pr-4 text-base shadow-sm"
                   inputMode="search"

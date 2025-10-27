@@ -14,6 +14,7 @@ type BranchContextValue = {
   role: Role | null;
   error: string | null;
   tenantId: string | null;
+  // eslint-disable-next-line no-unused-vars
   setCurrentBranch: (slug: string) => void;
 };
 
@@ -53,7 +54,8 @@ function writeStoredBranch(key: string | null, slug: string) {
 }
 
 export function BranchProvider({ children }: { children: React.ReactNode }) {
-  const { slug: tenantSlugParam } = useParams<{ slug?: string }>();
+  const params = useParams<{ slug?: string }>();
+  const tenantSlugParam = params?.slug;
   const pathname = usePathname();
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
 
@@ -143,13 +145,20 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
           setTenantId(tenantRow.id);
           writeStoredBranch(storageKey, initialBranch.slug);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (cancelled) return;
+        const fallbackMessage = "Error cargando sucursales";
+        const message =
+          err instanceof Error
+            ? err.message
+            : typeof err === "string"
+              ? err
+              : fallbackMessage;
         setBranches([]);
         setCurrentBranchState(null);
         setRole(null);
         setLoading(false);
-        setError(err?.message ?? "Error cargando sucursales");
+        setError(message || fallbackMessage);
         setTenantId(null);
       }
     }

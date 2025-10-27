@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { BrowserMultiFormatReader, IScannerControls } from "@zxing/browser";
 
 type Props = {
-  onDetected: (_value: string) => void;
+  // eslint-disable-next-line no-unused-vars
+  onDetected: (value: string) => void;
   onClose?: () => void;
 };
 

@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { isoWeekIdFromMs, listWeeksAround, weekLabelFromId } from "@/lib/week-utils";
+import { isoWeekIdFromMs, listWeeksAround } from "@/lib/week-utils";
 
 export default function WeekPicker({
   paramName = "week",
@@ -19,7 +19,6 @@ export default function WeekPicker({
 
   const options = React.useMemo(
     () => listWeeksAround(current, aroundPast, aroundFuture),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [current, aroundPast, aroundFuture]
   );
 

@@ -715,7 +715,10 @@ export default function ConfiguracionPageClient() {
   const presetsFetching = presetQuery.isFetching;
   const presetsError = presetQuery.isError ? (presetQuery.error as Error) : null;
   const customPresets = presetQuery.data ?? EMPTY_PRESETS;
-  const customPresetCards = React.useMemo(() => customPresets.map((preset) => ({ ...preset, source: "custom" as const })), [customPresets]);
+  const customPresetCards = React.useMemo<PresetWithSource[]>(
+    () => customPresets.map((preset) => ({ ...preset, source: "custom" as const })),
+    [customPresets]
+  );
   const presetNameIsValid = presetName.trim().length >= 3;
   const previewVars = React.useMemo(() => buildCssVariableMap(formValues), [formValues]);
   const previewStyle = React.useMemo(() => previewVars as React.CSSProperties, [previewVars]);

@@ -170,6 +170,7 @@ function MultiSelect({
   placeholder = "Seleccionar…",
 }: {
   values: string[];
+  // eslint-disable-next-line no-unused-vars
   onChange?: (nextValues: string[]) => void;
   options: Option[];
   placeholder?: string;
@@ -238,6 +239,7 @@ function MemberRow({
 }: {
   m: MembershipRow;
   branchOptions: Option[];
+  // eslint-disable-next-line no-unused-vars
   onApply?: (payload: MemberApplyPayload) => void;
 }) {
   const [editing, setEditing] = useState(false);

@@ -189,23 +189,6 @@ const CLEANUP_ITEM_TABLES = ["order_items", "provider_order_items", "branch_orde
 const ORDER_TABLE_CANDIDATES = ["orders", "provider_orders", "branch_orders"] as const;
 const ITEM_TABLE_CANDIDATES = ["order_items", "provider_order_items", "branch_order_items"] as const;
 
-const TENANT_SCOPED_TABLES = new Set([
-  "orders",
-  "provider_orders",
-  "branch_orders",
-  "order_items",
-  "provider_order_items",
-  "branch_order_items",
-  "order_snapshots",
-  "order_ui_state",
-  "order_summaries",
-  "order_summaries_week",
-  "provider_weeks",
-  "provider_week_providers",
-  "provider_week_states",
-  "app_settings",
-]);
-
 const BRANCH_SCOPED_TABLES = new Set([
   "providers",
   "orders",
@@ -252,17 +235,6 @@ const isMissingTableError = (error: PostgrestError | null | undefined) => {
   return msg.includes("could not find the table");
 };
 
-const matchesScope = (
-  row: Record<string, unknown>,
-  tenantId: string,
-  _branchId: string,
-  _branchSlug: string,
-) => {
-  const rowTenant = typeof row.tenant_id === "string" ? row.tenant_id : null;
-  if (rowTenant && rowTenant !== tenantId) return false;
-  return true;
-};
-
 type ProvidersExportPayload = {
   version: number;
   exportedAt: string;
@@ -280,7 +252,9 @@ async function showAlert(message: string, copyToClipboard = false) {
       await navigator.clipboard.writeText(message);
       window.alert(`${message}\n\n(El contenido se copió al portapapeles)`);
       return;
-    } catch {}
+    } catch (error) {
+      console.warn("No se pudo copiar al portapapeles", error);
+    }
   }
   window.alert(message);
 }
@@ -500,7 +474,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
       await showAlert(`No se pudo guardar la copia de seguridad.\n${message}`);
       return false;
     }
-  }, [branchId, showAlert, supabase, tenantId]);
+  }, [branchId, supabase, tenantId]);
 
   const fetchBranchSnapshot = React.useCallback(async (): Promise<ProvidersExportPayload | null> => {
     if (!tenantId || !branchId) {
@@ -543,7 +517,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
       await showAlert(`No se pudo cargar la copia guardada.\n${message}`);
       return null;
     }
-  }, [branchId, showAlert, supabase, tenantId]);
+  }, [branchId, supabase, tenantId]);
 
   React.useEffect(() => {
     void loadBackupInfo();
@@ -941,7 +915,9 @@ const clearGestockCaches = React.useCallback((tenant?: string | null, branch?: s
       if (key && matchesScope(key)) toRemove.push(key);
     }
     toRemove.forEach((key) => window.localStorage.removeItem(key));
-  } catch {}
+  } catch (error) {
+    console.warn("No se pudieron limpiar las cachés de Gestock", error);
+  }
 }, []);
 
 const applyProvidersPayload = React.useCallback(async (
@@ -1444,7 +1420,7 @@ const applyProvidersPayload = React.useCallback(async (
   }
 
   return errors.length === 0;
-}, [branchId, clearGestockCaches, router, showAlert, supabase, tenantId]);
+}, [branchId, clearGestockCaches, router, supabase, tenantId]);
 
 const applyOrdersPayload = React.useCallback(async (
   payload: OrdersExportPayload,
@@ -1767,7 +1743,7 @@ const applyOrdersPayload = React.useCallback(async (
   if (showMessages) await showAlert("Pedidos importados correctamente.");
 
   return true;
-}, [branchId, clearGestockCaches, router, showAlert, supabase, tenantId]);
+}, [branchId, clearGestockCaches, router, supabase, tenantId]);
 
 const applyDropsFactory = (
   tenantId: string,
@@ -1781,14 +1757,6 @@ const applyDropsFactory = (
 };
 
 const ensureArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? value as T[] : []);
-
-const readPayloadFromFile = async (file: File): Promise<ProvidersExportPayload> => {
-  const raw = await file.text();
-  const parsed = JSON.parse(raw) as ProvidersExportPayload;
-  if (parsed.version !== 1) throw new Error("Versión de exportación no soportada.");
-  if (!isPlainObject(parsed.tables)) throw new Error("Formato de tablas inválido en el archivo.");
-  return parsed;
-};
 
 const readOrdersPayloadFromFile = async (file: File): Promise<OrdersExportPayload> => {
   const raw = await file.text();
@@ -1808,8 +1776,6 @@ const readOrdersPayloadFromFile = async (file: File): Promise<OrdersExportPayloa
   return parsed;
 };
 
-const cloneSet = <T,>(value: Set<T>) => new Set(Array.from(value));
-
 const ensureName = (name: unknown) => {
   if (typeof name !== "string") return "";
   return stripBranchSuffix(name.trim());
@@ -1824,22 +1790,6 @@ interface ApplyPayloadOptions {
 
 const isValidTables = (tables: unknown): tables is Record<string, unknown> =>
   typeof tables === "object" && tables != null && !Array.isArray(tables);
-
-const PROVIDER_TABLES = [
-  "providers",
-  "provider_weeks",
-  "provider_week_providers",
-  "provider_week_states",
-] as const;
-
-const ORDER_TABLES = [
-  "orders",
-  "order_items",
-  "order_snapshots",
-  "order_ui_state",
-  "order_summaries",
-  "order_summaries_week",
-] as const;
 
 const buildNameKey = (name: string) => stripBranchSuffix(name).toLowerCase();
 
@@ -1881,7 +1831,7 @@ const handleImportFile = React.useCallback(async (file: File) => {
       setImportingData(false);
       if (importInputRef.current) importInputRef.current.value = "";
     }
-  }, [applyProvidersPayload, branch, branchId, showAlert, tenantId]);
+  }, [applyProvidersPayload, branch, branchId, tenantId]);
   const onImportFileChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
   if (file) void handleImportFile(file);
@@ -1908,7 +1858,7 @@ const handleImportOrdersFile = React.useCallback(async (file: File) => {
     setImportingOrders(false);
     if (ordersImportInputRef.current) ordersImportInputRef.current.value = "";
   }
-}, [applyOrdersPayload, branch, branchId, showAlert, tenantId]);
+}, [applyOrdersPayload, branch, branchId, tenantId]);
 
 const onImportOrdersFileChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
   const file = event.target.files?.[0];
@@ -1932,7 +1882,6 @@ const buildExportPayload = React.useCallback(async (
       };
 
       const supa = supabase;
-      const targetSlug = targetBranch.slug?.trim() || "";
 
       const ensureScope = (row: Record<string, unknown>) => {
         const cleanName = typeof row.name === "string" ? stripBranchSuffix(row.name) : undefined;
@@ -2009,8 +1958,9 @@ const buildExportPayload = React.useCallback(async (
             if (isMissingTableError(error)) continue;
             throw error;
           }
-          if (data && data.length) {
-            orders = data.map((row: any) => ensureScope(row));
+          const rows = (data ?? []) as Array<Record<string, unknown>>;
+          if (rows.length) {
+            orders = rows.map(ensureScope);
             break;
           }
         }
@@ -2031,8 +1981,9 @@ const buildExportPayload = React.useCallback(async (
             if (isMissingTableError(error)) continue;
             throw error;
           }
-          if (data && data.length) {
-            payload.tables.order_items = data.map((row: any) => ensureScope(row));
+          const rows = (data ?? []) as Array<Record<string, unknown>>;
+          if (rows.length) {
+            payload.tables.order_items = rows.map(ensureScope);
             break;
           }
         }
@@ -2043,14 +1994,16 @@ const buildExportPayload = React.useCallback(async (
           .in("order_id", orderIds)
           .order("created_at", { ascending: true });
         if (snapErr && !isMissingTableError(snapErr)) throw snapErr;
-        if (snapshots?.length) payload.tables.order_snapshots = snapshots.map((row: any) => ensureScope(row));
+        const normalizedSnapshots = (snapshots ?? []) as Array<Record<string, unknown>>;
+        if (normalizedSnapshots.length) payload.tables.order_snapshots = normalizedSnapshots.map(ensureScope);
 
         const { data: uiState, error: uiErr } = await supa
           .from("order_ui_state")
           .select("*")
           .in("order_id", orderIds);
         if (uiErr && !isMissingTableError(uiErr)) throw uiErr;
-        if (uiState?.length) payload.tables.order_ui_state = uiState.map((row: any) => ensureScope(row));
+        const normalizedUiState = (uiState ?? []) as Array<Record<string, unknown>>;
+        if (normalizedUiState.length) payload.tables.order_ui_state = normalizedUiState.map(ensureScope);
       }
 
       if (providerIds.length) {
@@ -2059,17 +2012,19 @@ const buildExportPayload = React.useCallback(async (
           .select("*")
           .in("provider_id", providerIds);
         if (sumErr && !isMissingTableError(sumErr)) throw sumErr;
-        if (orderSummaries?.length) payload.tables.order_summaries = orderSummaries.map((row: any) => ensureScope(row));
+        const normalizedSummaries = (orderSummaries ?? []) as Array<Record<string, unknown>>;
+        if (normalizedSummaries.length) payload.tables.order_summaries = normalizedSummaries.map(ensureScope);
 
         const { data: orderSummariesWeek, error: sumWeekErr } = await supa
           .from("order_summaries_week")
           .select("*")
           .in("provider_id", providerIds);
         if (sumWeekErr && !isMissingTableError(sumWeekErr)) throw sumWeekErr;
-        if (orderSummariesWeek?.length) payload.tables.order_summaries_week = orderSummariesWeek.map((row: any) => ensureScope(row));
+        const normalizedSummaryWeek = (orderSummariesWeek ?? []) as Array<Record<string, unknown>>;
+        if (normalizedSummaryWeek.length) payload.tables.order_summaries_week = normalizedSummaryWeek.map(ensureScope);
       }
 
-      const appSettings = (await fetchScoped("app_settings")).map((row: any) => ensureScope(row));
+      const appSettings = (await fetchScoped<Record<string, unknown>>("app_settings")).map(ensureScope);
       if (appSettings.length) payload.tables.app_settings = appSettings;
 
       return payload;
@@ -2079,7 +2034,7 @@ const buildExportPayload = React.useCallback(async (
       await showAlert(`No se pudieron copiar los datos.\n${message}`);
       return null;
     }
-  }, [branchId, branch, slug, supabase, tenantId]);
+  }, [branchId, branch, supabase, tenantId]);
 
   const buildOrdersExportPayload = React.useCallback(async (): Promise<OrdersExportPayload | null> => {
     if (!tenantId || !branchId) {
@@ -2206,7 +2161,7 @@ const buildExportPayload = React.useCallback(async (
       await showAlert(`No se pudieron exportar los pedidos.\n${message}`);
       return null;
     }
-  }, [branchId, showAlert, supabase, tenantId]);
+  }, [branchId, supabase, tenantId]);
 
   const handleSaveSnapshot = React.useCallback(async () => {
     if (!tenantId || !branchId) {
@@ -2224,7 +2179,7 @@ const buildExportPayload = React.useCallback(async (
     } finally {
       setSavingBackup(false);
     }
-  }, [branch, branchId, buildExportPayload, persistBranchSnapshot, showAlert, tenantId]);
+  }, [branch, branchId, buildExportPayload, persistBranchSnapshot, tenantId]);
 
   const handleDownloadJson = React.useCallback(async () => {
     if (!tenantId || !branchId) {
@@ -2254,7 +2209,7 @@ const buildExportPayload = React.useCallback(async (
     } finally {
       setDownloadingJson(false);
     }
-  }, [branch, branchId, buildExportPayload, showAlert, tenantId]);
+  }, [branch, branchId, buildExportPayload, tenantId]);
 
   const handleDownloadOrders = React.useCallback(async () => {
     if (!tenantId || !branchId) {
@@ -2284,7 +2239,7 @@ const buildExportPayload = React.useCallback(async (
     } finally {
       setDownloadingOrders(false);
     }
-  }, [branch, branchId, buildOrdersExportPayload, showAlert, tenantId]);
+  }, [branch, branchId, buildOrdersExportPayload, tenantId]);
 
   const handleRestoreSnapshot = React.useCallback(async () => {
     if (!tenantId || !branchId) {
@@ -2309,7 +2264,7 @@ const buildExportPayload = React.useCallback(async (
     } finally {
       setRestoringBackup(false);
     }
-  }, [applyProvidersPayload, branch, branchId, clearGestockCaches, fetchBranchSnapshot, loadBackupInfo, showAlert, tenantId]);
+  }, [applyProvidersPayload, branch, branchId, clearGestockCaches, fetchBranchSnapshot, loadBackupInfo, tenantId]);
 
   const loadBranches = React.useCallback(async () => {
     if (!tenantId) return [] as Array<{ id: string; slug: string | null; name: string | null }>;
@@ -2347,7 +2302,7 @@ const buildExportPayload = React.useCallback(async (
         setLoadingBranches(false);
       }
     }
-  }, [branchId, branchOptions.length, exportBranchId, loadBranches, loadingBranches, showAlert, tenantId]);
+  }, [branchId, branchOptions.length, exportBranchId, loadBranches, loadingBranches, tenantId]);
 
   const handleConfirmExport = React.useCallback(async () => {
     if (!exportBranchId) {
@@ -2399,7 +2354,7 @@ const buildExportPayload = React.useCallback(async (
     } finally {
       setCopyingData(false);
     }
-  }, [applyProvidersPayload, branch, branchId, branchOptions, buildExportPayload, exportBranchId, loadBackupInfo, persistBranchSnapshot, router, setCurrentBranch, showAlert, slug]);
+  }, [applyProvidersPayload, branch, branchId, branchOptions, buildExportPayload, exportBranchId, loadBackupInfo, persistBranchSnapshot, router, setCurrentBranch, slug]);
 
   function resetCreateForm() {
     setName("");

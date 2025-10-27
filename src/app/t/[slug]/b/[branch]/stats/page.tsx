@@ -1373,55 +1373,59 @@ export default function EstadisticaPage() {
               />
               {openDropdown && (
                 <div
-                  className="absolute z-50 mt-1 w-full max-h-72 overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md"
+                  className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md"
                   onMouseLeave={() => setOpenDropdown(false)}
                 >
                   {filtered.length === 0 ? (
                     <div className="p-2 text-sm text-muted-foreground">Sin resultados…</div>
                   ) : (
-                    filtered.map((name) => {
-                      const checked = selectedNames.includes(name);
-                      const safeId = `product-${normKey(name)}`;
-                      const lastSale = byProduct.get(normKey(name))?.[0]?.date;
-                      return (
-                        <div key={name} className="flex items-start gap-3 px-3 py-2 text-sm hover:bg-muted/60">
-                          <Checkbox
-                            id={safeId}
-                            checked={checked}
-                            onCheckedChange={() => toggleProductSelection(name)}
-                          />
-                          <label htmlFor={safeId} className="flex-1 cursor-pointer select-none">
-                            <p className="font-medium leading-tight">{name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              Última venta: {formatLastSale(lastSale)}
-                            </p>
-                          </label>
-                        </div>
-                      );
-                    })
+                    <>
+                      <div className="sticky top-0 z-10 flex flex-wrap gap-2 border-b bg-popover/95 p-2 backdrop-blur supports-[backdrop-filter]:bg-popover/60">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={selectVisibleProducts}
+                          disabled={!filtered.length}
+                        >
+                          Seleccionar visibles
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={deselectVisibleProducts}
+                          disabled={!filtered.length || selectedNames.length === 0}
+                        >
+                          Deseleccionar visibles
+                        </Button>
+                      </div>
+                      <div className="max-h-64 overflow-auto">
+                        {filtered.map((name) => {
+                          const checked = selectedNames.includes(name);
+                          const safeId = `product-${normKey(name)}`;
+                          const lastSale = byProduct.get(normKey(name))?.[0]?.date;
+                          return (
+                            <div key={name} className="flex items-start gap-3 px-3 py-2 text-sm hover:bg-muted/60">
+                              <Checkbox
+                                id={safeId}
+                                checked={checked}
+                                onCheckedChange={() => toggleProductSelection(name)}
+                              />
+                              <label htmlFor={safeId} className="flex-1 cursor-pointer select-none">
+                                <p className="font-medium leading-tight">{name}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Última venta: {formatLastSale(lastSale)}
+                                </p>
+                              </label>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
                   )}
                 </div>
               )}
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={selectVisibleProducts}
-                  disabled={!filtered.length}
-                >
-                  Seleccionar visibles
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={deselectVisibleProducts}
-                  disabled={!filtered.length || selectedNames.length === 0}
-                >
-                  Deseleccionar visibles
-                </Button>
-              </div>
               {selectedNames.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {selectedNames.map((name) => (

@@ -1,5 +1,4 @@
 // src/lib/pricesServer.ts
-import { Readable } from "node:stream";
 import * as XLSX from "xlsx";
 
 // ======= Utils compartidos (copiados de tu cliente y adaptados a server) =======
@@ -158,7 +157,8 @@ export async function parseWorkbookFromFile(file: File) {
 }
 
 export function buildCatalog(rows: Record<string, unknown>[]): Catalog {
-  const aliases: Record<string, string[]> = {
+  type ColumnField = "name" | "code" | "barcode" | "price" | "updated";
+  const aliases: Record<ColumnField, string[]> = {
     name: ["descripcion", "descripción", "nombre", "detalle", "producto", "articulo", "artículo"],
     code: ["codigo", "código", "id", "sku", "código interno", "cod interno"],
     barcode: ["barcode","barra","barras","codigo barras","código barras","codigo de barras","código de barras","cod barras","cod. barras","ean"],
@@ -168,14 +168,15 @@ export function buildCatalog(rows: Record<string, unknown>[]): Catalog {
 
   const first = rows[0] ?? {};
   const keys = Object.keys(first);
-  const colMap: Record<"name" | "code" | "barcode" | "price" | "updated", string | null> = {
+  const colMap: Record<ColumnField, string | null> = {
     name: null, code: null, barcode: null, price: null, updated: null,
   };
 
+  const aliasEntries = Object.entries(aliases) as [ColumnField, string[]][];
   for (const k of keys) {
-    for (const [field, list] of Object.entries(aliases)) {
-      if ((list as string[]).some((a) => headerMatches(k, a))) {
-        if (!(colMap as any)[field]) (colMap as any)[field] = k;
+    for (const [field, list] of aliasEntries) {
+      if (list.some((a) => headerMatches(k, a)) && !colMap[field]) {
+        colMap[field] = k;
       }
     }
   }
@@ -184,19 +185,25 @@ export function buildCatalog(rows: Record<string, unknown>[]): Catalog {
   if (!colMap.price) colMap.price = "precio";
   if (!colMap.updated && keys.length > 0) colMap.updated = keys[keys.length - 1];
 
+  const nameKey = colMap.name ?? "nombre";
+  const priceKey = colMap.price ?? "precio";
+  const updatedKey = colMap.updated ?? null;
+  const barcodeKey = colMap.barcode;
+  const codeKey = colMap.code;
+
   const items: PriceItem[] = [];
   let rowCount = 0;
 
   for (const r of rows) {
     rowCount++;
-    const rawName = String(r[colMap.name as string] ?? "").trim();
+    const rawName = String(r[nameKey] ?? "").trim();
     if (!rawName) continue;
 
-    const code = r[colMap.code as string] ? String(r[colMap.code as string]).trim() : undefined;
-    const barcode = colMap.barcode ? normBarcode(r[colMap.barcode as string]) : undefined;
+    const code = codeKey && r[codeKey] ? String(r[codeKey]).trim() : undefined;
+    const barcode = barcodeKey ? normBarcode(r[barcodeKey]) : undefined;
 
     let priceNum = 0;
-    const priceRaw = r[colMap.price as string];
+    const priceRaw = r[priceKey];
     if (typeof priceRaw === "number") priceNum = priceRaw;
     else if (typeof priceRaw === "string") {
       const clean = priceRaw.replace(/\./g, "").replace(/,/g, ".");
@@ -204,7 +211,7 @@ export function buildCatalog(rows: Record<string, unknown>[]): Catalog {
       priceNum = Number.isFinite(n) ? n : 0;
     }
 
-    const updRaw = colMap.updated ? r[colMap.updated as string] : undefined;
+    const updRaw = updatedKey ? r[updatedKey] : undefined;
     const updatedAt = parseUpdatedAt(updRaw);
     const updatedAtLabel =
       typeof updRaw === "string" ? String(updRaw) : updatedAt ? new Date(updatedAt).toLocaleString("es-AR") : "";

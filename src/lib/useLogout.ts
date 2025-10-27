@@ -17,7 +17,9 @@ export function useLogout() {
       try {
         localStorage.clear();
         sessionStorage.clear();
-      } catch {}
+      } catch (storageError) {
+        console.warn("No se pudo limpiar el storage durante logout", storageError);
+      }
       router.push("/login");
     }
   }
