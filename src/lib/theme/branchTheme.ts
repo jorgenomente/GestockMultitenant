@@ -181,9 +181,17 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const dataSecondaryStrongSurface = withAlpha(accent, 0.2);
   const overlaySurface = withAlpha(surface, 0.9);
   const overlaySurfaceSoft = withAlpha(adjustLightness(surface, -0.04), 0.72);
+  const overlaySurfaceMuted = withAlpha(surface, 0.75);
+  const overlaySurfaceHover = withAlpha(surface, 0.85);
   const overlaySurfaceStrong = withAlpha(surface, 0.95);
   const mutedSurface = withAlpha(surfaceBorder, 0.4);
   const mutedSurfaceStrong = withAlpha(surfaceBorder, 0.6);
+  const backgroundSoftSurface = withAlpha(background, 0.85);
+  const backgroundOverlaySurface = withAlpha(background, 0.88);
+  const backgroundStrongSurface = withAlpha(background, 0.96);
+  const navSoftSurface = withAlpha(nav, 0.75);
+  const navHoverSurface = withAlpha(nav, 0.88);
+  const navStrongSurface = withAlpha(nav, 0.95);
 
   const chartPrimary = accent;
   const chartTwo = accentTertiary;
@@ -261,9 +269,17 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
     "--color-data-secondary": accentSecondary,
     "--surface-overlay": overlaySurface,
     "--surface-overlay-soft": overlaySurfaceSoft,
+    "--surface-overlay-muted": overlaySurfaceMuted,
+    "--surface-overlay-hover": overlaySurfaceHover,
     "--surface-overlay-strong": overlaySurfaceStrong,
     "--surface-muted": mutedSurface,
     "--surface-muted-strong": mutedSurfaceStrong,
+    "--surface-background-soft": backgroundSoftSurface,
+    "--surface-background-overlay": backgroundOverlaySurface,
+    "--surface-background-strong": backgroundStrongSurface,
+    "--surface-nav-soft": navSoftSurface,
+    "--surface-nav-hover": navHoverSurface,
+    "--surface-nav-strong": navStrongSurface,
     "--surface-action-primary-soft": primarySoftSurface,
     "--surface-action-primary-strong": primaryStrongSurface,
     "--surface-alert-subtle": alertSubtleSurface,

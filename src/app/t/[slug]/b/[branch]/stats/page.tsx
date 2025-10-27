@@ -69,6 +69,14 @@ type WeightProductInfo = {
   unitKg: number | null;
 };
 
+type SelectedProduct = {
+  key: string;
+  name: string;
+  rows: SalesRow[];
+};
+
+const EMPTY_STATS: Stats = { avg4w: 0, sum2w: 0, sum30d: 0, lastUnitPrice: undefined, lastDate: undefined };
+
 const DRY_FRUIT_KEYWORDS = [
   "almendra",
   "nuez",
@@ -702,7 +710,7 @@ export default function EstadisticaPage() {
   }, [error]);
 
   type UiState = {
-    selectedName: string;
+    selectedNames: string[];
     from: string;
     to: string;
     gran: Granularity;
@@ -713,7 +721,7 @@ export default function EstadisticaPage() {
   const THIRTY_AGO_ISO = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
 
   const UI_DEFAULTS: UiState = {
-    selectedName: "",
+    selectedNames: [],
     from: THIRTY_AGO_ISO,
     to: TODAY_ISO,
     gran: "week",
@@ -729,16 +737,29 @@ export default function EstadisticaPage() {
     try {
       const raw = localStorage.getItem(uiKey);
       if (raw) {
-        const saved = JSON.parse(raw) as Partial<UiState>;
-        setUi((prev) => ({
-          ...prev,
-          ...saved,
-          gran: saved?.gran === "day" || saved?.gran === "month" ? saved.gran : saved?.gran === "week" ? "week" : prev.gran,
-          colCount:
-            typeof saved?.colCount === "number"
-              ? Math.min(15, Math.max(1, saved.colCount))
-              : prev.colCount,
-        }));
+        const saved = JSON.parse(raw) as Partial<UiState & { selectedName?: string }>;
+        setUi((prev) => {
+          const nextSelectedNames = Array.isArray(saved?.selectedNames)
+            ? saved.selectedNames.filter((name): name is string => typeof name === "string" && name.trim().length > 0)
+            : typeof saved?.selectedName === "string" && saved.selectedName.trim().length > 0
+              ? [saved.selectedName]
+              : prev.selectedNames;
+          return {
+            ...prev,
+            ...saved,
+            selectedNames: nextSelectedNames,
+            gran:
+              saved?.gran === "day" || saved?.gran === "month"
+                ? saved.gran
+                : saved?.gran === "week"
+                  ? "week"
+                  : prev.gran,
+            colCount:
+              typeof saved?.colCount === "number"
+                ? Math.min(15, Math.max(1, saved.colCount))
+                : prev.colCount,
+          };
+        });
       }
     } catch {
       /* ignore */
@@ -754,13 +775,23 @@ export default function EstadisticaPage() {
     }
   }, [ui, hydrated, uiKey]);
 
-  const selectedName = ui.selectedName;
+  const selectedNames = ui.selectedNames;
   const from = ui.from;
   const to = ui.to;
   const gran = ui.gran;
   const colCount = ui.colCount;
 
-  const setSelectedName = (v: string) => setUi((s) => ({ ...s, selectedName: v }));
+  const setSelectedNames = React.useCallback((updater: React.SetStateAction<string[]>) => {
+    setUi((s) => {
+      const next =
+        typeof updater === "function"
+          ? // eslint-disable-next-line no-unused-vars
+            (updater as (prev: string[]) => string[])(s.selectedNames)
+          : updater;
+      if (next === s.selectedNames) return s;
+      return { ...s, selectedNames: next };
+    });
+  }, []);
   const setFrom = (v: string) => setUi((s) => ({ ...s, from: v }));
   const setTo = (v: string) => setUi((s) => ({ ...s, to: v }));
   const setGran = (v: Granularity) => setUi((s) => ({ ...s, gran: v }));
@@ -784,12 +815,11 @@ export default function EstadisticaPage() {
 
   const filtered = React.useMemo(() => {
     const q = normKey(query);
-    if (!q) return [];
     const words = q
       .split(/\s+/)
       .map((w) => w.trim())
       .filter(Boolean);
-    if (!words.length) return [];
+    if (!words.length) return productOptions.slice(0, 200);
     return productOptions
       .filter((n) => {
         const nk = normKey(n);
@@ -797,6 +827,57 @@ export default function EstadisticaPage() {
       })
       .slice(0, 200);
   }, [query, productOptions]);
+
+  React.useEffect(() => {
+    const validKeys = new Set<string>();
+    for (const key of byProduct.keys()) validKeys.add(key);
+    setSelectedNames((prev) => {
+      if (!prev.length) return prev;
+      const next = prev.filter((name) => validKeys.has(normKey(name)));
+      if (next.length === prev.length) return prev;
+      return next;
+    });
+  }, [byProduct, setSelectedNames]);
+
+  const toggleProductSelection = React.useCallback(
+    (name: string) => {
+      setSelectedNames((prev) => {
+        const has = prev.includes(name);
+        const nextSet = new Set(prev);
+        if (has) {
+          nextSet.delete(name);
+        } else {
+          nextSet.add(name);
+        }
+        const ordered = productOptions.filter((opt) => nextSet.has(opt));
+        if (ordered.length === prev.length && ordered.every((n, i) => n === prev[i])) return prev;
+        return ordered;
+      });
+    },
+    [productOptions, setSelectedNames]
+  );
+
+  const selectVisibleProducts = React.useCallback(() => {
+    if (!filtered.length) return;
+    setSelectedNames((prev) => {
+      const nextSet = new Set(prev);
+      for (const name of filtered) nextSet.add(name);
+      const ordered = productOptions.filter((opt) => nextSet.has(opt));
+      if (ordered.length === prev.length && ordered.every((n, i) => n === prev[i])) return prev;
+      return ordered;
+    });
+  }, [filtered, productOptions, setSelectedNames]);
+
+  const deselectVisibleProducts = React.useCallback(() => {
+    if (!filtered.length) return;
+    const visibleKeys = new Set(filtered.map((name) => normKey(name)));
+    setSelectedNames((prev) => {
+      if (!prev.length) return prev;
+      const next = prev.filter((name) => !visibleKeys.has(normKey(name)));
+      if (next.length === prev.length) return prev;
+      return next;
+    });
+  }, [filtered, setSelectedNames]);
 
   const [weightQuery, setWeightQuery] = React.useState("");
   const [weightSelectedIds, setWeightSelectedIds] = React.useState<string[]>([]);
@@ -1093,17 +1174,32 @@ export default function EstadisticaPage() {
 
   const canShowStats = Boolean(tenantId && currentBranch);
 
-  const selectedId = normKey(selectedName);
-  const rows = React.useMemo(() => {
-    const mapRows = byProduct.get(selectedId);
-    return mapRows ?? [];
-  }, [byProduct, selectedId]);
-  const stats = React.useMemo<Stats>(
-    () =>
-      rows.length
-        ? computeStats(rows)
-        : { avg4w: 0, sum2w: 0, sum30d: 0, lastUnitPrice: undefined, lastDate: undefined },
-    [rows]
+  const selectedProducts = React.useMemo<SelectedProduct[]>(() => {
+    if (!selectedNames.length) return [];
+    const entries: SelectedProduct[] = [];
+    for (const name of selectedNames) {
+      const key = normKey(name);
+      const rows = byProduct.get(key);
+      if (!rows || rows.length === 0) continue;
+      entries.push({ key, name, rows });
+    }
+    return entries;
+  }, [selectedNames, byProduct]);
+
+  const combinedRows = React.useMemo(() => {
+    if (!selectedProducts.length) return [] as SalesRow[];
+    const merged = selectedProducts.flatMap((item) => item.rows);
+    return merged.slice().sort((a, b) => b.date - a.date);
+  }, [selectedProducts]);
+
+  const productStats = React.useMemo(
+    () => selectedProducts.map((item) => ({ ...item, stats: computeStats(item.rows) })),
+    [selectedProducts]
+  );
+
+  const combinedStats = React.useMemo<Stats>(
+    () => (combinedRows.length ? computeStats(combinedRows) : EMPTY_STATS),
+    [combinedRows]
   );
 
   function setQuick(days: number) {
@@ -1170,21 +1266,33 @@ export default function EstadisticaPage() {
     return tmp.slice(0, colCount);
   }, [from, to, gran, colCount]);
 
-  const pivotRow = React.useMemo(() => {
-    const arr: number[] = [];
-    for (const b of bins) {
+  const pivotRows = React.useMemo(() => {
+    if (!bins.length || !productStats.length) return [] as { key: string; name: string; values: number[] }[];
+    return productStats.map((item) => {
+      const values = bins.map((b) => {
+        let sum = 0;
+        for (const r of item.rows) if (r.date >= b.start && r.date < b.end && r.qty > 0) sum += r.qty;
+        return sum;
+      });
+      return { key: item.key, name: item.name, values };
+    });
+  }, [bins, productStats]);
+
+  const pivotTotals = React.useMemo(() => {
+    if (!bins.length || !combinedRows.length) return [] as number[];
+    return bins.map((b) => {
       let sum = 0;
-      for (const r of rows) if (r.date >= b.start && r.date < b.end && r.qty > 0) sum += r.qty;
-      arr.push(sum);
-    }
-    return arr;
-  }, [bins, rows]);
+      for (const r of combinedRows) if (r.date >= b.start && r.date < b.end && r.qty > 0) sum += r.qty;
+      return sum;
+    });
+  }, [bins, combinedRows]);
 
   const rangeRows = React.useMemo(() => {
+    if (!combinedRows.length) return [] as SalesRow[];
     const s = new Date(from + "T00:00:00Z").getTime();
     const e = new Date(to + "T00:00:00Z").getTime() + 24 * 3600 * 1000;
-    return rows.filter((r) => r.date >= s && r.date < e).sort((a, b) => b.date - a.date);
-  }, [rows, from, to]);
+    return combinedRows.filter((r) => r.date >= s && r.date < e);
+  }, [combinedRows, from, to]);
   const sumQtyInRange = rangeRows.reduce((acc, r) => acc + (r.qty > 0 ? r.qty : 0), 0);
 
   const ventasInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -1245,20 +1353,25 @@ export default function EstadisticaPage() {
             <CardContent className="p-3 space-y-4">
               <div className="grid gap-3 lg:grid-cols-12 lg:items-end">
             <div className="relative lg:col-span-4 min-w-0">
-              <label className="text-sm font-medium" htmlFor={productInputId}>Elegí un artículo</label>
+              <label className="text-sm font-medium" htmlFor={productInputId}>Elegí artículos</label>
               <Input
                 id={productInputId}
                 className="w-full"
-                placeholder="Buscar producto…"
-                value={selectedName || query}
+                placeholder="Buscar productos…"
+                value={query}
                 onChange={(e) => {
-                  setSelectedName("");
                   setQuery(e.target.value);
                   setOpenDropdown(true);
                 }}
                 onFocus={() => setOpenDropdown(true)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setOpenDropdown(false);
+                    (event.currentTarget as HTMLInputElement).blur();
+                  }
+                }}
               />
-              {openDropdown && (query.trim().length > 0 || !selectedName) && (
+              {openDropdown && (
                 <div
                   className="absolute z-50 mt-1 w-full max-h-72 overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md"
                   onMouseLeave={() => setOpenDropdown(false)}
@@ -1266,20 +1379,64 @@ export default function EstadisticaPage() {
                   {filtered.length === 0 ? (
                     <div className="p-2 text-sm text-muted-foreground">Sin resultados…</div>
                   ) : (
-                    filtered.map((name) => (
-                      <button
-                        key={name}
-                        className="w-full text-left p-2 text-sm hover:bg-muted"
-                        onClick={() => {
-                          setSelectedName(name);
-                          setQuery("");
-                          setOpenDropdown(false);
-                        }}
-                      >
-                        {name}
-                      </button>
-                    ))
+                    filtered.map((name) => {
+                      const checked = selectedNames.includes(name);
+                      const safeId = `product-${normKey(name)}`;
+                      const lastSale = byProduct.get(normKey(name))?.[0]?.date;
+                      return (
+                        <div key={name} className="flex items-start gap-3 px-3 py-2 text-sm hover:bg-muted/60">
+                          <Checkbox
+                            id={safeId}
+                            checked={checked}
+                            onCheckedChange={() => toggleProductSelection(name)}
+                          />
+                          <label htmlFor={safeId} className="flex-1 cursor-pointer select-none">
+                            <p className="font-medium leading-tight">{name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Última venta: {formatLastSale(lastSale)}
+                            </p>
+                          </label>
+                        </div>
+                      );
+                    })
                   )}
+                </div>
+              )}
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={selectVisibleProducts}
+                  disabled={!filtered.length}
+                >
+                  Seleccionar visibles
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={deselectVisibleProducts}
+                  disabled={!filtered.length || selectedNames.length === 0}
+                >
+                  Deseleccionar visibles
+                </Button>
+              </div>
+              {selectedNames.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selectedNames.map((name) => (
+                    <Button
+                      key={name}
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="h-7 rounded-full px-3 text-xs"
+                      onClick={() => toggleProductSelection(name)}
+                    >
+                      <span className="truncate max-w-[160px]" title={name}>{name}</span>
+                      <span className="ml-1 text-[10px] uppercase tracking-wide">x</span>
+                    </Button>
+                  ))}
                 </div>
               )}
             </div>
@@ -1336,19 +1493,26 @@ export default function EstadisticaPage() {
             </div>
           </div>
 
-          {selectedName && (
-            <div className="text-sm text-muted-foreground">
-              <span className="font-medium">Producto:</span> {selectedName} • Último precio:{" "}
-              {stats.lastUnitPrice != null ? `$${stats.lastUnitPrice.toFixed(2)}` : "—"} • Última venta: {formatLastSale(stats.lastDate)}
+          {productStats.length > 0 && (
+            <div className="space-y-1 text-sm text-muted-foreground">
+              <div className="break-words">
+                <span className="font-medium">Productos seleccionados ({productStats.length}):</span> {productStats.map((item) => item.name).join(", ")}
+              </div>
+              <div>
+                <span className="font-medium">Total seleccionado:</span> Promedio 4 semanas {combinedStats.avg4w.toFixed(2)} • Ventas 14 días {combinedStats.sum2w.toFixed(2)} • Ventas 30 días {combinedStats.sum30d.toFixed(2)}
+              </div>
+              <div>
+                Último precio registrado: {combinedStats.lastUnitPrice != null ? `$${combinedStats.lastUnitPrice.toFixed(2)}` : "—"} • Última venta: {formatLastSale(combinedStats.lastDate)}
+              </div>
             </div>
           )}
 
-          {selectedName && (
+          {productStats.length > 0 && (
             <div className="rounded-md border overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="[&>th]:px-3 [&>th]:py-2 border-b">
-                    <th className="w-[220px] min-w-[220px] text-left">Período</th>
+                    <th className="w-[220px] min-w-[220px] text-left">Producto</th>
                     {bins.map((b) => (
                       <th
                         key={b.key}
@@ -1361,18 +1525,30 @@ export default function EstadisticaPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="[&>td]:px-3 [&>td]:py-2">
-                    <td className="text-left">{selectedName}</td>
-                    {pivotRow.map((v, i) => (
-                      <td key={i} className="text-center tabular-nums">{v}</td>
-                    ))}
-                  </tr>
+                  {pivotRows.map((row) => (
+                    <tr key={row.key} className="[&>td]:px-3 [&>td]:py-2 border-b">
+                      <td className="text-left">{row.name}</td>
+                      {row.values.map((v, i) => (
+                        <td key={`${row.key}-${i}`} className="text-center tabular-nums">{v}</td>
+                      ))}
+                    </tr>
+                  ))}
                 </tbody>
+                {pivotTotals.length > 0 && (
+                  <tfoot>
+                    <tr className="font-semibold [&>td]:px-3 [&>td]:py-2">
+                      <td>Total seleccionado</td>
+                      {pivotTotals.map((v, i) => (
+                        <td key={`total-${i}`} className="text-center tabular-nums">{v}</td>
+                      ))}
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           )}
 
-          {selectedName && (
+          {productStats.length > 0 && (
             <div className="rounded-md border">
               <div className="px-3 py-2 border-b font-semibold">Ventas en el período</div>
               <div className="max-h-[50vh] overflow-auto">
@@ -1380,6 +1556,7 @@ export default function EstadisticaPage() {
                   <thead className="sticky top-0 bg-background">
                     <tr className="[&>th]:px-3 [&>th]:py-2 border-b">
                       <th className="text-left">Fecha</th>
+                      <th className="text-left">Producto</th>
                       <th className="text-right">Cantidad</th>
                       <th className="text-right">Subtotal</th>
                       <th className="text-right">Precio unitario</th>
@@ -1388,7 +1565,7 @@ export default function EstadisticaPage() {
                   <tbody>
                     {rangeRows.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="p-3 text-center text-muted-foreground">
+                        <td colSpan={5} className="p-3 text-center text-muted-foreground">
                           No hay ventas en el período seleccionado.
                         </td>
                       </tr>
@@ -1396,6 +1573,7 @@ export default function EstadisticaPage() {
                       rangeRows.map((r, i) => (
                         <tr key={i} className="[&>td]:px-3 [&>td]:py-2 border-b">
                           <td>{dateShort(r.date)}</td>
+                          <td>{r.product}</td>
                           <td className="text-right tabular-nums">{r.qty}</td>
                           <td className="text-right tabular-nums">{r.subtotal != null ? `$${r.subtotal.toFixed(2)}` : "—"}</td>
                           <td className="text-right tabular-nums">{r.unitPrice != null ? `$${r.unitPrice.toFixed(2)}` : "—"}</td>
@@ -1405,7 +1583,9 @@ export default function EstadisticaPage() {
                   </tbody>
                   <tfoot>
                     <tr className="font-semibold">
-                      <td className="px-3 py-2">Total del período</td>
+                      <td className="px-3 py-2" colSpan={2}>
+                        Total del período
+                      </td>
                       <td className="px-3 py-2 text-right tabular-nums">{sumQtyInRange}</td>
                       <td></td>
                       <td></td>

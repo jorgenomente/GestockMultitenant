@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Loader2, X } from "lucide-react";
 
 type StatusState = "idle" | "saving" | "success" | "error";
 
@@ -188,7 +189,14 @@ function generateRandomTheme(): BranchThemeFormValues {
   };
 }
 
-type PresetWithSource = ThemePreset & { source: "builtin" | "custom" };
+type PresetWithSource = ThemePreset & {
+  source: "builtin" | "custom";
+  preview?: Partial<Record<keyof BranchThemeFormValues, string>>;
+};
+
+const gradientBackground = (from: string, to: string) => `linear-gradient(135deg, ${from}, ${to})`;
+
+const HIDDEN_PRESETS_STORAGE_KEY = "theme-hidden-presets";
 
 const BUILTIN_THEME_PRESETS: PresetWithSource[] = [
   {
@@ -343,7 +351,317 @@ const BUILTIN_THEME_PRESETS: PresetWithSource[] = [
       textSecondary: "#B3C0C6",
     },
   },
+  {
+    id: "futuristic-city",
+    name: "Futuristic City",
+    description: "Tonos tecnológicos con contraste entre índigo y teal",
+    values: {
+      primary: "#4A3AB8",
+      secondary: "#14263A",
+      accent: "#0097A7",
+      success: "#29C3BC",
+      alert: "#8A2E7B",
+      background: "#0B1521",
+      surface: "#131F30",
+      card: "#1B2E44",
+      cardForeground: "#E9ECFF",
+      nav: "#101C2F",
+      textPrimary: "#E9ECFF",
+      textSecondary: "#A7B5D9",
+    },
+  },
+  {
+    id: "dark-forest",
+    name: "Dark Forest",
+    description: "Verdes sombríos con notas cálidas de corteza",
+    values: {
+      primary: "#2C3F3A",
+      secondary: "#1E2A2A",
+      accent: "#5A5A3A",
+      success: "#6F8E4B",
+      alert: "#6B4634",
+      background: "#121B1B",
+      surface: "#1B2726",
+      card: "#233330",
+      cardForeground: "#F1F2EC",
+      nav: "#182321",
+      textPrimary: "#F1F2EC",
+      textSecondary: "#B3C1B8",
+    },
+  },
+  {
+    id: "full-moon",
+    name: "Full Moon",
+    description: "Grises lunares con destellos cálidos de brasa",
+    values: {
+      primary: "#D4553E",
+      secondary: "#343A43",
+      accent: "#6A6874",
+      success: "#4AA996",
+      alert: "#E1684A",
+      background: "#1E222B",
+      surface: "#2A303A",
+      card: "#313741",
+      cardForeground: "#F6D8A6",
+      nav: "#232832",
+      textPrimary: "#F6D8A6",
+      textSecondary: "#C0C4CE",
+    },
+  },
+  {
+    id: "flame",
+    name: "Flame",
+    description: "Rojos encendidos con brillos ámbar y ceniza suave",
+    values: {
+      primary: "#E1461C",
+      secondary: "#C12A1C",
+      accent: "#F0892B",
+      success: "#73C27A",
+      alert: "#C12A1C",
+      background: "#1C1010",
+      surface: "#291614",
+      card: "#321B17",
+      cardForeground: "#FCECCF",
+      nav: "#221311",
+      textPrimary: "#FCECCF",
+      textSecondary: "#E9BEA3",
+    },
+  },
+  {
+    id: "sunset",
+    name: "Sunset",
+    description: "Transiciones cálidas entre violeta, rosa y durazno",
+    values: {
+      primary: "#6B2F57",
+      secondary: "#2D3146",
+      accent: "#F6BB6A",
+      success: "#5FB59C",
+      alert: "#EA8C95",
+      background: "#1C1C29",
+      surface: "#272538",
+      card: "#312E44",
+      cardForeground: "#F5ECF5",
+      nav: "#242137",
+      textPrimary: "#F5ECF5",
+      textSecondary: "#C6B5C6",
+    },
+  },
+  {
+    id: "snowy-mountain",
+    name: "Snowy Mountain",
+    description: "Azules alpinos con reflejos helados y nieve pura",
+    values: {
+      primary: "#35546B",
+      secondary: "#132633",
+      accent: "#B7CAD6",
+      success: "#6EB6C2",
+      alert: "#D87373",
+      background: "#0E1C28",
+      surface: "#162836",
+      card: "#1F3344",
+      cardForeground: "#F8FBFF",
+      nav: "#15293A",
+      textPrimary: "#F8FBFF",
+      textSecondary: "#C6D5E0",
+    },
+  },
 ].map((preset) => ({ ...preset, source: "builtin" as const }));
+
+const BUILTIN_GRADIENT_THEME_PRESETS: PresetWithSource[] = [
+  {
+    id: "futuristic-city-gradient",
+    name: "Futuristic City (Gradiente)",
+    description: "Contrastes neón entre índigo, magenta y teal",
+    values: {
+      primary: "#8A2E7B",
+      secondary: "#4A3AB8",
+      accent: "#0097A7",
+      success: "#3ED1C6",
+      alert: "#FF5FA9",
+      background: "#14263A",
+      surface: "#1D2F48",
+      card: "#243A56",
+      cardForeground: "#F6F2FF",
+      nav: "#1A2740",
+      textPrimary: "#F6F2FF",
+      textSecondary: "#BFC7E6",
+    },
+    preview: {
+      primary: gradientBackground("#4A3AB8", "#8A2E7B"),
+      secondary: gradientBackground("#14263A", "#4A3AB8"),
+      accent: gradientBackground("#0097A7", "#4A3AB8"),
+      success: gradientBackground("#0097A7", "#3ED1C6"),
+      alert: gradientBackground("#8A2E7B", "#FF5FA9"),
+      background: gradientBackground("#0B1521", "#14263A"),
+      surface: gradientBackground("#131F30", "#1D2F48"),
+      card: gradientBackground("#1B2E44", "#243A56"),
+    },
+  },
+  {
+    id: "dark-forest-gradient",
+    name: "Dark Forest (Gradiente)",
+    description: "Bosque profundo con destellos musgo y corteza",
+    values: {
+      primary: "#5A5A3A",
+      secondary: "#2C3F3A",
+      accent: "#1E2A2A",
+      success: "#8BBF5A",
+      alert: "#8C563F",
+      background: "#1E2A2A",
+      surface: "#253632",
+      card: "#2F433D",
+      cardForeground: "#F2F4E8",
+      nav: "#21332F",
+      textPrimary: "#F2F4E8",
+      textSecondary: "#C1D1C3",
+    },
+    preview: {
+      primary: gradientBackground("#2C3F3A", "#6F8E4B"),
+      secondary: gradientBackground("#1E2A2A", "#2C3F3A"),
+      accent: gradientBackground("#1E2A2A", "#5A5A3A"),
+      success: gradientBackground("#6F8E4B", "#8BBF5A"),
+      alert: gradientBackground("#6B4634", "#8C563F"),
+      background: gradientBackground("#121B1B", "#1E2A2A"),
+      surface: gradientBackground("#1B2726", "#253632"),
+      card: gradientBackground("#233330", "#2F433D"),
+    },
+  },
+  {
+    id: "full-moon-gradient",
+    name: "Full Moon (Gradiente)",
+    description: "Paleta lunar con brillos cálidos de vela",
+    values: {
+      primary: "#F6D8A6",
+      secondary: "#6A6874",
+      accent: "#D4553E",
+      success: "#5FC1A6",
+      alert: "#FF8066",
+      background: "#343A43",
+      surface: "#3E4450",
+      card: "#484E59",
+      cardForeground: "#FFF4E2",
+      nav: "#3B414C",
+      textPrimary: "#FFF4E2",
+      textSecondary: "#D2CED9",
+    },
+    preview: {
+      primary: gradientBackground("#D4553E", "#F6D8A6"),
+      secondary: gradientBackground("#343A43", "#6A6874"),
+      accent: gradientBackground("#6A6874", "#D4553E"),
+      success: gradientBackground("#4AA996", "#5FC1A6"),
+      alert: gradientBackground("#E1684A", "#FF8066"),
+      background: gradientBackground("#1E222B", "#343A43"),
+      surface: gradientBackground("#2A303A", "#3E4450"),
+      card: gradientBackground("#313741", "#484E59"),
+    },
+  },
+  {
+    id: "flame-gradient",
+    name: "Flame (Gradiente)",
+    description: "Rojo fundido con destellos ámbar en movimiento",
+    values: {
+      primary: "#F0892B",
+      secondary: "#E1461C",
+      accent: "#C12A1C",
+      success: "#7FCE82",
+      alert: "#FF6B3D",
+      background: "#2D1610",
+      surface: "#361D15",
+      card: "#3F2419",
+      cardForeground: "#FFF2DD",
+      nav: "#2F1A14",
+      textPrimary: "#FFF2DD",
+      textSecondary: "#F2C5A5",
+    },
+    preview: {
+      primary: gradientBackground("#C12A1C", "#F0892B"),
+      secondary: gradientBackground("#C12A1C", "#E1461C"),
+      accent: gradientBackground("#E1461C", "#F0892B"),
+      success: gradientBackground("#73C27A", "#7FCE82"),
+      alert: gradientBackground("#E1461C", "#FF6B3D"),
+      background: gradientBackground("#1C1010", "#2D1610"),
+      surface: gradientBackground("#291614", "#361D15"),
+      card: gradientBackground("#321B17", "#3F2419"),
+    },
+  },
+  {
+    id: "sunset-gradient",
+    name: "Sunset (Gradiente)",
+    description: "De violeta a durazno con brillos rosados",
+    values: {
+      primary: "#EA8C95",
+      secondary: "#6B2F57",
+      accent: "#F6BB6A",
+      success: "#6AC9AF",
+      alert: "#FF9CA3",
+      background: "#2D3146",
+      surface: "#343554",
+      card: "#3D3A5F",
+      cardForeground: "#FFF0F2",
+      nav: "#31345A",
+      textPrimary: "#FFF0F2",
+      textSecondary: "#D3C3D1",
+    },
+    preview: {
+      primary: gradientBackground("#6B2F57", "#EA8C95"),
+      secondary: gradientBackground("#2D3146", "#6B2F57"),
+      accent: gradientBackground("#EA8C95", "#F6BB6A"),
+      success: gradientBackground("#5FB59C", "#6AC9AF"),
+      alert: gradientBackground("#EA8C95", "#FF9CA3"),
+      background: gradientBackground("#1C1C29", "#2D3146"),
+      surface: gradientBackground("#272538", "#343554"),
+      card: gradientBackground("#312E44", "#3D3A5F"),
+    },
+  },
+  {
+    id: "snowy-mountain-gradient",
+    name: "Snowy Mountain (Gradiente)",
+    description: "Azules glaciares con brillo níveo",
+    values: {
+      primary: "#B7CAD6",
+      secondary: "#35546B",
+      accent: "#F8FBFF",
+      success: "#86D0DD",
+      alert: "#FF8A8A",
+      background: "#132633",
+      surface: "#1B3446",
+      card: "#244055",
+      cardForeground: "#FFFFFF",
+      nav: "#1E364A",
+      textPrimary: "#FFFFFF",
+      textSecondary: "#D2E0EA",
+    },
+    preview: {
+      primary: gradientBackground("#35546B", "#B7CAD6"),
+      secondary: gradientBackground("#132633", "#35546B"),
+      accent: gradientBackground("#B7CAD6", "#F8FBFF"),
+      success: gradientBackground("#6EB6C2", "#86D0DD"),
+      alert: gradientBackground("#D87373", "#FF8A8A"),
+      background: gradientBackground("#0E1C28", "#132633"),
+      surface: gradientBackground("#162836", "#1B3446"),
+      card: gradientBackground("#1F3344", "#244055"),
+    },
+  },
+].map((preset) => ({ ...preset, source: "builtin" as const }));
+
+const BUILTIN_PRESET_COLLECTIONS: Array<{
+  id: string;
+  title: string;
+  description?: string;
+  presets: PresetWithSource[];
+}> = [
+  {
+    id: "base",
+    title: "Colección base",
+    presets: BUILTIN_THEME_PRESETS,
+  },
+  {
+    id: "gradient",
+    title: "Colección gradiente",
+    description: "Paletas con transiciones suaves para inspirar combinaciones más atrevidas.",
+    presets: BUILTIN_GRADIENT_THEME_PRESETS,
+  },
+];
 
 export default function ConfiguracionPageClient() {
   const params = useParams<{ slug: string }>();
@@ -362,7 +680,11 @@ export default function ConfiguracionPageClient() {
   const [savePresetOpen, setSavePresetOpen] = React.useState(false);
   const [presetName, setPresetName] = React.useState("");
   const [presetStatus, setPresetStatus] = React.useState<StatusState>("idle");
+  const [presetListError, setPresetListError] = React.useState<string | null>(null);
   const [presetError, setPresetError] = React.useState<string | null>(null);
+  const [deletingPresetId, setDeletingPresetId] = React.useState<string | null>(null);
+  const [hiddenPresetIds, setHiddenPresetIds] = React.useState<string[]>([]);
+  const [hiddenPresetsHydrated, setHiddenPresetsHydrated] = React.useState(false);
   const presetNameInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const presetQuery = useQuery<ThemePreset[]>({
@@ -397,6 +719,7 @@ export default function ConfiguracionPageClient() {
   const presetNameIsValid = presetName.trim().length >= 3;
   const previewVars = React.useMemo(() => buildCssVariableMap(formValues), [formValues]);
   const previewStyle = React.useMemo(() => previewVars as React.CSSProperties, [previewVars]);
+  const hiddenPresetIdSet = React.useMemo(() => new Set(hiddenPresetIds), [hiddenPresetIds]);
 
   const canEdit = role === "owner";
 
@@ -545,6 +868,7 @@ export default function ConfiguracionPageClient() {
 
     setPresetStatus("saving");
     setPresetError(null);
+    setPresetListError(null);
 
     try {
       const name = presetName.trim();
@@ -592,12 +916,98 @@ export default function ConfiguracionPageClient() {
 
       setPresetStatus("success");
       setSavePresetOpen(false);
+      setPresetListError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : "No se pudo guardar el tema";
       setPresetError(message);
       setPresetStatus("error");
     }
   }, [canEdit, customPresets, formValues, presetName, presetNameIsValid, presetStatus, queryClient, slug, tenantId]);
+
+  const handleDeletePreset = React.useCallback(async (presetId: string) => {
+    if (!canEdit || presetStatus === "saving" || deletingPresetId) return;
+    if (!tenantId) {
+      setPresetListError("Seleccioná una sucursal para editar los temas sugeridos");
+      return;
+    }
+
+    const remaining = customPresets.filter((preset) => preset.id !== presetId);
+    if (remaining.length === customPresets.length) return;
+
+    setDeletingPresetId(presetId);
+    setPresetListError(null);
+
+    try {
+      const response = await fetch(`/api/t/${slug}/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: "global",
+          key: THEME_PRESETS_SETTINGS_KEY,
+          value: { presets: remaining },
+        }),
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        const parsed = parseJson(text);
+        const message =
+          typeof parsed === "object" && parsed && "error" in parsed && typeof (parsed as { error: unknown }).error === "string"
+            ? (parsed as { error: string }).error
+            : `No se pudo borrar el tema (HTTP ${response.status})`;
+        throw new Error(message);
+      }
+
+      queryClient.setQueryData<ThemePreset[] | undefined>(["branch-theme-presets", tenantId], () => remaining);
+      setPresetListError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "No se pudo borrar el tema";
+      setPresetListError(message);
+    } finally {
+      setDeletingPresetId(null);
+    }
+  }, [canEdit, customPresets, deletingPresetId, presetStatus, queryClient, slug, tenantId]);
+
+  const handleHideBuiltinPreset = React.useCallback((presetId: string) => {
+    setHiddenPresetIds((prev) => {
+      if (prev.includes(presetId)) return prev;
+      return [...prev, presetId];
+    });
+  }, []);
+
+  const handleRestoreCollection = React.useCallback((collectionPresetIds: string[]) => {
+    if (!collectionPresetIds.length) return;
+    setHiddenPresetIds((prev) => prev.filter((id) => !collectionPresetIds.includes(id)));
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(HIDDEN_PRESETS_STORAGE_KEY);
+      if (!raw) {
+        setHiddenPresetsHydrated(true);
+        return;
+      }
+      const parsed = JSON.parse(raw) as unknown;
+      const ids = Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        : [];
+      setHiddenPresetIds(ids);
+    } catch {
+      setHiddenPresetIds([]);
+    } finally {
+      setHiddenPresetsHydrated(true);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!hiddenPresetsHydrated || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(HIDDEN_PRESETS_STORAGE_KEY, JSON.stringify(hiddenPresetIds));
+    } catch {
+      /* ignore */
+    }
+  }, [hiddenPresetIds, hiddenPresetsHydrated]);
 
   React.useEffect(() => {
     if (status !== "success") return;
@@ -793,34 +1203,62 @@ export default function ConfiguracionPageClient() {
                 {customPresetCards.length > 0 ? (
                   <div className="space-y-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tus temas guardados</p>
+                    {presetListError ? (
+                      <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-xs text-destructive">
+                        {presetListError}
+                      </div>
+                    ) : null}
                     <div className="grid gap-4 md:grid-cols-3">
-                      {customPresetCards.map((preset) => (
-                        <button
-                          key={`custom-${preset.id}`}
-                          type="button"
-                          onClick={() => applyPreset(preset)}
-                          className="group flex h-full flex-col gap-3 rounded-xl border border-border/60 bg-card/70 p-4 text-left transition hover:border-primary/70 hover:bg-primary/10"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <h3 className="text-sm font-semibold text-foreground">{preset.name}</h3>
-                            <span className="text-xs text-muted-foreground">Aplicar</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground">{getPresetCaption(preset)}</p>
-                          <div className="flex gap-2">
-                            {BRANCH_THEME_FIELDS.map((field) => (
-                              <span
-                                key={`${preset.id}-${field}`}
-                                className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 text-[10px] font-medium uppercase text-foreground/70"
-                                style={{ background: preset.values[field] }}
-                                title={FIELD_METADATA[field].label}
+                      {customPresetCards.map((preset) => {
+                        const isDeleting = deletingPresetId === preset.id;
+                        return (
+                          <div key={`custom-${preset.id}`} className="relative h-full">
+                            <button
+                              type="button"
+                              onClick={() => applyPreset(preset)}
+                              disabled={isDeleting}
+                              className="group flex h-full w-full flex-col gap-3 rounded-xl border border-border/60 bg-card/70 p-4 text-left transition hover:border-primary/70 hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <h3 className="text-sm font-semibold text-foreground">{preset.name}</h3>
+                                <span className="text-xs text-muted-foreground">Aplicar</span>
+                              </div>
+                              <p className="text-xs text-muted-foreground">{getPresetCaption(preset)}</p>
+                              <div className="flex gap-2">
+                                {BRANCH_THEME_FIELDS.map((field) => {
+                                  const swatchBackground = preset.preview?.[field] ?? preset.values[field];
+                                  return (
+                                    <span
+                                      key={`${preset.id}-${field}`}
+                                      className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 text-[10px] font-medium uppercase text-foreground/70"
+                                      style={{ background: swatchBackground }}
+                                      title={FIELD_METADATA[field].label}
+                                    >
+                                      {field.charAt(0)}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              <span className="text-[11px] font-medium uppercase tracking-wide text-primary">Guardado</span>
+                            </button>
+                            {canEdit ? (
+                              <button
+                                type="button"
+                                aria-label={`Eliminar ${preset.name}`}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  handleDeletePreset(preset.id);
+                                }}
+                                disabled={isDeleting}
+                                className="absolute right-3 top-3 inline-flex h-6 w-6 items-center justify-center rounded-full border border-border/60 bg-card/90 text-muted-foreground transition hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                               >
-                                {field.charAt(0)}
-                              </span>
-                            ))}
+                                {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                              </button>
+                            ) : null}
                           </div>
-                          <span className="text-[11px] font-medium uppercase tracking-wide text-primary">Guardado</span>
-                        </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ) : presetsLoading ? (
@@ -830,38 +1268,100 @@ export default function ConfiguracionPageClient() {
                     Guardá la paleta actual para reutilizarla rápido en otras sucursales.
                   </p>
                 )}
+                {BUILTIN_PRESET_COLLECTIONS.map((collection) => {
+                  const collectionPresetIds = collection.presets.map((preset) => preset.id);
+                  const hiddenCount = collectionPresetIds.reduce(
+                    (count, id) => (hiddenPresetIdSet.has(id) ? count + 1 : count),
+                    0
+                  );
+                  const visiblePresets = collection.presets.filter((preset) => !hiddenPresetIdSet.has(preset.id));
 
-                <div className="space-y-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Colección base</p>
-                  <div className="grid gap-4 md:grid-cols-3">
-                    {BUILTIN_THEME_PRESETS.map((preset) => (
-                      <button
-                        key={`builtin-${preset.id}`}
-                        type="button"
-                        onClick={() => applyPreset(preset)}
-                        className="group flex h-full flex-col gap-3 rounded-xl border border-border/60 bg-card/70 p-4 text-left transition hover:border-primary/70 hover:bg-primary/10"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <h3 className="text-sm font-semibold text-foreground">{preset.name}</h3>
-                          <span className="text-xs text-muted-foreground">Aplicar</span>
+                  return (
+                    <div key={collection.id} className="space-y-2">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{collection.title}</p>
+                          {collection.description ? (
+                            <p className="text-xs text-muted-foreground">{collection.description}</p>
+                          ) : null}
                         </div>
-                        <p className="text-xs text-muted-foreground">{getPresetCaption(preset)}</p>
-                        <div className="flex gap-2">
-                          {BRANCH_THEME_FIELDS.map((field) => (
-                            <span
-                              key={`${preset.id}-${field}`}
-                              className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 text-[10px] font-medium uppercase text-foreground/70"
-                              style={{ background: preset.values[field] }}
-                              title={FIELD_METADATA[field].label}
-                            >
-                              {field.charAt(0)}
-                            </span>
-                          ))}
+                        {hiddenCount > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => handleRestoreCollection(collectionPresetIds)}
+                            className="inline-flex items-center justify-center rounded-full border border-border/60 px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground transition hover:border-primary/70 hover:text-primary"
+                          >
+                            Restaurar ocultos
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {visiblePresets.length > 0 ? (
+                        <div className="grid gap-4 md:grid-cols-3">
+                          {visiblePresets.map((preset) => {
+                            const isCustomPreset = preset.source === "custom";
+                            const isDeleting = isCustomPreset && deletingPresetId === preset.id;
+                            const canRemove = isCustomPreset ? canEdit : hiddenPresetsHydrated;
+
+                            return (
+                              <div key={`builtin-${collection.id}-${preset.id}`} className="relative h-full">
+                                <button
+                                  type="button"
+                                  onClick={() => applyPreset(preset)}
+                                  disabled={isDeleting}
+                                  className="group flex h-full w-full flex-col gap-3 rounded-xl border border-border/60 bg-card/70 p-4 text-left transition hover:border-primary/70 hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <h3 className="text-sm font-semibold text-foreground">{preset.name}</h3>
+                                    <span className="text-xs text-muted-foreground">Aplicar</span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground">{getPresetCaption(preset)}</p>
+                                  <div className="flex gap-2">
+                                    {BRANCH_THEME_FIELDS.map((field) => {
+                                      const swatchBackground = preset.preview?.[field] ?? preset.values[field];
+                                      return (
+                                        <span
+                                          key={`${preset.id}-${field}`}
+                                          className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 text-[10px] font-medium uppercase text-foreground/70"
+                                          style={{ background: swatchBackground }}
+                                          title={FIELD_METADATA[field].label}
+                                        >
+                                          {field.charAt(0)}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                </button>
+                                {canRemove ? (
+                                  <button
+                                    type="button"
+                                    aria-label={`Eliminar ${preset.name}`}
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      if (isCustomPreset) handleDeletePreset(preset.id);
+                                      else handleHideBuiltinPreset(preset.id);
+                                    }}
+                                    disabled={isDeleting}
+                                    className="absolute right-3 top-3 inline-flex h-6 w-6 items-center justify-center rounded-full border border-border/60 bg-card/90 text-muted-foreground transition hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                                  </button>
+                                ) : null}
+                              </div>
+                            );
+                          })}
                         </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                      ) : (
+                        <div className="rounded-xl border border-border/60 bg-card/60 px-4 py-5 text-center">
+                          <p className="text-xs text-muted-foreground">
+                            Ocultaste todos los temas de esta colección. Presioná “Restaurar ocultos” para mostrarlos otra vez.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </section>
             )}
           </div>

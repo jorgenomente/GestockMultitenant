@@ -1052,7 +1052,7 @@ export default function VencimientosPage() {
   const labelCls = compact
     ? "text-[11px] font-medium text-muted-foreground"
     : "text-xs font-medium uppercase tracking-wide text-muted-foreground";
-  const inputCls = `${compact ? "h-9 text-xs" : "h-11 text-sm"} rounded-xl border border-border/40 bg-[rgba(23,33,30,0.85)] focus-visible:border-ring/70 focus-visible:ring-ring/30`;
+  const inputCls = `${compact ? "h-9 text-xs" : "h-11 text-sm"} rounded-xl border border-border/40 bg-[color:var(--surface-background-soft)] focus-visible:border-ring/70 focus-visible:ring-ring/30`;
   const chipCls = compact ? "text-[10px] px-2 py-0.5" : "text-xs px-3 py-1";
   const timeCls = compact ? "text-[11px]" : "text-xs";
 
@@ -1197,8 +1197,8 @@ export default function VencimientosPage() {
     const hasDraft = !!drafts[it.id];
 
     const cardStyle: React.CSSProperties = {
-      background: "linear-gradient(135deg, rgba(32,43,39,0.95), rgba(24,32,29,0.88))",
-      borderColor: "rgba(75,91,83,0.55)",
+      background: "linear-gradient(135deg, var(--surface-nav-strong), var(--surface-background-overlay))",
+      borderColor: "var(--surface-muted-strong)",
       borderLeftColor: accentColor,
       borderLeftWidth: compact ? 4 : 6,
     };
@@ -1222,7 +1222,7 @@ export default function VencimientosPage() {
     const freezerButtonClass = `h-9 w-9 rounded-xl border transition-colors ${
       freezerShown
         ? "border-[var(--color-action-secondary)] bg-[var(--color-action-secondary)] text-[var(--background)] hover:bg-[var(--color-action-secondary)]/90"
-        : "border-border/40 bg-[rgba(64,82,75,0.4)] text-[var(--color-action-secondary)] hover:bg-[rgba(64,82,75,0.6)]"
+        : "border-border/40 bg-[color:var(--surface-muted)] text-[var(--color-action-secondary)] hover:bg-[color:var(--surface-muted-strong)]"
     }`;
 
     const archiveButtonClass =
@@ -1349,7 +1349,7 @@ export default function VencimientosPage() {
 
   /* =================== Render =================== */
   return (
-    <div className="min-h-screen w-full bg-[radial-gradient(circle_at_top,rgba(125,170,146,0.18),transparent_60%)] pb-10">
+    <div className="min-h-screen w-full bg-[radial-gradient(circle_at_top,var(--surface-action-primary-soft),transparent_60%)] pb-10">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-24 pt-6 sm:px-6 lg:px-8">
         <div className="space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight text-card-foreground sm:text-4xl">
@@ -1370,14 +1370,14 @@ export default function VencimientosPage() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Buscar producto o fecha (dd-mm-aa)…"
-                    className="h-12 rounded-full border border-border/40 bg-[rgba(23,33,30,0.85)] pl-12 pr-16 text-sm shadow-[0_18px_42px_-28px_rgba(0,0,0,0.85)] sm:text-base"
+                    className="h-12 rounded-full border border-border/40 bg-[color:var(--surface-background-soft)] pl-12 pr-16 text-sm shadow-[0_18px_42px_-28px_rgba(0,0,0,0.85)] sm:text-base"
                     aria-label="Buscar productos"
                   />
                   {searchQuery ? (
                     <button
                       type="button"
                       onClick={() => setSearchQuery("")}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-[rgba(64,82,75,0.45)] p-2 text-muted-foreground transition hover:bg-[rgba(64,82,75,0.65)]"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-[color:var(--surface-muted)] p-2 text-muted-foreground transition hover:bg-[color:var(--surface-muted-strong)]"
                       aria-label="Limpiar búsqueda"
                       title="Limpiar búsqueda"
                     >
@@ -1392,7 +1392,7 @@ export default function VencimientosPage() {
                     variant="outline"
                     onClick={() => setCompact((v) => !v)}
                     title="Alternar vista compacta"
-                    className={`rounded-full border-border/40 bg-[rgba(32,43,39,0.75)] px-4 py-2 text-sm font-semibold text-card-foreground transition hover:bg-[rgba(36,48,44,0.85)] ${
+                    className={`rounded-full border-border/40 bg-[color:var(--surface-nav-soft)] px-4 py-2 text-sm font-semibold text-card-foreground transition hover:bg-[color:var(--surface-nav-hover)] ${
                       compact ? "ring-1 ring-[var(--color-action-secondary)]/70" : ""
                     }`}
                   >
@@ -1405,14 +1405,14 @@ export default function VencimientosPage() {
                       variant="outline"
                       onClick={() => setShowArchivePanel((v) => !v)}
                       title="Ver historial"
-                      className="flex items-center gap-2 rounded-full border-border/40 bg-[rgba(32,43,39,0.75)] px-4 py-2 text-sm font-semibold text-card-foreground transition hover:bg-[rgba(36,48,44,0.85)]"
+                      className="flex items-center gap-2 rounded-full border-border/40 bg-[color:var(--surface-nav-soft)] px-4 py-2 text-sm font-semibold text-card-foreground transition hover:bg-[color:var(--surface-nav-hover)]"
                     >
                       <HistoryIcon className="h-4 w-4" /> Historial
                     </Button>
 
                     {showArchivePanel && (
                       <div
-                        className="absolute right-0 top-full z-40 mt-3 w-[min(100vw,360px)] overflow-hidden rounded-2xl border border-border/40 bg-[rgba(28,38,35,0.96)] shadow-[0_32px_64px_-28px_rgba(0,0,0,0.88)] backdrop-blur-lg"
+                        className="absolute right-0 top-full z-40 mt-3 w-[min(100vw,360px)] overflow-hidden rounded-2xl border border-border/40 bg-[color:var(--surface-background-strong)] shadow-[0_32px_64px_-28px_rgba(0,0,0,0.88)] backdrop-blur-lg"
                         role="dialog"
                         aria-label="Histórico archivados"
                       >
@@ -1423,13 +1423,13 @@ export default function VencimientosPage() {
                             placeholder="Buscar en histórico…"
                             value={archiveQuery}
                             onChange={(e) => setArchiveQuery(e.target.value)}
-                            className="ml-auto h-9 w-full min-w-[140px] rounded-full border border-border/40 bg-[rgba(23,33,30,0.85)] px-4 text-xs sm:w-48"
+                            className="ml-auto h-9 w-full min-w-[140px] rounded-full border border-border/40 bg-[color:var(--surface-background-soft)] px-4 text-xs sm:w-48"
                           />
                           <Button
                             size="sm"
                             variant="ghost"
                             onClick={() => downloadArchivesXLSX(archives)}
-                            className="rounded-full border border-border/40 bg-[rgba(36,48,44,0.65)] text-xs text-card-foreground hover:bg-[rgba(36,48,44,0.85)]"
+                            className="rounded-full border border-border/40 bg-[color:var(--surface-overlay-soft)] text-xs text-card-foreground hover:bg-[color:var(--surface-overlay-hover)]"
                           >
                             Exportar Excel
                           </Button>
@@ -1442,7 +1442,7 @@ export default function VencimientosPage() {
                                 archives
                               )
                             }
-                            className="rounded-full border border-border/40 bg-[rgba(36,48,44,0.65)] text-xs text-card-foreground hover:bg-[rgba(36,48,44,0.85)]"
+                            className="rounded-full border border-border/40 bg-[color:var(--surface-overlay-soft)] text-xs text-card-foreground hover:bg-[color:var(--surface-overlay-hover)]"
                           >
                             Exportar JSON
                           </Button>
@@ -1465,7 +1465,7 @@ export default function VencimientosPage() {
                               .map((a) => (
                                 <div
                                   key={a.id}
-                                  className="grid grid-cols-12 items-center gap-2 rounded-xl px-2 py-2 text-xs text-card-foreground transition hover:bg-[rgba(36,48,44,0.65)]"
+                                  className="grid grid-cols-12 items-center gap-2 rounded-xl px-2 py-2 text-xs text-card-foreground transition hover:bg-[color:var(--surface-overlay-soft)]"
                                 >
                                   <div className="col-span-5 truncate" title={a.name}>
                                     {a.name}
@@ -1512,7 +1512,7 @@ export default function VencimientosPage() {
               </div>
             </div>
 
-            <Card className="rounded-3xl border border-border/40 bg-[rgba(32,43,39,0.88)] shadow-[0_24px_60px_-30px_rgba(0,0,0,0.85)]">
+            <Card className="rounded-3xl border border-border/40 bg-[color:var(--surface-nav-hover)] shadow-[0_24px_60px_-30px_rgba(0,0,0,0.85)]">
               <CardContent className={`space-y-4 ${compact ? "px-4 py-4" : "px-6 py-6"}`}>
                 <div className="relative" ref={autoBoxRef}>
                   <label htmlFor="prod" className="mb-2 block text-sm font-semibold text-card-foreground">
@@ -1538,7 +1538,7 @@ export default function VencimientosPage() {
                       id="prod-suggestions"
                       role="listbox"
                       aria-label="Sugerencias de producto"
-                      className="absolute z-30 mt-2 max-h-60 w-full overflow-auto rounded-2xl border border-border/40 bg-[rgba(28,38,35,0.96)] text-popover-foreground shadow-[0_28px_60px_-28px_rgba(0,0,0,0.85)] backdrop-blur-md"
+                      className="absolute z-30 mt-2 max-h-60 w-full overflow-auto rounded-2xl border border-border/40 bg-[color:var(--surface-background-strong)] text-popover-foreground shadow-[0_28px_60px_-28px_rgba(0,0,0,0.85)] backdrop-blur-md"
                     >
                       {suggestions.map((s, i) => (
                         <button
@@ -1552,8 +1552,8 @@ export default function VencimientosPage() {
                             onSelectSuggestion(s);
                           }}
                           onMouseEnter={() => setActiveIdx(i)}
-                          className={`w-full px-4 py-2 text-left text-sm transition hover:bg-[rgba(36,48,44,0.75)] ${
-                            i === activeIdx ? "bg-[rgba(36,48,44,0.75)]" : ""
+                          className={`w-full px-4 py-2 text-left text-sm transition hover:bg-[color:var(--surface-overlay-muted)] ${
+                            i === activeIdx ? "bg-[color:var(--surface-overlay-muted)]" : ""
                           }`}
                         >
                           {s}
@@ -1619,7 +1619,7 @@ export default function VencimientosPage() {
                         className={`h-10 w-10 rounded-xl border transition-colors ${
                           newFreezer
                             ? "border-[var(--color-action-secondary)] bg-[var(--color-action-secondary)] text-[var(--background)] hover:bg-[var(--color-action-secondary)]/90"
-                            : "border-border/40 bg-[rgba(64,82,75,0.4)] text-[var(--color-action-secondary)] hover:bg-[rgba(64,82,75,0.6)]"
+                            : "border-border/40 bg-[color:var(--surface-muted)] text-[var(--color-action-secondary)] hover:bg-[color:var(--surface-muted-strong)]"
                         }`}
                       >
                         <Snowflake className="h-4 w-4" />
@@ -1642,7 +1642,7 @@ export default function VencimientosPage() {
                     <Button
                       variant="ghost"
                       onClick={onClear}
-                      className="flex-1 rounded-xl border border-border/40 bg-[rgba(36,48,44,0.65)] text-card-foreground hover:bg-[rgba(36,48,44,0.85)]"
+                      className="flex-1 rounded-xl border border-border/40 bg-[color:var(--surface-overlay-soft)] text-card-foreground hover:bg-[color:var(--surface-overlay-hover)]"
                     >
                       Limpiar
                     </Button>
@@ -1662,11 +1662,11 @@ export default function VencimientosPage() {
                 return (
                   <div
                     key={key}
-                    className="overflow-hidden rounded-3xl border border-border/40 bg-[rgba(28,38,35,0.85)] shadow-[0_20px_55px_-28px_rgba(0,0,0,0.78)]"
+                    className="overflow-hidden rounded-3xl border border-border/40 bg-[color:var(--surface-background-soft)] shadow-[0_20px_55px_-28px_rgba(0,0,0,0.78)]"
                   >
                     <button
                       onClick={() => toggle(key)}
-                      className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition hover:bg-[rgba(36,48,44,0.88)]"
+                      className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition hover:bg-[color:var(--surface-overlay-hover)]"
                       aria-expanded={isOpen}
                     >
                       <div className="flex items-center gap-3">
@@ -1688,7 +1688,7 @@ export default function VencimientosPage() {
                     {isOpen && (
                       <div className="space-y-3 border-t border-border/40 px-3 py-4 sm:px-4">
                         {items.length === 0 ? (
-                          <p className="rounded-xl bg-[rgba(36,48,44,0.65)] px-3 py-2 text-sm text-muted-foreground">
+                          <p className="rounded-xl bg-[color:var(--surface-overlay-soft)] px-3 py-2 text-sm text-muted-foreground">
                             {meta.empty}
                           </p>
                         ) : (
@@ -1708,7 +1708,7 @@ export default function VencimientosPage() {
               {summaryMetrics.map(({ key, value, label, description, icon: Icon, tone, bubble }) => (
                 <div
                   key={key}
-                  className="flex items-center justify-between gap-3 rounded-2xl border border-border/40 bg-[rgba(28,38,35,0.85)] px-4 py-3 shadow-[0_16px_40px_-32px_rgba(0,0,0,0.8)]"
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-border/40 bg-[color:var(--surface-background-soft)] px-4 py-3 shadow-[0_16px_40px_-32px_rgba(0,0,0,0.8)]"
                 >
                   <div className="flex items-center gap-3">
                     <span className={`flex h-11 w-11 items-center justify-center rounded-xl ${bubble}`}>

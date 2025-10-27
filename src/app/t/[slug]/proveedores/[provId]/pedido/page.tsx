@@ -3271,22 +3271,15 @@ async function exportOrderAsXlsx() {
                   </div>
                 </div>
               </div>
-              <div className="flex flex-col items-end justify-end gap-2">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                  Total
-                </span>
-                <span className="inline-flex items-center rounded-2xl bg-[var(--primary)] px-5 py-2 text-lg font-semibold text-[var(--primary-foreground)] shadow-[0_14px_36px_-22px_rgba(32,56,44,0.55)] md:text-xl">
-                  {fmtMoney(grandTotal)}
-                </span>
-              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Sheet
-                open={historyOpen}
-                onOpenChange={(v) => {
-                  setHistoryOpen(v);
-                  if (v) {
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Sheet
+                  open={historyOpen}
+                  onOpenChange={(v) => {
+                    setHistoryOpen(v);
+                    if (v) {
                     void loadSnapshots();
                   } else {
                     cancelEditingSnapshot();
@@ -3480,16 +3473,16 @@ async function exportOrderAsXlsx() {
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
+              </div>
 
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-sm font-semibold text-[var(--foreground)] transition hover:bg-muted"
-                title="Guardar el pedido anterior (copia las cantidades actuales)"
-                onClick={() => void snapshotPreviousQuantities()}
-              >
-                Ped Ant.
-              </Button>
+              <div className="flex flex-col items-end justify-end gap-1">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                  Total
+                </span>
+                <span className="inline-flex items-center rounded-2xl bg-[var(--primary)] px-5 py-2 text-lg font-semibold text-[var(--primary-foreground)] shadow-[0_14px_36px_-22px_rgba(32,56,44,0.55)] md:text-xl">
+                  {fmtMoney(grandTotal)}
+                </span>
+              </div>
             </div>
 
             {salesImportError && (
@@ -3956,10 +3949,10 @@ function ItemTitle({
 
   if (!editing) {
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex items-start gap-2">
         <button
           type="button"
-          className="max-w-full truncate text-left text-lg font-semibold leading-tight text-[color:var(--order-card-accent)] transition-opacity hover:opacity-80 md:text-xl"
+          className="max-w-full text-left text-lg font-semibold leading-tight text-[color:var(--order-card-accent)] transition-opacity hover:opacity-80 md:text-xl line-clamp-2"
           onClick={() => setEditing(true)}
           title="Tocar para renombrar"
         >
