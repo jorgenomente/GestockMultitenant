@@ -849,10 +849,6 @@ function createFallbackWorkbook(WorkbookCtor: typeof import("exceljs").Workbook)
 }
 
 /* ====== Estilos + quiebres (1 ítem por fila) ====== */
-type WorksheetWithPageBreaks = import("exceljs").Worksheet & {
-  addPageBreaks?: import("exceljs").Worksheet["addPageBreaks"];
-};
-
 function applyStylesAndBreaks(ws: import("exceljs").Worksheet, itemCount: number) {
   const totalRows = itemCount;
 
@@ -909,9 +905,10 @@ function applyStylesAndBreaks(ws: import("exceljs").Worksheet, itemCount: number
   // Quiebres: mantener misma altura física ⇒ 38 ítems por página
   const breaks: number[] = [];
   for (let r = 38; r < totalRows; r += 38) breaks.push(r + 1);
-  const wsWithBreaks = ws as WorksheetWithPageBreaks;
-  if (typeof wsWithBreaks.addPageBreaks === "function") {
-    wsWithBreaks.addPageBreaks(breaks.map((row) => ({ row })));
+  if (breaks.length && typeof ws.getRow(1).addPageBreak === "function") {
+    breaks.forEach((rowNumber) => {
+      ws.getRow(rowNumber).addPageBreak();
+    });
   } else if (ws.pageSetup) {
     ws.pageSetup.fitToPage = false;
     ws.pageSetup.printArea = `A1:C${totalRows}`;

@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Upload } from "lucide-react";
+import { ArrowDown, ArrowUp, Loader2, Upload } from "lucide-react";
 import { useBranch } from "@/components/branch/BranchProvider";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
@@ -880,7 +880,10 @@ export default function EstadisticaPage() {
   }, [filtered, setSelectedNames]);
 
   const [weightQuery, setWeightQuery] = React.useState("");
+  const [weightDropdownOpen, setWeightDropdownOpen] = React.useState(false);
   const [weightSelectedIds, setWeightSelectedIds] = React.useState<string[]>([]);
+  const [weightSelectedFilter, setWeightSelectedFilter] = React.useState("");
+  const [weightPositionDrafts, setWeightPositionDrafts] = React.useState<Record<string, string>>({});
 
   const todayIso = React.useMemo(() => new Date().toISOString().slice(0, 10), []);
   const defaultFromIso = React.useMemo(
@@ -923,6 +926,20 @@ export default function EstadisticaPage() {
       return filteredIds.length === prev.length ? prev : filteredIds;
     });
   }, [weightProducts]);
+
+  React.useEffect(() => {
+    setWeightPositionDrafts((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const key of Object.keys(next)) {
+        if (!weightSelectedIds.includes(key)) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [weightSelectedIds]);
 
   React.useEffect(() => {
     if (!tenantId || !branchId || !supabase) {
@@ -1011,18 +1028,14 @@ export default function EstadisticaPage() {
   const selectVisibleWeights = React.useCallback(() => {
     if (!weightFiltered.length) return;
     setWeightSelectedIds((prev) => {
-      const nextSet = new Set(prev);
-      let changed = false;
-      for (const item of weightFiltered) {
-        if (!nextSet.has(item.key)) {
-          nextSet.add(item.key);
-          changed = true;
-        }
-      }
-      if (!changed) return prev;
-      return weightProducts.filter((item) => nextSet.has(item.key)).map((item) => item.key);
+      const prevSet = new Set(prev);
+      const additions = weightFiltered
+        .map((item) => item.key)
+        .filter((key) => !prevSet.has(key));
+      if (!additions.length) return prev;
+      return [...prev, ...additions];
     });
-  }, [weightFiltered, weightProducts]);
+  }, [weightFiltered]);
 
   const deselectVisibleWeights = React.useCallback(() => {
     if (!weightFiltered.length) return;
@@ -1034,20 +1047,74 @@ export default function EstadisticaPage() {
     });
   }, [weightFiltered]);
 
-  const toggleWeightSelection = React.useCallback(
-    (key: string, checked: boolean) => {
-      setWeightSelectedIds((prev) => {
-        const has = prev.includes(key);
-        if (checked) {
-          if (has) return prev;
-          const withKey = new Set([...prev, key]);
-          return weightProducts.filter((item) => withKey.has(item.key)).map((item) => item.key);
-        }
-        if (!has) return prev;
-        return prev.filter((id) => id !== key);
+  const toggleWeightSelection = React.useCallback((key: string, checked: boolean) => {
+    setWeightSelectedIds((prev) => {
+      const index = prev.indexOf(key);
+      if (checked) {
+        if (index !== -1) return prev;
+        return [...prev, key];
+      }
+      if (index === -1) return prev;
+      const next = [...prev];
+      next.splice(index, 1);
+      return next;
+    });
+  }, []);
+
+  const moveWeightSelection = React.useCallback((key: string, delta: number) => {
+    setWeightPositionDrafts((prev) => {
+      if (!(key in prev)) return prev;
+      const { [key]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setWeightSelectedIds((prev) => {
+      const currentIndex = prev.indexOf(key);
+      if (currentIndex === -1) return prev;
+      const nextIndex = currentIndex + delta;
+      if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [item] = next.splice(currentIndex, 1);
+      next.splice(nextIndex, 0, item);
+      return next;
+    });
+  }, []);
+
+  const setWeightSelectionIndex = React.useCallback((key: string, targetIndex: number) => {
+    setWeightPositionDrafts((prev) => {
+      if (!(key in prev)) return prev;
+      const { [key]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setWeightSelectedIds((prev) => {
+      const currentIndex = prev.indexOf(key);
+      if (currentIndex === -1) return prev;
+      if (!Number.isFinite(targetIndex)) return prev;
+      const bounded = Math.min(Math.max(Math.round(targetIndex), 0), prev.length - 1);
+      if (bounded === currentIndex) return prev;
+      const next = [...prev];
+      const [item] = next.splice(currentIndex, 1);
+      next.splice(bounded, 0, item);
+      return next;
+    });
+  }, []);
+
+  const handleWeightPositionInputChange = React.useCallback((key: string, value: string) => {
+    setWeightPositionDrafts((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const commitWeightPositionInput = React.useCallback(
+    (key: string, rawValue: string) => {
+      const parsed = Number.parseInt(rawValue, 10);
+      if (Number.isFinite(parsed)) {
+        setWeightSelectionIndex(key, parsed - 1);
+      }
+      setWeightPositionDrafts((prev) => {
+        if (!(key in prev)) return prev;
+        const { [key]: _removed, ...rest } = prev;
+        return rest;
       });
     },
-    [weightProducts]
+    [setWeightSelectionIndex]
   );
 
   React.useEffect(() => {
@@ -1102,6 +1169,16 @@ export default function EstadisticaPage() {
     }));
   }, [weightSelectedProducts, computeWeightSummary]);
 
+  const filteredWeightSummaries = React.useMemo(() => {
+    const trimmed = normKey(weightSelectedFilter);
+    const words = trimmed
+      .split(/\s+/)
+      .map((w) => w.trim())
+      .filter(Boolean);
+    if (!words.length) return weightSummaries;
+    return weightSummaries.filter(({ item }) => words.every((word) => item.searchKey.includes(word)));
+  }, [weightSummaries, weightSelectedFilter]);
+
   const weightTotals = React.useMemo(() => {
     return weightSummaries.reduce(
       (acc, { summary }) => {
@@ -1114,9 +1191,26 @@ export default function EstadisticaPage() {
     );
   }, [weightSummaries]);
 
+  const filteredWeightTotals = React.useMemo(() => {
+    return filteredWeightSummaries.reduce(
+      (acc, { summary }) => {
+        acc.units += summary.units;
+        acc.kg += summary.kg;
+        acc.subtotal += summary.subtotal;
+        return acc;
+      },
+      { units: 0, kg: 0, subtotal: 0 }
+    );
+  }, [filteredWeightSummaries]);
+
   const weightTotalsHaveFractional = React.useMemo(
     () => weightSummaries.some(({ summary }) => summary.usedFractional),
     [weightSummaries]
+  );
+
+  const filteredWeightTotalsHaveFractional = React.useMemo(
+    () => filteredWeightSummaries.some(({ summary }) => summary.usedFractional),
+    [filteredWeightSummaries]
   );
 
   const setWeightQuick = React.useCallback(
@@ -1633,38 +1727,90 @@ export default function EstadisticaPage() {
           </AccordionTrigger>
           <AccordionContent className="px-4 pb-4 space-y-4">
             <div className="space-y-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                <div className="flex-1 min-w-0">
-                  <label className="text-sm font-medium" htmlFor="weight-search">
-                    Buscar artículo
-                  </label>
-                  <Input
-                    id="weight-search"
-                    placeholder="Buscar producto por peso…"
-                    value={weightQuery}
-                    onChange={(e) => setWeightQuery(e.target.value)}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={selectVisibleWeights}
-                    disabled={!weightFiltered.length}
+              <div className="relative min-w-0">
+                <label className="text-sm font-medium" htmlFor="weight-search">
+                  Buscar artículo
+                </label>
+                <Input
+                  id="weight-search"
+                  className="w-full"
+                  placeholder="Buscar producto por peso…"
+                  value={weightQuery}
+                  onChange={(e) => {
+                    setWeightQuery(e.target.value);
+                    setWeightDropdownOpen(true);
+                  }}
+                  onFocus={() => setWeightDropdownOpen(true)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      setWeightDropdownOpen(false);
+                      (event.currentTarget as HTMLInputElement).blur();
+                    }
+                  }}
+                />
+                {weightDropdownOpen && (
+                  <div
+                    className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md"
+                    onMouseLeave={() => setWeightDropdownOpen(false)}
                   >
-                    Seleccionar visibles
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={deselectVisibleWeights}
-                    disabled={!weightFiltered.length}
-                  >
-                    Deseleccionar visibles
-                  </Button>
-                </div>
+                    {weightProducts.length === 0 ? (
+                      <div className="p-2 text-sm text-muted-foreground">
+                        No encontramos artículos que parezcan venderse por peso en la fuente actual.
+                      </div>
+                    ) : weightFiltered.length === 0 ? (
+                      <div className="p-2 text-sm text-muted-foreground">Sin resultados…</div>
+                    ) : (
+                      <>
+                        <div className="sticky top-0 z-10 flex flex-wrap gap-2 border-b bg-popover/95 p-2 backdrop-blur supports-[backdrop-filter]:bg-popover/60">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={selectVisibleWeights}
+                            disabled={!weightFiltered.length}
+                          >
+                            Seleccionar visibles
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={deselectVisibleWeights}
+                            disabled={!weightFiltered.length}
+                          >
+                            Deseleccionar visibles
+                          </Button>
+                        </div>
+                        <div className="max-h-64 overflow-auto divide-y">
+                          {weightFiltered.map((item) => {
+                            const checked = weightSelectedIds.includes(item.key);
+                            const lastDateLabel = formatLastSale(item.stats.lastDate);
+                            const safeId = `weight-${item.key.replace(/[^a-z0-9_-]/g, "-")}`;
+                            return (
+                              <div
+                                key={item.key}
+                                className="flex items-start gap-3 px-3 py-2 text-sm hover:bg-muted/60"
+                              >
+                                <Checkbox
+                                  id={safeId}
+                                  checked={checked}
+                                  onCheckedChange={(state) => toggleWeightSelection(item.key, state === true)}
+                                />
+                                <label htmlFor={safeId} className="flex-1 cursor-pointer select-none">
+                                  <p className="font-medium leading-tight">{item.name}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Última venta: {lastDateLabel}
+                                    {item.unitKg != null ? ` · ${formatKg(item.unitKg)} kg/unidad` : ""}
+                                  </p>
+                                </label>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-end gap-3">
@@ -1709,50 +1855,23 @@ export default function EstadisticaPage() {
                 </div>
               </div>
             </div>
-
-            <div className="rounded-md border">
-              {weightProducts.length === 0 ? (
-                <div className="p-3 text-sm text-muted-foreground">
-                  No encontramos artículos que parezcan venderse por peso en la fuente actual.
-                </div>
-              ) : weightFiltered.length === 0 ? (
-                <div className="p-3 text-sm text-muted-foreground">Sin coincidencias para este filtro.</div>
-              ) : (
-                <div className="max-h-64 overflow-auto divide-y">
-                  {weightFiltered.map((item) => {
-                    const checked = weightSelectedIds.includes(item.key);
-                    const lastDateLabel = formatLastSale(item.stats.lastDate);
-                    const safeId = `weight-${item.key.replace(/[^a-z0-9_-]/g, "-")}`;
-                    return (
-                      <div key={item.key} className="flex items-start gap-3 px-3 py-2 text-sm hover:bg-muted/60">
-                        <Checkbox
-                          id={safeId}
-                          checked={checked}
-                          onCheckedChange={(state) => toggleWeightSelection(item.key, state === true)}
-                        />
-                        <label htmlFor={safeId} className="flex-1 cursor-pointer select-none">
-                          <p className="font-medium leading-tight">{item.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            Última venta: {lastDateLabel}
-                            {item.unitKg != null ? ` · ${formatKg(item.unitKg)} kg/unidad` : ""}
-                          </p>
-                        </label>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
             {weightSummaries.length > 0 && (
               <div className="rounded-md border">
-                <div className="px-3 py-2 border-b text-sm font-semibold">
-                  Artículos seleccionados ({weightSummaries.length})
+                <div className="space-y-2 border-b px-3 py-2">
+                  <div className="text-sm font-semibold">
+                    Artículos seleccionados ({filteredWeightSummaries.length}/{weightSummaries.length})
+                  </div>
+                  <Input
+                    placeholder="Filtrar artículos seleccionados…"
+                    value={weightSelectedFilter}
+                    onChange={(event) => setWeightSelectedFilter(event.target.value)}
+                  />
                 </div>
                 <div className="overflow-auto">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-background">
                       <tr className="border-b text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                        <th className="px-3 py-2 text-left">Posición</th>
                         <th className="px-3 py-2 text-left">Producto</th>
                         <th className="px-3 py-2 text-left">Última venta</th>
                         <th className="px-3 py-2 text-right">Kg vendidos</th>
@@ -1763,49 +1882,109 @@ export default function EstadisticaPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {weightSummaries.map(({ item, summary }) => (
-                        <tr key={`selected-${item.key}`} className="border-b [&>td]:py-2">
-                          <td className="px-3 font-medium">{item.name}</td>
-                          <td className="px-3 text-xs text-muted-foreground">{formatLastSale(item.stats.lastDate)}</td>
-                          <td className="px-3 text-right tabular-nums">{formatKg(summary.kg)}</td>
-                          <td className="px-3 text-right tabular-nums">{formatQuantity(summary.units)}</td>
-                          <td className="px-3 text-right tabular-nums">
-                            {item.unitKg != null
-                              ? formatKg(item.unitKg)
-                              : summary.usedFractional || summary.units <= 0
-                                ? "—"
-                                : formatKg(summary.kg / summary.units)}
-                          </td>
-                          <td className="px-3 text-right tabular-nums">{formatCurrency(summary.subtotal)}</td>
-                          <td className="px-3 text-right">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 px-2 text-xs"
-                              onClick={() => toggleWeightSelection(item.key, false)}
-                            >
-                              Quitar
-                            </Button>
+                      {filteredWeightSummaries.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="px-3 py-4 text-center text-muted-foreground">
+                            Sin coincidencias para esta búsqueda.
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        filteredWeightSummaries.map(({ item, summary }) => {
+                          const position = weightSelectedIds.indexOf(item.key);
+                          const displayValue = weightPositionDrafts[item.key] ?? String(position + 1);
+                          const isFirst = position <= 0;
+                          const isLast = position === weightSelectedIds.length - 1;
+
+                          return (
+                            <tr key={`selected-${item.key}`} className="border-b [&>td]:py-2">
+                              <td className="px-3 align-top">
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={weightSelectedIds.length}
+                                    value={displayValue}
+                                    onChange={(event) => handleWeightPositionInputChange(item.key, event.target.value)}
+                                    onBlur={(event) => commitWeightPositionInput(item.key, event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        commitWeightPositionInput(item.key, event.currentTarget.value);
+                                        (event.currentTarget as HTMLInputElement).blur();
+                                      }
+                                    }}
+                                    className="h-8 w-16"
+                                  />
+                                  <div className="flex flex-col gap-1">
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-7 w-7"
+                                      onClick={() => moveWeightSelection(item.key, -1)}
+                                      disabled={isFirst}
+                                    >
+                                      <ArrowUp className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-7 w-7"
+                                      onClick={() => moveWeightSelection(item.key, 1)}
+                                      disabled={isLast}
+                                    >
+                                      <ArrowDown className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-3 font-medium">{item.name}</td>
+                              <td className="px-3 text-xs text-muted-foreground">{formatLastSale(item.stats.lastDate)}</td>
+                              <td className="px-3 text-right tabular-nums">{formatKg(summary.kg)}</td>
+                              <td className="px-3 text-right tabular-nums">{formatQuantity(summary.units)}</td>
+                              <td className="px-3 text-right tabular-nums">
+                                {item.unitKg != null
+                                  ? formatKg(item.unitKg)
+                                  : summary.usedFractional || summary.units <= 0
+                                    ? "—"
+                                    : formatKg(summary.kg / summary.units)}
+                              </td>
+                              <td className="px-3 text-right tabular-nums">{formatCurrency(summary.subtotal)}</td>
+                              <td className="px-3 text-right">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => toggleWeightSelection(item.key, false)}
+                                >
+                                  Quitar
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
                     </tbody>
-                    <tfoot>
-                      <tr className="font-semibold">
-                        <td className="px-3 py-2 text-left">Totales</td>
-                        <td className="px-3 py-2"></td>
-                        <td className="px-3 py-2 text-right tabular-nums">{formatKg(weightTotals.kg)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{formatQuantity(weightTotals.units)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {weightTotalsHaveFractional || weightTotals.units <= 0
-                            ? "—"
-                            : formatKg(weightTotals.kg / weightTotals.units)}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(weightTotals.subtotal)}</td>
-                        <td></td>
-                      </tr>
-                    </tfoot>
+                    {filteredWeightSummaries.length > 0 && (
+                      <tfoot>
+                        <tr className="font-semibold">
+                          <td className="px-3 py-2 text-left" colSpan={3}>
+                            Totales
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">{formatKg(filteredWeightTotals.kg)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{formatQuantity(filteredWeightTotals.units)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {filteredWeightTotalsHaveFractional || filteredWeightTotals.units <= 0
+                              ? "—"
+                              : formatKg(filteredWeightTotals.kg / filteredWeightTotals.units)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(filteredWeightTotals.subtotal)}</td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </div>
               </div>
