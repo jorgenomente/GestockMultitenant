@@ -9,7 +9,6 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Camera, Upload, RefreshCcw, Search } from "lucide-react";
 
 /** ===================== Config ===================== */
-const DENSITY_COMPACT = true;
 const LS_KEY = "gestock:prices:v6"; // bump cache
 const INPUT_ID = "price-search-input";
 
@@ -515,7 +514,8 @@ export default function PriceSearch({ slug }: { slug: string }) {
     if (!node) return;
     window.requestAnimationFrame(() => {
       const rect = node.getBoundingClientRect();
-      const desiredTop = Math.max(rect.top + window.scrollY - 12, 0);
+      const offset = window.innerWidth >= 768 ? 16 : 8; // match sticky top spacing
+      const desiredTop = Math.max(rect.top + window.scrollY - offset, 0);
       if (Math.abs(window.scrollY - desiredTop) < 4) return;
       window.scrollTo({ top: desiredTop, behavior: "smooth" });
     });
@@ -583,6 +583,9 @@ export default function PriceSearch({ slug }: { slug: string }) {
     return hits;
   }, [items, qDebounced]);
 
+  const searching = q.trim().length > 0;
+  const hasResults = filtered.length > 0;
+
   const lastLabel =
     importedAt != null
       ? new Date(importedAt).toLocaleString("es-AR", {
@@ -606,8 +609,6 @@ export default function PriceSearch({ slug }: { slug: string }) {
   // Mostrar “error duro” sólo si NO hay datos; si hay datos, mostrar “nota”.
   const hasData = items.length > 0;
   const infoToShow = notice || (hasData ? error : null);
-
-  const listPadding = DENSITY_COMPACT ? "pb-24" : "pb-28";
 
   return (
     <>
@@ -657,7 +658,7 @@ export default function PriceSearch({ slug }: { slug: string }) {
 
           <section
             ref={searchSectionRef}
-            className="sticky top-0 z-40 rounded-3xl border border-border/50 bg-background/95 p-5 shadow-[0_25px_60px_-35px_rgba(0,0,0,0.45)] backdrop-blur supports-[backdrop-filter]:bg-background/80 md:p-7"
+            className="sticky top-2 z-50 rounded-3xl border border-border/50 bg-background/95 p-5 shadow-[0_25px_60px_-35px_rgba(0,0,0,0.45)] backdrop-blur supports-[backdrop-filter]:bg-background/80 md:top-4 md:bg-muted/20 md:p-7"
           >
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
@@ -688,7 +689,7 @@ export default function PriceSearch({ slug }: { slug: string }) {
               <div className="mt-3 rounded-2xl border border-accent/40 bg-accent/15 px-4 py-2 text-xs text-accent-foreground">
                 {infoToShow}
               </div>
-            ) : !q ? (
+            ) : !searching ? (
               <div className="mt-3 text-xs text-muted-foreground">
                 Se cargaron {count.toLocaleString("es-AR")} ítems. Escribí para buscar (máx. {LIMIT} coincidencias mostradas).
               </div>
@@ -699,6 +700,73 @@ export default function PriceSearch({ slug }: { slug: string }) {
                 {error}
               </div>
             )}
+          </section>
+
+          <section className="-mx-4 min-h-[130vh] space-y-4 pt-3 md:mx-0 md:space-y-5 md:pt-5">
+            {loading && (
+              <div className="mx-4 rounded-2xl border border-border/40 bg-muted/20 px-4 py-3 text-xs text-muted-foreground md:mx-0">
+                Cargando precios…
+              </div>
+            )}
+
+            {searching && !loading && !hasResults && (
+              <div className="mx-4 rounded-2xl border border-border/60 bg-background px-4 py-3 text-sm text-muted-foreground md:mx-0">
+                No encontramos resultados para el término {q}.
+              </div>
+            )}
+
+            {hasResults &&
+              filtered.map((it) => {
+                const updatedLabel =
+                  it.updatedAt > 0
+                    ? `${new Date(it.updatedAt).toLocaleDateString("es-AR")} · ${new Date(it.updatedAt).toLocaleTimeString("es-AR", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}`
+                    : null;
+
+                return (
+                  <Card
+                    key={it.id}
+                    className="w-full rounded-none border border-border/40 bg-card/80 shadow-[0_20px_45px_-35px_rgba(0,0,0,0.55)] transition-transform hover:-translate-y-0.5 md:mx-0 md:rounded-3xl"
+                  >
+                    <CardContent className="flex flex-col gap-3 px-4 py-4 md:gap-5 md:px-6 md:py-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-accent/15 px-3 py-1 text-accent-foreground">Producto</span>
+                          {it.code && (
+                            <span className="rounded-full bg-background px-3 py-1 font-medium text-foreground shadow-sm">#{it.code}</span>
+                          )}
+                          {it.barcode && (
+                            <span className="rounded-full bg-background px-3 py-1 font-mono text-[11px] text-foreground/80 shadow-sm">
+                              {it.barcode}
+                            </span>
+                          )}
+                        </div>
+                        {updatedLabel && (
+                          <span className="rounded-full bg-muted/60 px-3 py-1 text-[11px] text-muted-foreground">
+                            Actualizado · {updatedLabel}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-baseline justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <h2 className="text-lg font-semibold leading-snug text-foreground md:text-xl">
+                            <Highlight text={it.name} q={q} />
+                          </h2>
+                        </div>
+                        <div className="flex flex-col items-end text-right">
+                          <div className="text-2xl font-bold tracking-tight text-destructive md:text-3xl">
+                            {fmtMoney(it.price)}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">Precio venta</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
           </section>
 
           {/* Input file oculto */}
@@ -724,69 +792,7 @@ export default function PriceSearch({ slug }: { slug: string }) {
             }}
           />
 
-          <section className={`space-y-4 md:space-y-5 ${listPadding}`}>
-            {loading && <div className="text-sm text-muted-foreground">Cargando precios…</div>}
-
-            {!loading && q && filtered.length === 0 && (
-              <div className="rounded-2xl border border-border/60 bg-background px-4 py-3 text-sm text-muted-foreground">
-                No encontramos resultados para el término {q}.
-              </div>
-            )}
-
-            {filtered.map((it) => {
-              const updatedLabel = it.updatedAt > 0
-                ? `${new Date(it.updatedAt).toLocaleDateString("es-AR")} · ${new Date(it.updatedAt).toLocaleTimeString("es-AR", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}`
-                : null;
-
-              return (
-                <Card
-                  key={it.id}
-                  className="rounded-3xl border border-border/40 bg-card/60 shadow-[0_25px_60px_-45px_rgba(0,0,0,0.45)] transition-transform hover:-translate-y-0.5"
-                >
-                  <CardContent className="flex flex-col gap-4 p-5 md:gap-5 md:p-7">
-                    <div className="flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-wide text-muted-foreground">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full bg-accent/15 px-3 py-1 text-accent-foreground">Producto</span>
-                        {it.code && (
-                          <span className="rounded-full bg-background px-3 py-1 font-medium text-foreground shadow-sm">#{it.code}</span>
-                        )}
-                        {it.barcode && (
-                          <span className="rounded-full bg-background px-3 py-1 font-mono text-[11px] text-foreground/80 shadow-sm">
-                            {it.barcode}
-                          </span>
-                        )}
-                      </div>
-                      {updatedLabel && (
-                        <span className="rounded-full bg-muted/60 px-3 py-1 text-[11px] text-muted-foreground">
-                          Actualizado · {updatedLabel}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-                      <div className="space-y-2 md:max-w-[70%]">
-                        <h2 className="text-xl font-semibold leading-snug text-foreground md:text-2xl">
-                          <Highlight text={it.name} q={q} />
-                        </h2>
-                        <p className="text-sm text-muted-foreground">
-                          Precio sugerido para el último registro disponible.
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-3xl font-bold tracking-tight text-destructive md:text-4xl">
-                          {fmtMoney(it.price)}
-                        </div>
-                        <div className="text-xs text-muted-foreground">Precio venta</div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </section>
+          <div className="pb-24 md:pb-32" />
         </div>
       </div>
 

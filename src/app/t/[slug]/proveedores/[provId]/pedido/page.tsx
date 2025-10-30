@@ -39,6 +39,9 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
 } from "@/components/ui/sheet";
 import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Plus, Minus, Search, Download, Upload, Trash2, ArrowLeft,
   History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package, Loader2, Save,
 } from "lucide-react";
@@ -926,6 +929,7 @@ export default function ProviderOrderPage() {
   const [sales, setSales]   = React.useState<SalesRow[]>([]);
   const margin = 48;
   const [filter, setFilter] = React.useState("");
+  const [isFilterOpen, setIsFilterOpen] = React.useState(false);
   const [sortMode, setSortMode] = React.useState<SortMode>("alpha_asc");
   const [stockModalOpen, setStockModalOpen] = React.useState(false);
   const [stockProcessing, setStockProcessing] = React.useState(false);
@@ -938,6 +942,25 @@ export default function ProviderOrderPage() {
   const toggleStats = React.useCallback((id: string) => {
     setStatsOpenMap((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
+
+  const filterInputRef = React.useRef<HTMLInputElement | null>(null);
+  const floatingFilterStyle = React.useMemo<React.CSSProperties>(() => ({
+    top: isDesktop
+      ? "calc(env(safe-area-inset-top) + 1.5rem)"
+      : "calc(env(safe-area-inset-top) + 1rem)",
+    right: isDesktop
+      ? "clamp(1.5rem, calc((100vw - 64rem) / 2 + 2rem), 4rem)"
+      : "1rem",
+  }), [isDesktop]);
+
+  React.useEffect(() => {
+    if (!isFilterOpen) return;
+    const id = window.setTimeout(() => {
+      filterInputRef.current?.focus();
+      filterInputRef.current?.select();
+    }, 20);
+    return () => window.clearTimeout(id);
+  }, [isFilterOpen]);
 
   const salesByProduct = React.useMemo(() => {
     const map = new Map<string, SalesRow[]>();
@@ -3228,6 +3251,74 @@ async function exportOrderAsXlsx() {
         className="mx-auto w-full max-w-5xl bg-[var(--background)] px-4 pb-[calc(156px+env(safe-area-inset-bottom)+var(--bottom-nav-h))] pt-4 text-[var(--foreground)] md:px-8 lg:px-10"
         style={rootStyle}
       >
+        <div className="pointer-events-none fixed z-50" style={floatingFilterStyle}>
+          <div className="pointer-events-auto">
+            <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-9 rounded-full bg-[var(--primary)]/90 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--primary-foreground)] shadow-[0_8px_20px_rgba(32,56,44,0.28)] transition hover:bg-[var(--primary)]"
+                  aria-expanded={isFilterOpen}
+                  aria-controls="provider-order-filter"
+                  title="Buscar productos"
+                >
+                  <Search className="mr-2 h-4 w-4" />
+                  Buscar
+                  {filter ? (
+                    <Badge
+                      variant="secondary"
+                      className="ml-2 rounded-full bg-[var(--primary-foreground)]/15 text-[var(--primary-foreground)]"
+                    >
+                      Activo
+                    </Badge>
+                  ) : null}
+                </Button>
+              </PopoverTrigger>
+
+              <PopoverContent
+                collisionPadding={16}
+                sideOffset={12}
+                align="end"
+                className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-card/95 px-3 py-2 shadow-[0_18px_38px_-18px_rgba(16,24,20,0.4)]"
+              >
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="provider-order-filter"
+                    ref={filterInputRef}
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    placeholder="Buscar producto…"
+                    className="h-10 w-[220px] rounded-full border border-transparent bg-[var(--input-background)] pl-10 pr-12 text-sm text-[var(--foreground)] shadow-inner focus-visible:ring-0 md:w-[280px]"
+                    aria-label="Filtrar productos"
+                  />
+                  {filter && (
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted/60"
+                      aria-label="Limpiar filtro"
+                      onClick={() => setFilter("")}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 rounded-full text-muted-foreground transition-colors hover:bg-muted/60"
+                  aria-label="Cerrar buscador"
+                  onClick={() => setIsFilterOpen(false)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
       {/* Header */}
       <div
         data-hidden={isDesktop ? barsHidden : undefined}
@@ -3500,26 +3591,6 @@ async function exportOrderAsXlsx() {
               </div>
             )}
 
-            <div className="relative mt-1">
-              <Input
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Buscar producto…"
-                className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] pl-12 pr-12 text-sm text-[var(--foreground)] shadow-inner"
-                aria-label="Filtrar productos"
-              />
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              {filter && (
-                <button
-                  type="button"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted/60"
-                  aria-label="Limpiar filtro"
-                  onClick={() => setFilter("")}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
           </div>
         </div>
       </div>
