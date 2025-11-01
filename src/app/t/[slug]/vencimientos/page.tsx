@@ -11,6 +11,7 @@ import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import {
   Check,
   Trash2,
@@ -323,6 +324,7 @@ export default function VencimientosPage() {
   const [expDate, setExpDate] = React.useState("");
   const [qty, setQty] = React.useState<number | "">(1);
   const [newFreezer, setNewFreezer] = React.useState<boolean>(false);
+  const [registerModalOpen, setRegisterModalOpen] = React.useState(false);
 
   const [items, setItems] = React.useState<ExpItem[]>([]);
   const [archives, setArchives] = React.useState<ArchivedItem[]>([]);
@@ -1360,6 +1362,166 @@ export default function VencimientosPage() {
           </p>
         </div>
 
+        <Dialog
+          open={registerModalOpen}
+          onOpenChange={(open) => {
+            setRegisterModalOpen(open);
+            if (!open) onClear();
+          }}
+        >
+          <DialogTrigger asChild>
+            <Button
+              size="lg"
+              className="self-start rounded-full bg-[var(--color-action-secondary)] px-6 py-2 font-semibold text-[var(--background)] shadow-[0_18px_40px_-24px_rgba(0,0,0,0.85)] transition hover:bg-[var(--color-action-secondary)]/90"
+            >
+              Registrar nuevo vencimiento
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl border-none bg-transparent p-0 shadow-none sm:max-w-3xl">
+            <Card className="rounded-3xl border border-border/40 bg-[color:var(--surface-nav-hover)] shadow-[0_24px_60px_-30px_rgba(0,0,0,0.85)]">
+              <CardContent className={`space-y-4 ${compact ? "px-4 py-4" : "px-6 py-6"}`}>
+                <div className="relative" ref={autoBoxRef}>
+                  <label htmlFor="prod" className="mb-2 block text-sm font-semibold text-card-foreground">
+                    Producto (autocompletar por DESCRIPCIÓN)
+                  </label>
+                  <Input
+                    id="prod"
+                    value={name}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      updateSuggestions(e.target.value);
+                    }}
+                    onKeyDown={onKeyDownName}
+                    placeholder="Escribe para buscar…"
+                    autoComplete="off"
+                    aria-autocomplete="list"
+                    aria-expanded={openDrop}
+                    aria-controls="prod-suggestions"
+                    className={`${inputCls} w-full ${compact ? "text-sm" : "text-base"}`}
+                  />
+                  {openDrop && suggestions.length > 0 && (
+                    <div
+                      id="prod-suggestions"
+                      role="listbox"
+                      aria-label="Sugerencias de producto"
+                      className="absolute z-30 mt-2 max-h-60 w-full overflow-auto rounded-2xl border border-border/40 bg-[color:var(--surface-background-strong)] text-popover-foreground shadow-[0_28px_60px_-28px_rgba(0,0,0,0.85)] backdrop-blur-md"
+                    >
+                      {suggestions.map((s, i) => (
+                        <button
+                          key={s + i}
+                          type="button"
+                          role="option"
+                          aria-selected={i === activeIdx}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            setName(s);
+                            onSelectSuggestion(s);
+                          }}
+                          onMouseEnter={() => setActiveIdx(i)}
+                          className={`w-full px-4 py-2 text-left text-sm transition hover:bg-[color:var(--surface-overlay-muted)] ${
+                            i === activeIdx ? "bg-[color:var(--surface-overlay-muted)]" : ""
+                          }`}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {error && (
+                    <p className="mt-2 text-xs text-red-500">
+                      {error} (ruta: {PRECIOS_URL})
+                    </p>
+                  )}
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="fecha" className="mb-2 block text-sm font-semibold text-card-foreground">
+                      Vencimiento (dd-mm-aa)
+                    </label>
+                    <Input
+                      id="fecha"
+                      inputMode="numeric"
+                      pattern="[0-9\\-]*"
+                      placeholder="dd-mm-aa"
+                      value={expDate}
+                      onChange={(e) => {
+                        const el = e.currentTarget;
+                        const sel = el.selectionStart ?? el.value.length;
+                        const { masked, caret } = maskWithCaretLoose(expDate, e.target.value, sel);
+                        setExpDate(masked);
+                        requestAnimationFrame(() => {
+                          try {
+                            el.setSelectionRange(caret, caret);
+                          } catch {
+                            /* selection range not supported */
+                          }
+                        });
+                      }}
+                      className={`${inputCls} w-full`}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="qty" className="mb-2 block text-sm font-semibold text-card-foreground">
+                      Cantidad
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="qty"
+                        inputMode="numeric"
+                        pattern="\\d*"
+                        placeholder="1"
+                        value={qty}
+                        onChange={onChangeQty}
+                        className={`${inputCls} flex-1`}
+                      />
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        aria-pressed={newFreezer}
+                        onClick={() => setNewFreezer((v) => !v)}
+                        title={newFreezer ? "Marcado como Freezer" : "Marcar como Freezer"}
+                        className={`h-10 w-10 rounded-xl border transition-colors ${
+                          newFreezer
+                            ? "border-[var(--color-action-secondary)] bg-[var(--color-action-secondary)] text-[var(--background)] hover:bg-[var(--color-action-secondary)]/90"
+                            : "border-border/40 bg-[color:var(--surface-muted)] text-[var(--color-action-secondary)] hover:bg-[color:var(--surface-muted-strong)]"
+                        }`}
+                      >
+                        <Snowflake className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      Consejo: marcá Freezer si va directo a frío y querés separarlo visualmente.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex w-full flex-col gap-2 sm:max-w-md sm:flex-row">
+                    <Button
+                      onClick={onAdd}
+                      className="flex-1 rounded-xl bg-[var(--color-action-secondary)] text-[var(--background)] hover:bg-[var(--color-action-secondary)]/90"
+                    >
+                      Agregar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={onClear}
+                      className="flex-1 rounded-xl border border-border/40 bg-[color:var(--surface-overlay-soft)] text-card-foreground hover:bg-[color:var(--surface-overlay-hover)]"
+                    >
+                      Limpiar
+                    </Button>
+                  </div>
+                  <span className="text-xs text-muted-foreground sm:text-right">
+                    Estado servidor: {supabaseStatus === "online" ? "🟢 online" : supabaseStatus === "offline" ? "🔴 offline" : "⚪︎ ..."}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+          </DialogContent>
+        </Dialog>
+
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
           <div className="space-y-6">
             <div className="rounded-3xl border border-border/40 bg-card/70 p-4 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur-sm sm:p-6">
@@ -1511,148 +1673,6 @@ export default function VencimientosPage() {
                 )}
               </div>
             </div>
-
-            <Card className="rounded-3xl border border-border/40 bg-[color:var(--surface-nav-hover)] shadow-[0_24px_60px_-30px_rgba(0,0,0,0.85)]">
-              <CardContent className={`space-y-4 ${compact ? "px-4 py-4" : "px-6 py-6"}`}>
-                <div className="relative" ref={autoBoxRef}>
-                  <label htmlFor="prod" className="mb-2 block text-sm font-semibold text-card-foreground">
-                    Producto (autocompletar por DESCRIPCIÓN)
-                  </label>
-                  <Input
-                    id="prod"
-                    value={name}
-                    onChange={(e) => {
-                      setName(e.target.value);
-                      updateSuggestions(e.target.value);
-                    }}
-                    onKeyDown={onKeyDownName}
-                    placeholder="Escribe para buscar…"
-                    autoComplete="off"
-                    aria-autocomplete="list"
-                    aria-expanded={openDrop}
-                    aria-controls="prod-suggestions"
-                    className={`${inputCls} w-full ${compact ? "text-sm" : "text-base"}`}
-                  />
-                  {openDrop && suggestions.length > 0 && (
-                    <div
-                      id="prod-suggestions"
-                      role="listbox"
-                      aria-label="Sugerencias de producto"
-                      className="absolute z-30 mt-2 max-h-60 w-full overflow-auto rounded-2xl border border-border/40 bg-[color:var(--surface-background-strong)] text-popover-foreground shadow-[0_28px_60px_-28px_rgba(0,0,0,0.85)] backdrop-blur-md"
-                    >
-                      {suggestions.map((s, i) => (
-                        <button
-                          key={s + i}
-                          type="button"
-                          role="option"
-                          aria-selected={i === activeIdx}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            setName(s);
-                            onSelectSuggestion(s);
-                          }}
-                          onMouseEnter={() => setActiveIdx(i)}
-                          className={`w-full px-4 py-2 text-left text-sm transition hover:bg-[color:var(--surface-overlay-muted)] ${
-                            i === activeIdx ? "bg-[color:var(--surface-overlay-muted)]" : ""
-                          }`}
-                        >
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {error && (
-                    <p className="mt-2 text-xs text-red-500">
-                      {error} (ruta: {PRECIOS_URL})
-                    </p>
-                  )}
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label htmlFor="fecha" className="mb-2 block text-sm font-semibold text-card-foreground">
-                      Vencimiento (dd-mm-aa)
-                    </label>
-                    <Input
-                      id="fecha"
-                      inputMode="numeric"
-                      pattern="[0-9\\-]*"
-                      placeholder="dd-mm-aa"
-                      value={expDate}
-                      onChange={(e) => {
-                        const el = e.currentTarget;
-                        const sel = el.selectionStart ?? el.value.length;
-                        const { masked, caret } = maskWithCaretLoose(expDate, e.target.value, sel);
-                        setExpDate(masked);
-                        requestAnimationFrame(() => {
-                          try {
-                            el.setSelectionRange(caret, caret);
-                          } catch {
-                            /* selection range not supported */
-                          }
-                        });
-                      }}
-                      className={`${inputCls} w-full`}
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="qty" className="mb-2 block text-sm font-semibold text-card-foreground">
-                      Cantidad
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id="qty"
-                        inputMode="numeric"
-                        pattern="\\d*"
-                        placeholder="1"
-                        value={qty}
-                        onChange={onChangeQty}
-                        className={`${inputCls} flex-1`}
-                      />
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        aria-pressed={newFreezer}
-                        onClick={() => setNewFreezer((v) => !v)}
-                        title={newFreezer ? "Marcado como Freezer" : "Marcar como Freezer"}
-                        className={`h-10 w-10 rounded-xl border transition-colors ${
-                          newFreezer
-                            ? "border-[var(--color-action-secondary)] bg-[var(--color-action-secondary)] text-[var(--background)] hover:bg-[var(--color-action-secondary)]/90"
-                            : "border-border/40 bg-[color:var(--surface-muted)] text-[var(--color-action-secondary)] hover:bg-[color:var(--surface-muted-strong)]"
-                        }`}
-                      >
-                        <Snowflake className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    <p className="mt-2 text-[11px] text-muted-foreground">
-                      Consejo: marcá Freezer si va directo a frío y querés separarlo visualmente.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex w-full flex-col gap-2 sm:max-w-md sm:flex-row">
-                    <Button
-                      onClick={onAdd}
-                      className="flex-1 rounded-xl bg-[var(--color-action-secondary)] text-[var(--background)] hover:bg-[var(--color-action-secondary)]/90"
-                    >
-                      Agregar
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      onClick={onClear}
-                      className="flex-1 rounded-xl border border-border/40 bg-[color:var(--surface-overlay-soft)] text-card-foreground hover:bg-[color:var(--surface-overlay-hover)]"
-                    >
-                      Limpiar
-                    </Button>
-                  </div>
-                  <span className="text-xs text-muted-foreground sm:text-right">
-                    Estado servidor: {supabaseStatus === "online" ? "🟢 online" : supabaseStatus === "offline" ? "🔴 offline" : "⚪︎ ..."}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
 
             <div className="space-y-4">
               {groupSections.map(({ key, items }) => {
