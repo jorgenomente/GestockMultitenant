@@ -25,7 +25,11 @@ export async function middleware(req: NextRequest) {
   );
 
   // Refresca sesión si existe refresh token
-  await supabase.auth.getSession();
+  const { error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) {
+    res.cookies.delete("sb-access-token");
+    res.cookies.delete("sb-refresh-token");
+  }
 
   const pathname = req.nextUrl.pathname;
   const mustAuth = pathname.startsWith("/admin") || pathname.startsWith("/t/");

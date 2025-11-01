@@ -13,6 +13,7 @@ export type BranchThemeFormValues = {
   surface: string;
   card: string;
   cardForeground: string;
+  orderQty: string;
   nav: string;
   textPrimary: string;
   textSecondary: string;
@@ -41,6 +42,7 @@ export const DEFAULT_BRANCH_THEME: BranchThemeFormValues = {
   surface: "#3C4A44",
   card: "#2F3B37",
   cardForeground: TEXT_PRIMARY_FALLBACK,
+  orderQty: "#D6815A",
   nav: "#2C3A33",
   textPrimary: TEXT_PRIMARY_FALLBACK,
   textSecondary: TEXT_SECONDARY_FALLBACK,
@@ -56,6 +58,7 @@ export const BRANCH_THEME_FIELDS: Array<keyof BranchThemeFormValues> = [
   "surface",
   "card",
   "cardForeground",
+  "orderQty",
   "nav",
   "textPrimary",
   "textSecondary",
@@ -138,6 +141,7 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const textSecondary = sanitizeHexColor(theme.textSecondary, DEFAULT_BRANCH_THEME.textSecondary || TEXT_SECONDARY_FALLBACK);
   const card = sanitizeHexColor(theme.card, DEFAULT_BRANCH_THEME.card ?? surface);
   const cardForeground = sanitizeHexColor(theme.cardForeground, textPrimary);
+  const orderQty = sanitizeHexColor(theme.orderQty, DEFAULT_BRANCH_THEME.orderQty);
 
   const primaryHover = adjustLightness(primary, -0.08);
   const primaryLight = adjustLightness(primary, 0.12);
@@ -209,6 +213,10 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const orderCardAccent = adjustLightness(primary, -0.28);
   const orderCardDivider = withAlpha(adjustLightness(primary, 0.4), 0.38);
   const orderCardHighlight = withAlpha(adjustLightness(alert, 0.12), 0.45);
+  const orderCardQtyBackground = withAlpha(adjustLightness(orderQty, 0.55), 0.72);
+  const orderCardQtyBorder = withAlpha(adjustLightness(orderQty, 0.25), 0.65);
+  const orderCardQtyForeground = adjustLightness(orderQty, -0.42);
+  const orderCardQtyHoverBorder = withAlpha(adjustLightness(orderQty, -0.05), 0.85);
 
   return {
     "--background": background,
@@ -304,6 +312,10 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
     "--order-card-accent": orderCardAccent,
     "--order-card-divider": orderCardDivider,
     "--order-card-highlight": orderCardHighlight,
+    "--order-card-qty-background": orderCardQtyBackground,
+    "--order-card-qty-border": orderCardQtyBorder,
+    "--order-card-qty-foreground": orderCardQtyForeground,
+    "--order-card-qty-hover-border": orderCardQtyHoverBorder,
     "--chart-1": chartPrimary,
     "--chart-2": chartTwo,
     "--chart-3": chartThree,

@@ -363,6 +363,10 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const [loading, setLoading] = React.useState(true);
   const [query, setQuery] = React.useState("");
   const [tab, setTab] = React.useState<ViewTab>("TODOS");
+  const [massAddSearch, setMassAddSearch] = React.useState<Record<"QUINCENAL" | "MENSUAL", string>>({
+    QUINCENAL: "",
+    MENSUAL: "",
+  });
 
   const [, setSummaries] = React.useState<Record<string, OrderSummary>>({});
 
@@ -2908,8 +2912,18 @@ const buildExportPayload = React.useCallback(async (
 
         {/* Panel “Agregar a esta semana” */}
         {(tab === "QUINCENAL" || tab === "MENSUAL") && (() => {
-          const candidates = providers.filter(p => p.freq === tab).sort(byName);
-          const addedCount = candidates.filter(p => weekProviders.has(p.id)).length;
+          const freq = tab as "QUINCENAL" | "MENSUAL";
+          const allCandidates = providers.filter((p) => p.freq === freq).sort(byName);
+          const totalCandidates = allCandidates.length;
+          const addedCount = allCandidates.filter((p) => weekProviders.has(p.id)).length;
+          const searchRaw = massAddSearch[freq] ?? "";
+          const search = searchRaw.trim().toLowerCase();
+          const filteredCandidates = search
+            ? allCandidates.filter((p) =>
+                p.name.toLowerCase().includes(search) ||
+                (p.responsible ?? "").toLowerCase().includes(search)
+              )
+            : allCandidates;
 
           return (
             <div className="mt-3">
@@ -2922,54 +2936,74 @@ const buildExportPayload = React.useCallback(async (
                         Agregar {tab.toLowerCase()}s a <span className="font-semibold">{headerRange}</span>
                       </p>
                       <p className="text-[11px] text-muted-foreground">
-                        Agregados {addedCount} / {candidates.length}
+                        Agregados {addedCount} / {totalCandidates}
                       </p>
                     </div>
                     <Badge variant="muted" className="px-3 text-xs">
-                      {addedCount} / {candidates.length}
+                      {addedCount} / {totalCandidates}
                     </Badge>
                   </div>
                 </AccordionTrigger>
 
                 <AccordionContent>
-                  <div className="max-h-80 space-y-2 overflow-y-auto px-4 pb-4">
-                    {candidates.map((p) => {
-                      const included = weekProviders.has(p.id);
-                      const lastISO = lastAddedByProvider[p.id];
-                      const last = lastISO ? new Date(lastISO) : null;
+                  <div className="space-y-3 px-4 pb-4">
+                    {totalCandidates > 0 && (
+                      <Input
+                        value={searchRaw}
+                        onChange={(event) => setMassAddSearch((prev) => ({ ...prev, [freq]: event.target.value }))}
+                        placeholder="Buscar proveedor o responsable"
+                        className="h-9 rounded-xl bg-inputBackground/90 text-sm"
+                        aria-label={`Buscar ${tab.toLowerCase()}s`}
+                      />
+                    )}
 
-                      return (
-                        <div key={p.id} className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-3 py-2">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold text-foreground">{p.name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              Última vez agregado: {last ? last.toLocaleDateString("es-AR") : "—"}
-                            </p>
-                          </div>
+                    {filteredCandidates.length > 0 ? (
+                      <div className="max-h-80 space-y-2 overflow-y-auto">
+                        {filteredCandidates.map((p) => {
+                          const included = weekProviders.has(p.id);
+                          const lastISO = lastAddedByProvider[p.id];
+                          const last = lastISO ? new Date(lastISO) : null;
 
-                          <div className="flex items-center gap-2">
-                            {included ? (
-                              <>
-                                <Badge variant="secondary" className="h-6 px-3 text-[11px]">Agregado</Badge>
-                                <Button
-                                  variant="outline" size="sm" className="h-8 rounded-lg"
-                                  onClick={() => removeProviderFromCurrentWeek(p.id)}
-                                >
-                                  Quitar
-                                </Button>
-                              </>
-                            ) : (
-                              <Button
-                                size="sm" className="h-8 rounded-lg"
-                                onClick={() => addProviderToCurrentWeek(p.id)}
-                              >
-                                Agregar
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                          return (
+                            <div key={p.id} className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-3 py-2">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-foreground">{p.name}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Última vez agregado: {last ? last.toLocaleDateString("es-AR") : "—"}
+                                </p>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                {included ? (
+                                  <>
+                                    <Badge variant="secondary" className="h-6 px-3 text-[11px]">Agregado</Badge>
+                                    <Button
+                                      variant="outline" size="sm" className="h-8 rounded-lg"
+                                      onClick={() => removeProviderFromCurrentWeek(p.id)}
+                                    >
+                                      Quitar
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <Button
+                                    size="sm" className="h-8 rounded-lg"
+                                    onClick={() => addProviderToCurrentWeek(p.id)}
+                                  >
+                                    Agregar
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="py-6 text-center text-xs text-muted-foreground">
+                        {totalCandidates === 0
+                          ? `No hay proveedores ${tab === "QUINCENAL" ? "quincenales" : "mensuales"} registrados.`
+                          : `Sin resultados para "${searchRaw.trim()}".`}
+                      </p>
+                    )}
                   </div>
                 </AccordionContent>
               </AccordionItem>

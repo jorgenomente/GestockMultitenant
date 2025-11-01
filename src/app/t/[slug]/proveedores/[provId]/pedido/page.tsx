@@ -11,6 +11,7 @@ import type { CellObject, WorkSheet } from "xlsx";
 import { SALES_STORAGE_BUCKET, SALES_STORAGE_DIR } from "@/lib/salesStorage";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 /* UI */
 import { Button } from "@/components/ui/button";
@@ -137,6 +138,19 @@ const isMissingProviderError = (error: unknown) => {
   return code === "P0001" && message.includes("proveedor");
 };
 
+type StockUndoSnapshot = {
+  rows: Array<{
+    id: string;
+    stock_qty: number | null;
+    stock_updated_at: string | null;
+    previous_qty: number | null;
+    previous_qty_updated_at: string | null;
+  }>;
+  lastStockFromInput: string | null;
+  lastStockAppliedAt: string | null;
+  stockSalesInput: string;
+};
+
 /* eslint-disable no-unused-vars */
 /* ---------- Subcomponente: Stepper ---------- */
 type StepperProps = {
@@ -163,7 +177,7 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel }: StepperPro
       <Button
         variant="outline"
         size="icon"
-        className="h-9 w-9 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)]"
+        className="h-9 w-9 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)]"
         aria-label="Restar"
         onClick={() => onChange(clamp((value || 0) - s))}
       >
@@ -171,7 +185,7 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel }: StepperPro
       </Button>
 
       <Input
-        className="h-9 w-16 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-0 text-center text-sm font-semibold text-[color:var(--order-card-accent)] focus-visible:ring-0"
+        className="h-9 w-16 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] px-0 text-center text-sm font-semibold text-[color:var(--order-card-qty-foreground)] focus-visible:ring-0"
         inputMode="numeric"
         value={value ?? 0}
         onChange={(e) => {
@@ -187,7 +201,7 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel }: StepperPro
       <Button
         variant="outline"
         size="icon"
-        className="h-9 w-9 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)]"
+        className="h-9 w-9 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)]"
         aria-label="Sumar"
         onClick={() => onChange(clamp((value || 0) + s))}
       >
@@ -913,6 +927,9 @@ export default function ProviderOrderPage() {
   const [providerNameOverride, setProviderNameOverride] = React.useState<string | null>(null);
   const providerName = providerNameFromQuery || providerNameOverride || "Proveedor";
 
+  const [orderNotes, setOrderNotes] = React.useState("");
+  const lastPersistedNotesRef = React.useRef<string>("");
+
   const [contextIds, setContextIds] = React.useState<{ tenantId: string | null; branchId: string | null }>({
     tenantId: tenantIdFromQuery,
     branchId: branchIdFromQuery,
@@ -938,6 +955,7 @@ export default function ProviderOrderPage() {
   const [stockSalesInput, setStockSalesInput] = React.useState(() => nowLocalIso());
   const [lastStockFromInput, setLastStockFromInput] = React.useState<string | null>(null);
   const [lastStockAppliedAt, setLastStockAppliedAt] = React.useState<string | null>(null);
+  const [stockUndoSnapshot, setStockUndoSnapshot] = React.useState<StockUndoSnapshot | null>(null);
   const [statsOpenMap, setStatsOpenMap] = React.useState<Record<string, boolean>>({});
   const toggleStats = React.useCallback((id: string) => {
     setStatsOpenMap((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -961,6 +979,49 @@ export default function ProviderOrderPage() {
     }, 20);
     return () => window.clearTimeout(id);
   }, [isFilterOpen]);
+
+  React.useEffect(() => {
+    const next = order?.notes ?? "";
+    lastPersistedNotesRef.current = next;
+    setOrderNotes((prev) => (prev === next ? prev : next));
+  }, [order?.notes]);
+
+  // Persistir notas del pedido en Supabase para compartirlas entre dispositivos
+  const persistOrderNotes = React.useCallback(
+    async (value: string) => {
+      if (!order?.id) return;
+      const targetTable = ordersTable;
+      try {
+        const payload = { notes: value.trim() === "" ? null : value };
+        const { data, error } = await supabase
+          .from(targetTable)
+          .update(payload)
+          .eq("id", order.id)
+          .select("notes")
+          .maybeSingle();
+        if (error) throw error;
+        const stored = data?.notes ?? "";
+        lastPersistedNotesRef.current = stored;
+        setOrder((prev) => (prev ? { ...prev, notes: data?.notes ?? null } : prev));
+      } catch (err) {
+        console.error("persist order notes error", err);
+      }
+    },
+    [order?.id, ordersTable, setOrder, supabase]
+  );
+
+  React.useEffect(() => {
+    if (!order?.id) return;
+    if (orderNotes === lastPersistedNotesRef.current) return;
+    const id = window.setTimeout(() => {
+      void persistOrderNotes(orderNotes);
+    }, 600);
+    return () => window.clearTimeout(id);
+  }, [order?.id, orderNotes, persistOrderNotes]);
+
+  React.useEffect(() => {
+    setStockUndoSnapshot(null);
+  }, [order?.id]);
 
   const salesByProduct = React.useMemo(() => {
     const map = new Map<string, SalesRow[]>();
@@ -1091,6 +1152,19 @@ export default function ProviderOrderPage() {
       return;
     }
 
+    const snapshot: StockUndoSnapshot = {
+      rows: rowsToPersist.map((row) => ({
+        id: row.item.id,
+        stock_qty: row.item.stock_qty ?? null,
+        stock_updated_at: row.item.stock_updated_at ?? null,
+        previous_qty: row.item.previous_qty ?? null,
+        previous_qty_updated_at: row.item.previous_qty_updated_at ?? null,
+      })),
+      lastStockFromInput,
+      lastStockAppliedAt,
+      stockSalesInput,
+    };
+
     setStockProcessing(true);
     setStockError(null);
 
@@ -1151,6 +1225,7 @@ export default function ProviderOrderPage() {
       setStockModalOpen(false);
       setStockAdjustments({});
       setStockError(null);
+      setStockUndoSnapshot(snapshot);
     } catch (err: unknown) {
       console.error("apply stock error", err);
       const message = err instanceof Error ? err.message : "";
@@ -1167,6 +1242,61 @@ export default function ProviderOrderPage() {
     itemsTable,
     tenantId,
     branchId,
+    setItems,
+    lastStockFromInput,
+    lastStockAppliedAt,
+    stockSalesInput,
+    setStockUndoSnapshot,
+  ]);
+
+  const handleUndoStock = React.useCallback(async () => {
+    if (stockProcessing) return;
+    if (!stockUndoSnapshot || stockUndoSnapshot.rows.length === 0) return;
+
+    setStockProcessing(true);
+    setStockError(null);
+
+    try {
+      for (const row of stockUndoSnapshot.rows) {
+        const payload = {
+          stock_qty: row.stock_qty,
+          stock_updated_at: row.stock_updated_at,
+          previous_qty: row.previous_qty,
+          previous_qty_updated_at: row.previous_qty_updated_at,
+        };
+        const { error } = await supabase.from(itemsTable).update(payload).eq("id", row.id);
+        if (error) throw error;
+      }
+
+      setItems((prev) =>
+        prev.map((item) => {
+          const match = stockUndoSnapshot.rows.find((row) => row.id === item.id);
+          if (!match) return item;
+          return {
+            ...item,
+            stock_qty: match.stock_qty,
+            stock_updated_at: match.stock_updated_at ?? null,
+            previous_qty: match.previous_qty,
+            previous_qty_updated_at: match.previous_qty_updated_at ?? null,
+          };
+        })
+      );
+
+      setLastStockFromInput(stockUndoSnapshot.lastStockFromInput);
+      setStockSalesInput(stockUndoSnapshot.stockSalesInput);
+      setLastStockAppliedAt(stockUndoSnapshot.lastStockAppliedAt);
+      setStockUndoSnapshot(null);
+    } catch (err) {
+      console.error("undo stock error", err);
+      alert("No se pudo deshacer el stock aplicado.");
+    } finally {
+      setStockProcessing(false);
+    }
+  }, [
+    stockProcessing,
+    stockUndoSnapshot,
+    supabase,
+    itemsTable,
     setItems,
   ]);
 
@@ -2704,6 +2834,18 @@ async function exportOrderAsXlsx() {
     const hasHeader = head.join("|").includes("grupo") && head.join("|").includes("producto");
     const body = hasHeader ? aoa.slice(1) : aoa;
 
+    const itemKey = (product: string, group: string | null) =>
+      `${normKey(group || "sin-grupo")}::${normKey(product)}`;
+
+    const existingByKey = new Map(
+      items
+        .filter((row) => row.product_name !== GROUP_PLACEHOLDER)
+        .map((row) => [itemKey(row.product_name, row.group_name), row])
+    );
+
+    const tenantForInsert = order?.tenant_id ?? tenantId ?? tenantIdFromQuery ?? null;
+    const branchForInsert = order?.branch_id ?? branchId ?? branchIdFromQuery ?? null;
+
     const parsed = body
       .map((row) => {
         const [g, p, q, u] = row;
@@ -2719,9 +2861,37 @@ async function exportOrderAsXlsx() {
     const { error: delErr } = await supabase.from(itemsTable).delete().eq("order_id", order.id);
     if (delErr) throw delErr;
 
+    const rowsToInsert = parsed.map((r) => {
+      const prev = existingByKey.get(itemKey(r.product_name, r.group_name ?? null));
+      const payload: ItemUpsertPayload = {
+        order_id: order.id,
+        product_name: r.product_name,
+        qty: r.qty,
+        unit_price: r.unit_price,
+        group_name: r.group_name ?? null,
+      };
+
+      if (prev) {
+        payload.display_name = prev.display_name ?? null;
+        payload.pack_size = prev.pack_size ?? null;
+        payload.stock_qty = prev.stock_qty ?? null;
+        payload.stock_updated_at = prev.stock_updated_at ?? null;
+        payload.previous_qty = prev.previous_qty ?? null;
+        payload.previous_qty_updated_at = prev.previous_qty_updated_at ?? null;
+        payload.price_updated_at = prev.price_updated_at ?? null;
+        if (prev.tenant_id !== undefined) payload.tenant_id = prev.tenant_id ?? null;
+        if (prev.branch_id !== undefined) payload.branch_id = prev.branch_id ?? null;
+      }
+
+      if (payload.tenant_id === undefined && tenantForInsert) payload.tenant_id = tenantForInsert;
+      if (payload.branch_id === undefined && branchForInsert) payload.branch_id = branchForInsert;
+
+      return payload;
+    });
+
     const { data: inserted, error: insErr } = await supabase
       .from(itemsTable)
-      .insert(parsed.map((r) => ({ order_id: order.id, ...r })))
+      .insert(rowsToInsert)
       .select("*");
     if (insErr) throw insErr;
 
@@ -3604,6 +3774,36 @@ async function exportOrderAsXlsx() {
         <GroupCreator onCreate={(name) => { if (name.trim()) void createGroup(name.trim()); }} />
       </div>
 
+      {/* Notas rápidas */}
+      <div className="mt-6 rounded-3xl border border-[var(--border)] bg-card/90 px-5 py-4 shadow-card">
+        <div className="flex items-start justify-between gap-3">
+          <Label htmlFor="order-notes" className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Notas rápidas
+          </Label>
+          {orderNotes ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setOrderNotes("")}
+              className="h-8 rounded-full px-3 text-xs font-medium text-muted-foreground hover:bg-muted/60"
+            >
+              Limpiar
+            </Button>
+          ) : null}
+        </div>
+        <Textarea
+          id="order-notes"
+          value={orderNotes}
+          onChange={(event) => setOrderNotes(event.target.value)}
+          placeholder="Anotá recordatorios o artículos pendientes para este proveedor."
+          className="mt-3 min-h-[96px] resize-y rounded-2xl border border-[var(--border)] bg-background/80 text-sm shadow-[0_1px_3px_rgba(15,23,42,0.08)] focus-visible:ring-0"
+        />
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Se guarda automáticamente en la nube para que lo veas desde cualquier dispositivo.
+        </p>
+      </div>
+
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <Button
           variant="secondary"
@@ -3661,6 +3861,15 @@ async function exportOrderAsXlsx() {
             </div>
           </AlertDialogContent>
         </AlertDialog>
+        <Button
+          variant="outline"
+          size="lg"
+          className="h-11 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] transition hover:bg-muted disabled:opacity-60"
+          onClick={() => void handleUndoStock()}
+          disabled={stockProcessing || !stockUndoSnapshot || stockUndoSnapshot.rows.length === 0}
+        >
+          Deshacer
+        </Button>
         {actionableItems.length === 0 && (
           <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
             Agregá productos al pedido para habilitar estas acciones.
@@ -3727,6 +3936,9 @@ async function exportOrderAsXlsx() {
             <AlertDialogDescription>
               Sumá el stock recibido y descontá las ventas desde la fecha seleccionada antes de confirmar.
             </AlertDialogDescription>
+            <p className="mt-2 text-sm font-semibold text-lime-400">
+              Paso 1: indica la fecha desde la cual vamos a descontar las ventas.
+            </p>
           </AlertDialogHeader>
 
           <div className="mt-4 space-y-4">
@@ -3743,12 +3955,15 @@ async function exportOrderAsXlsx() {
                   if (stockError) setStockError(null);
                 }}
                 disabled={stockProcessing}
-                className="max-w-xs"
+                className="max-w-xs border-2 border-lime-400 shadow-[0_0_8px_rgba(132,204,22,0.7)] animate-[pulse_1.6s_ease-in-out_infinite] focus-visible:border-lime-500 focus-visible:ring-2 focus-visible:ring-lime-400"
               />
             </div>
 
             <div className="text-xs text-muted-foreground">
               Stock aplicado última vez: {lastStockAppliedLabel ?? "—"}
+            </div>
+            <div className="text-sm font-semibold text-lime-400">
+              Paso 2: verifica si los ítems que ingresaron en el último pedido para sumarlos al stock y luego restarlo con las ventas para obtener stock final.
             </div>
 
             <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-md border">

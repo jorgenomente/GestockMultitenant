@@ -17,6 +17,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, cleared: true });
   }
 
+  if (!session.access_token || !session.refresh_token) {
+    try {
+      await supabase.auth.signOut();
+    } catch (signOutError) {
+      console.warn("auth/set: signOut on missing tokens failed", signOutError);
+    }
+    return NextResponse.json(
+      {
+        ok: false,
+        cleared: true,
+        error: "missing_tokens",
+      },
+      { status: 400 }
+    );
+  }
+
   // Setear/actualizar cookies httpOnly con los tokens
   const { error } = await supabase.auth.setSession({
     access_token: session.access_token,
@@ -24,6 +40,13 @@ export async function POST(req: Request) {
   });
 
   if (error) {
+    if (error.message.toLowerCase().includes("refresh token")) {
+      try {
+        await supabase.auth.signOut();
+      } catch (signOutError) {
+        console.warn("auth/set: signOut fallback failed", signOutError);
+      }
+    }
     return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
   }
 

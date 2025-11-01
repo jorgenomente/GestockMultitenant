@@ -309,8 +309,10 @@ function toTimestamp(iso: string | null): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
-export default function PaymentsPageClient({ branchName, tenantId, branchId }: Props) {
+export default function PaymentsPageClient({ slug, branch, branchName, tenantId, branchId }: Props) {
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
+
+  const deleteEndpointBase = React.useMemo(() => `/api/t/${slug}/b/${branch}/payments`, [slug, branch]);
 
   const [payments, setPayments] = React.useState<PaymentRecord[]>([]);
   const [providers, setProviders] = React.useState<PaymentProvider[]>([]);
@@ -657,14 +659,19 @@ export default function PaymentsPageClient({ branchName, tenantId, branchId }: P
     setDeletingPaymentId(payment.id);
     setPaymentsError(null);
     try {
-      const { error } = await supabase
-        .from(PAYMENTS_TABLE)
-        .delete()
-        .eq("id", payment.id)
-        .eq("tenant_id", tenantId)
-        .eq("branch_id", branchId);
-
-      if (error) throw error;
+      const response = await fetch(`${deleteEndpointBase}/${payment.id}`, { method: "DELETE" });
+      if (!response.ok && response.status !== 404) {
+        let errorMessage = "No pudimos eliminar la factura seleccionada.";
+        try {
+          const body = await response.json();
+          if (body && typeof body.error === "string" && body.error.trim()) {
+            errorMessage = body.error.trim();
+          }
+        } catch {
+          // Ignoramos errores de parseo de respuesta
+        }
+        throw new Error(errorMessage);
+      }
 
       setPayments((prev) => prev.filter((item) => item.id !== payment.id));
 
@@ -675,11 +682,11 @@ export default function PaymentsPageClient({ branchName, tenantId, branchId }: P
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("payment delete failed", message);
-      setPaymentsError("No pudimos eliminar la factura seleccionada.");
+      setPaymentsError(message || "No pudimos eliminar la factura seleccionada.");
     } finally {
       setDeletingPaymentId(null);
     }
-  }, [supabase, tenantId, branchId, editingPaymentId, resetPaymentForm]);
+  }, [deleteEndpointBase, editingPaymentId, resetPaymentForm]);
 
   const handleToggleUrgent = React.useCallback(async (payment: PaymentRecord) => {
     const nextUrgent = !payment.meta.urgent;

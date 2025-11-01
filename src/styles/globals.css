@@ -106,6 +106,10 @@
   --order-card-accent: #2B4637;
   --order-card-divider: rgba(191, 218, 195, 0.4);
   --order-card-highlight: rgba(214, 129, 90, 0.45);
+  --order-card-qty-background: rgba(246, 219, 205, 0.72);
+  --order-card-qty-border: rgba(224, 160, 126, 0.65);
+  --order-card-qty-foreground: #5A2C15;
+  --order-card-qty-hover-border: rgba(189, 102, 64, 0.85);
 
   /* Typography */
   --font-family-heading: "Manrope", sans-serif;
@@ -275,6 +279,10 @@
   --order-card-accent: #E4F0EA;
   --order-card-divider: rgba(112, 159, 137, 0.36);
   --order-card-highlight: rgba(214, 129, 90, 0.48);
+  --order-card-qty-background: rgba(159, 101, 70, 0.64);
+  --order-card-qty-border: rgba(214, 129, 90, 0.58);
+  --order-card-qty-foreground: #FBEDE6;
+  --order-card-qty-hover-border: rgba(245, 184, 147, 0.85);
 
   --chart-1: #5A8070;
   --chart-2: #A9C9A4;

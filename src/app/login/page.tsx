@@ -20,6 +20,7 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -50,15 +51,25 @@ function LoginForm() {
           autoComplete="email"
           required
         />
-        <input
-          type="password"
-          placeholder="password"
-          className="w-full border p-2 rounded"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password"
-          required
-        />
+        <div className="relative">
+          <input
+            type={showPassword ? "text" : "password"}
+            placeholder="password"
+            className="w-full border p-2 rounded pr-20"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword((prev) => !prev)}
+            className="absolute inset-y-0 right-2 flex items-center text-sm text-gray-600 hover:text-gray-900"
+            aria-pressed={showPassword}
+          >
+            {showPassword ? "Ocultar" : "Mostrar"}
+          </button>
+        </div>
         {error && (
           <p className="text-sm text-red-600" role="alert">
             {error}

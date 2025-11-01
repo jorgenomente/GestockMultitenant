@@ -799,6 +799,27 @@ export default function EstadisticaPage() {
 
   const [query, setQuery] = React.useState("");
   const [openDropdown, setOpenDropdown] = React.useState(false);
+  const productSearchRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (!openDropdown) return;
+
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      const container = productSearchRef.current;
+      if (!container) return;
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (container.contains(target)) return;
+      setOpenDropdown(false);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [openDropdown]);
 
   const productInputId = React.useId();
   const fromInputId = React.useId();
@@ -881,9 +902,30 @@ export default function EstadisticaPage() {
 
   const [weightQuery, setWeightQuery] = React.useState("");
   const [weightDropdownOpen, setWeightDropdownOpen] = React.useState(false);
+  const weightSearchRef = React.useRef<HTMLDivElement | null>(null);
   const [weightSelectedIds, setWeightSelectedIds] = React.useState<string[]>([]);
   const [weightSelectedFilter, setWeightSelectedFilter] = React.useState("");
   const [weightPositionDrafts, setWeightPositionDrafts] = React.useState<Record<string, string>>({});
+
+  React.useEffect(() => {
+    if (!weightDropdownOpen) return;
+
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      const container = weightSearchRef.current;
+      if (!container) return;
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (container.contains(target)) return;
+      setWeightDropdownOpen(false);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [weightDropdownOpen]);
 
   const todayIso = React.useMemo(() => new Date().toISOString().slice(0, 10), []);
   const defaultFromIso = React.useMemo(
@@ -1064,8 +1106,9 @@ export default function EstadisticaPage() {
   const moveWeightSelection = React.useCallback((key: string, delta: number) => {
     setWeightPositionDrafts((prev) => {
       if (!(key in prev)) return prev;
-      const { [key]: _removed, ...rest } = prev;
-      return rest;
+      const next = { ...prev };
+      delete next[key];
+      return next;
     });
     setWeightSelectedIds((prev) => {
       const currentIndex = prev.indexOf(key);
@@ -1082,8 +1125,9 @@ export default function EstadisticaPage() {
   const setWeightSelectionIndex = React.useCallback((key: string, targetIndex: number) => {
     setWeightPositionDrafts((prev) => {
       if (!(key in prev)) return prev;
-      const { [key]: _removed, ...rest } = prev;
-      return rest;
+      const next = { ...prev };
+      delete next[key];
+      return next;
     });
     setWeightSelectedIds((prev) => {
       const currentIndex = prev.indexOf(key);
@@ -1110,8 +1154,9 @@ export default function EstadisticaPage() {
       }
       setWeightPositionDrafts((prev) => {
         if (!(key in prev)) return prev;
-        const { [key]: _removed, ...rest } = prev;
-        return rest;
+        const next = { ...prev };
+        delete next[key];
+        return next;
       });
     },
     [setWeightSelectionIndex]
@@ -1202,11 +1247,6 @@ export default function EstadisticaPage() {
       { units: 0, kg: 0, subtotal: 0 }
     );
   }, [filteredWeightSummaries]);
-
-  const weightTotalsHaveFractional = React.useMemo(
-    () => weightSummaries.some(({ summary }) => summary.usedFractional),
-    [weightSummaries]
-  );
 
   const filteredWeightTotalsHaveFractional = React.useMemo(
     () => filteredWeightSummaries.some(({ summary }) => summary.usedFractional),
@@ -1446,65 +1486,62 @@ export default function EstadisticaPage() {
           <Card>
             <CardContent className="p-3 space-y-4">
               <div className="grid gap-3 lg:grid-cols-12 lg:items-end">
-            <div className="relative lg:col-span-4 min-w-0">
-              <label className="text-sm font-medium" htmlFor={productInputId}>Elegí artículos</label>
-              <Input
-                id={productInputId}
-                className="w-full"
-                placeholder="Buscar productos…"
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setOpenDropdown(true);
-                }}
-                onFocus={() => setOpenDropdown(true)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    setOpenDropdown(false);
-                    (event.currentTarget as HTMLInputElement).blur();
-                  }
-                }}
-              />
-              {openDropdown && (
-                <div
-                  className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md"
-                  onMouseLeave={() => setOpenDropdown(false)}
-                >
-                  {filtered.length === 0 ? (
-                    <div className="p-2 text-sm text-muted-foreground">Sin resultados…</div>
-                  ) : (
-                    <>
-                      <div className="sticky top-0 z-10 flex flex-wrap gap-2 border-b bg-popover/95 p-2 backdrop-blur supports-[backdrop-filter]:bg-popover/60">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={selectVisibleProducts}
-                          disabled={!filtered.length}
-                        >
-                          Seleccionar visibles
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={deselectVisibleProducts}
-                          disabled={!filtered.length || selectedNames.length === 0}
-                        >
-                          Deseleccionar visibles
-                        </Button>
-                      </div>
-                      <div className="max-h-64 overflow-auto">
-                        {filtered.map((name) => {
-                          const checked = selectedNames.includes(name);
-                          const safeId = `product-${normKey(name)}`;
-                          const lastSale = byProduct.get(normKey(name))?.[0]?.date;
-                          return (
-                            <div key={name} className="flex items-start gap-3 px-3 py-2 text-sm hover:bg-muted/60">
-                              <Checkbox
-                                id={safeId}
-                                checked={checked}
-                                onCheckedChange={() => toggleProductSelection(name)}
+                <div ref={productSearchRef} className="relative lg:col-span-4 min-w-0">
+                  <label className="text-sm font-medium" htmlFor={productInputId}>Elegí artículos</label>
+                  <Input
+                    id={productInputId}
+                    className="w-full"
+                    placeholder="Buscar productos…"
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setOpenDropdown(true);
+                    }}
+                    onFocus={() => setOpenDropdown(true)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        setOpenDropdown(false);
+                        (event.currentTarget as HTMLInputElement).blur();
+                      }
+                    }}
+                  />
+                  {openDropdown && (
+                    <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md">
+                      {filtered.length === 0 ? (
+                        <div className="p-2 text-sm text-muted-foreground">Sin resultados…</div>
+                      ) : (
+                        <>
+                          <div className="sticky top-0 z-10 flex flex-wrap gap-2 border-b bg-popover/95 p-2 backdrop-blur supports-[backdrop-filter]:bg-popover/60">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={selectVisibleProducts}
+                              disabled={!filtered.length}
+                            >
+                              Seleccionar visibles
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={deselectVisibleProducts}
+                              disabled={!filtered.length || selectedNames.length === 0}
+                            >
+                              Deseleccionar visibles
+                            </Button>
+                          </div>
+                          <div className="max-h-64 overflow-auto">
+                            {filtered.map((name) => {
+                              const checked = selectedNames.includes(name);
+                              const safeId = `product-${normKey(name)}`;
+                              const lastSale = byProduct.get(normKey(name))?.[0]?.date;
+                              return (
+                                <div key={name} className="flex items-start gap-3 px-3 py-2 text-sm hover:bg-muted/60">
+                                  <Checkbox
+                                    id={safeId}
+                                    checked={checked}
+                                    onCheckedChange={() => toggleProductSelection(name)}
                               />
                               <label htmlFor={safeId} className="flex-1 cursor-pointer select-none">
                                 <p className="font-medium leading-tight">{name}</p>
@@ -1725,9 +1762,9 @@ export default function EstadisticaPage() {
               </div>
             </div>
           </AccordionTrigger>
-          <AccordionContent className="px-4 pb-4 space-y-4">
+          <AccordionContent className="px-4 pb-4 space-y-4" style={{ overflow: "visible" }}>
             <div className="space-y-3">
-              <div className="relative min-w-0">
+              <div ref={weightSearchRef} className="relative min-w-0">
                 <label className="text-sm font-medium" htmlFor="weight-search">
                   Buscar artículo
                 </label>
@@ -1749,10 +1786,7 @@ export default function EstadisticaPage() {
                   }}
                 />
                 {weightDropdownOpen && (
-                  <div
-                    className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md"
-                    onMouseLeave={() => setWeightDropdownOpen(false)}
-                  >
+                  <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md">
                     {weightProducts.length === 0 ? (
                       <div className="p-2 text-sm text-muted-foreground">
                         No encontramos artículos que parezcan venderse por peso en la fuente actual.
