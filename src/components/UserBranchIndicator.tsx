@@ -8,10 +8,16 @@ import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 
 export default function UserBranchIndicator() {
   const pathname = usePathname();
+  const isDemo = pathname?.startsWith("/demo") ?? false;
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
   const [email, setEmail] = React.useState<string>("");
 
   React.useEffect(() => {
+    if (isDemo) {
+      setEmail("demo@gestock.app");
+      return;
+    }
+
     let active = true;
     (async () => {
       try {
@@ -22,7 +28,9 @@ export default function UserBranchIndicator() {
       }
     })();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_: AuthChangeEvent, session: Session | null) => {
       setEmail(session?.user?.email ?? "");
     });
 
@@ -30,9 +38,10 @@ export default function UserBranchIndicator() {
       active = false;
       subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [supabase, isDemo]);
 
   const branchSlug = React.useMemo(() => {
+    if (isDemo) return "demo-sandbox";
     if (!pathname) return "";
     const match = pathname.match(/^\/t\/[^/]+\/b\/([^/]+)/);
     if (!match || match.length < 2) return "";
@@ -41,10 +50,16 @@ export default function UserBranchIndicator() {
     } catch {
       return match[1];
     }
-  }, [pathname]);
+  }, [pathname, isDemo]);
 
-  const displayName = React.useMemo(() => formatDisplayName(email), [email]);
-  const initials = React.useMemo(() => extractInitials(email), [email]);
+  const displayName = React.useMemo(
+    () => (isDemo ? "Invitado Demo" : formatDisplayName(email)),
+    [email, isDemo]
+  );
+  const initials = React.useMemo(
+    () => (isDemo ? "ID" : extractInitials(email)),
+    [email, isDemo]
+  );
 
   return (
     <header className="border-b border-border/70 bg-card/90 shadow-[0_20px_45px_-35px_rgba(31,31,31,0.45)] backdrop-blur supports-[backdrop-filter]:backdrop-blur">
@@ -55,7 +70,9 @@ export default function UserBranchIndicator() {
           </span>
           <div className="leading-tight">
             <p className="text-sm font-semibold tracking-tight text-foreground">GeStock</p>
-            <p className="text-xs text-muted-foreground">Gestión simple</p>
+            <p className="text-xs text-muted-foreground">
+              Gestión simple{isDemo ? " · modo demo" : ""}
+            </p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-4 text-xs sm:text-sm">
@@ -63,8 +80,13 @@ export default function UserBranchIndicator() {
             <span className="text-foreground">Sucursal</span>
             <span className="text-muted-foreground">·</span>
             <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[0.7rem] font-medium uppercase tracking-wide text-accent-foreground">
-              {branchSlug || "—"}
+              {isDemo ? "demo virtual" : branchSlug || "—"}
             </span>
+            {isDemo && (
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide text-primary">
+                Demo
+              </span>
+            )}
           </span>
           <div className="flex items-center gap-3 text-foreground">
             <button
