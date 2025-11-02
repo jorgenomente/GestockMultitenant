@@ -184,9 +184,19 @@ function b642ab(b64: string) {
 
 const TIMEZONE = "America/Argentina/Buenos_Aires";
 const dateShortFmt = new Intl.DateTimeFormat("es-AR", { timeZone: TIMEZONE, day: "2-digit", month: "2-digit", year: "numeric" });
+const dateTimeShortFmt = new Intl.DateTimeFormat("es-AR", {
+  timeZone: TIMEZONE,
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 const weekdayFmt = new Intl.DateTimeFormat("es-AR", { weekday: "long", timeZone: TIMEZONE });
 const dateFmt = new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: TIMEZONE });
 const dateShort = (ts: number) => dateShortFmt.format(new Date(ts));
+const dateTimeShort = (ts: number) => dateTimeShortFmt.format(new Date(ts));
 const formatLastSale = (ts?: number) => (!ts ? "—" : `${weekdayFmt.format(new Date(ts))} ${dateFmt.format(new Date(ts))}`);
 const formatKg = (value: number) => {
   if (!Number.isFinite(value)) return "—";
@@ -1707,7 +1717,7 @@ export default function EstadisticaPage() {
                     ) : (
                       rangeRows.map((r, i) => (
                         <tr key={i} className="[&>td]:px-3 [&>td]:py-2 border-b">
-                          <td>{dateShort(r.date)}</td>
+                          <td>{dateTimeShort(r.date)}</td>
                           <td>{r.product}</td>
                           <td className="text-right tabular-nums">{r.qty}</td>
                           <td className="text-right tabular-nums">{r.subtotal != null ? `$${r.subtotal.toFixed(2)}` : "—"}</td>

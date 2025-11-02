@@ -890,15 +890,15 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const totalProviders = visibleProviders.length;
   const todayIdx = new Date().getDay();
 
-const handleImportClick = React.useCallback(() => {
-  importInputRef.current?.click();
-}, []);
+  const handleImportClick = React.useCallback(() => {
+    importInputRef.current?.click();
+  }, []);
 
-const handleOrdersImportClick = React.useCallback(() => {
-  ordersImportInputRef.current?.click();
-}, []);
+  const handleOrdersImportClick = React.useCallback(() => {
+    ordersImportInputRef.current?.click();
+  }, []);
 
-const clearGestockCaches = React.useCallback((tenant?: string | null, branch?: string | null) => {
+  const clearGestockCaches = React.useCallback((tenant?: string | null, branch?: string | null) => {
   if (typeof window === "undefined") return;
   try {
     const tenantMatch = tenant?.trim() || null;

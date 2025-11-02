@@ -172,8 +172,7 @@ export default function BottomNav() {
               <li
                 key={item.label}
                 className={clsx(
-                  "shrink-0 min-w-[76px] snap-start md:min-w-0 md:w-full",
-                  item.onClick && "md:mt-auto"
+                  "shrink-0 min-w-[76px] snap-start md:min-w-0 md:w-full"
                 )}
               >
                 {item.onClick ? (

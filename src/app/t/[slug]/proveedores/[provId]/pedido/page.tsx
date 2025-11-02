@@ -861,20 +861,41 @@ async function getActiveSalesMeta(
 }
 
 function computeStats(sales: SalesRow[], product: string, now = Date.now()): Stats {
-  const rows = sales.filter((s) => s.product === product);
+  const key = normKey(product);
+  const rows = sales.filter((s) => normKey(s.product) === key);
+  if (!rows.length) {
+    return {
+      avg4w: 0,
+      sum7d: 0,
+      sum2w: 0,
+      sum30d: 0,
+    };
+  }
+
   const ms = 24 * 3600 * 1000;
-  const sumIn = (from: number) => rows.filter((s) => s.date >= startOfDayUTC(from)).reduce((a, b) => a + (b.qty || 0), 0);
-  const sum7d = sumIn(now - 7 * ms);
-  const sum2w = sumIn(now - 14 * ms);
-  const sum30d = sumIn(now - 30 * ms);
-  const sum4w = sumIn(now - 28 * ms);
+  const anchor = startOfDayUTC(now);
+  const sumIn = (days: number) => {
+    const threshold = startOfDayUTC(anchor - days * ms);
+    return rows.reduce((acc, row) => (row.date >= threshold ? acc + (row.qty || 0) : acc), 0);
+  };
+
+  const sum7d = sumIn(7);
+  const sum2w = sumIn(14);
+  const sum30d = sumIn(30);
+  const sum4w = sumIn(28);
   const avg4w = sum4w / 4;
-  const last = [...rows].sort((a, b) => b.date - a.date)[0];
-  const lastUnitRetail = last && last.qty && last.subtotal != null && last.qty > 0 ? last.subtotal / last.qty : undefined;
-  const in30 = rows.filter((s) => s.date >= startOfDayUTC(now - 30 * ms) && s.qty > 0 && s.subtotal != null);
-  const sumSub = in30.reduce((a, b) => a + (b.subtotal || 0), 0);
-  const sumQty = in30.reduce((a, b) => a + (b.qty || 0), 0);
+
+  const sorted = [...rows].sort((a, b) => b.date - a.date);
+  const last = sorted[0];
+  const lastUnitRetail =
+    last && last.qty && last.subtotal != null && last.qty > 0 ? last.subtotal / last.qty : undefined;
+
+  const threshold30d = startOfDayUTC(anchor - 30 * ms);
+  const in30 = rows.filter((s) => s.date >= threshold30d && s.qty > 0 && s.subtotal != null);
+  const sumSub = in30.reduce((acc, row) => acc + (row.subtotal || 0), 0);
+  const sumQty = in30.reduce((acc, row) => acc + (row.qty || 0), 0);
   const avgUnitRetail30d = sumQty > 0 ? sumSub / sumQty : undefined;
+
   return {
     avg4w: Math.round(avg4w) || 0,
     sum7d: Math.round(sum7d) || 0,
@@ -891,9 +912,11 @@ const estCost = (st?: Stats, marginPct = 48) =>
 
 /** Devuelve la última fecha registrada para un producto; si no hay, usa “hoy”. */
 function latestDateForProduct(sales: SalesRow[], product: string): number {
-  const rows = sales.filter((s) => s.product === product);
+  const key = normKey(product);
+  const rows = sales.filter((s) => normKey(s.product) === key);
   if (!rows.length) return Date.now();
-  return rows.reduce((max, r) => (r.date > max ? r.date : max), rows[0].date);
+  const latest = rows.reduce((max, row) => (row.date > max ? row.date : max), rows[0].date);
+  return startOfDayUTC(latest);
 }
 
 const normalizeSearchParam = (value: string | null) => {
@@ -948,9 +971,11 @@ export default function ProviderOrderPage() {
   const [filter, setFilter] = React.useState("");
   const [isFilterOpen, setIsFilterOpen] = React.useState(false);
   const [sortMode, setSortMode] = React.useState<SortMode>("alpha_asc");
+  const [groupOrder, setGroupOrder] = React.useState<string[]>([]);
   const [stockModalOpen, setStockModalOpen] = React.useState(false);
   const [stockProcessing, setStockProcessing] = React.useState(false);
   const [stockAdjustments, setStockAdjustments] = React.useState<Record<string, string>>({});
+  const [stockFilter, setStockFilter] = React.useState("");
   const [stockError, setStockError] = React.useState<string | null>(null);
   const [stockSalesInput, setStockSalesInput] = React.useState(() => nowLocalIso());
   const [lastStockFromInput, setLastStockFromInput] = React.useState<string | null>(null);
@@ -1038,14 +1063,59 @@ export default function ProviderOrderPage() {
     [items]
   );
 
+  const stockOrderedItems = React.useMemo(() => {
+    if (!actionableItems.length) return [] as ItemRow[];
+
+    const grouped = new Map<string, ItemRow[]>();
+    for (const item of actionableItems) {
+      const key = (item.group_name || "Sin grupo").trim();
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(item);
+    }
+
+    const indexOfGroup = (name: string) => {
+      const idx = groupOrder.indexOf(name);
+      return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+    };
+
+    const sortedGroupNames = Array.from(grouped.keys()).sort((a, b) => {
+      const ia = indexOfGroup(a);
+      const ib = indexOfGroup(b);
+      if (ia !== ib) return ia - ib;
+      return a.localeCompare(b, "es", { sensitivity: "base" });
+    });
+
+    const byNameAsc = (a: ItemRow, b: ItemRow) =>
+      a.product_name.localeCompare(b.product_name, "es", { sensitivity: "base" });
+    const byNameDesc = (a: ItemRow, b: ItemRow) => -byNameAsc(a, b);
+    const avg = (name: string) =>
+      computeStats(sales, name, latestDateForProduct(sales, name)).avg4w || 0;
+
+    const ordered: ItemRow[] = [];
+    for (const name of sortedGroupNames) {
+      const arr = [...(grouped.get(name) ?? [])];
+      if (sortMode === "alpha_asc") arr.sort(byNameAsc);
+      else if (sortMode === "alpha_desc") arr.sort(byNameDesc);
+      else if (sortMode === "avg_desc") {
+        arr.sort((a, b) => (avg(b.product_name) - avg(a.product_name)) || byNameAsc(a, b));
+      } else if (sortMode === "avg_asc") {
+        arr.sort((a, b) => (avg(a.product_name) - avg(b.product_name)) || byNameAsc(a, b));
+      }
+      ordered.push(...arr);
+    }
+
+    return ordered;
+  }, [actionableItems, groupOrder, sortMode, sales]);
+
   const computeSalesSinceStock = React.useCallback(
     (productName: string, fromTs: number | null) => {
       if (fromTs == null) return 0;
       const rows = salesByProduct.get(normKey(productName));
       if (!rows || !rows.length) return 0;
       const now = Date.now();
+      const from = startOfDayUTC(fromTs);
       return rows
-        .filter((row) => row.date >= fromTs && row.date <= now)
+        .filter((row) => row.date >= from && row.date <= now)
         .reduce((acc, row) => acc + (row.qty || 0), 0);
     },
     [salesByProduct]
@@ -1058,7 +1128,7 @@ export default function ProviderOrderPage() {
   }, [stockSalesInput]);
 
   const stockPreviewRows = React.useMemo(() => {
-    return actionableItems.map((item) => {
+    return stockOrderedItems.map((item) => {
       const stockPrev = round2(Number(item.stock_qty ?? 0));
       const qtyOrdered = round2(Number(item.qty ?? 0));
       const productLabel = (item.display_name?.trim() || item.product_name).trim();
@@ -1084,7 +1154,17 @@ export default function ProviderOrderPage() {
         stockResult,
       };
     });
-  }, [actionableItems, stockAdjustments, applyTimestampMs, computeSalesSinceStock]);
+  }, [stockOrderedItems, stockAdjustments, applyTimestampMs, computeSalesSinceStock]);
+
+  const filteredStockPreviewRows = React.useMemo(() => {
+    const q = stockFilter.trim().toLowerCase();
+    if (!q) return stockPreviewRows;
+    return stockPreviewRows.filter(({ item }) => {
+      const visible = (item.display_name || item.product_name || "").toLowerCase();
+      const canonical = (item.product_name || "").toLowerCase();
+      return visible.includes(q) || canonical.includes(q);
+    });
+  }, [stockPreviewRows, stockFilter]);
 
   const stockTotals = React.useMemo(() => {
     return stockPreviewRows.reduce(
@@ -1320,7 +1400,6 @@ export default function ProviderOrderPage() {
   }, [actionableItems, lastStockFromInput]);
 
   // UI persistente (Supabase)
-  const [groupOrder, setGroupOrder] = React.useState<string[]>([]);
   const [checkedMap, setCheckedMap] = React.useState<Record<string, boolean>>({});
 
   // NUEVO: acordeón controlado (todos cerrados al entrar; uno abierto a la vez)
@@ -3927,10 +4006,11 @@ async function exportOrderAsXlsx() {
           if (!open) {
             setStockError(null);
             setStockAdjustments({});
+            setStockFilter("");
           }
         }}
       >
-        <AlertDialogContent className="max-w-4xl w-[min(100vw-2rem,820px)]">
+        <AlertDialogContent className="max-w-4xl w-[min(100vw-2rem,820px)] max-h-[calc(100vh-4rem)] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>Obtener stock real</AlertDialogTitle>
             <AlertDialogDescription>
@@ -3966,6 +4046,17 @@ async function exportOrderAsXlsx() {
               Paso 2: verifica si los ítems que ingresaron en el último pedido para sumarlos al stock y luego restarlo con las ventas para obtener stock final.
             </div>
 
+            {stockPreviewRows.length > 0 && (
+              <Input
+                value={stockFilter}
+                onChange={(event) => setStockFilter(event.target.value)}
+                placeholder="Filtrar productos..."
+                className="h-9 w-full"
+                disabled={stockProcessing}
+                aria-label="Filtrar productos"
+              />
+            )}
+
             <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-md border">
               <table className="w-full table-fixed border-collapse text-sm">
                 <colgroup>
@@ -3991,8 +4082,14 @@ async function exportOrderAsXlsx() {
                         No hay productos en este pedido.
                       </td>
                     </tr>
+                  ) : filteredStockPreviewRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                        No hay productos que coincidan con {stockFilter.trim() || "el filtro actual"}.
+                      </td>
+                    </tr>
                   ) : (
-                    stockPreviewRows.map(({ item, raw, stockPrev, salesQty, stockResult, additionIsValid }) => (
+                    filteredStockPreviewRows.map(({ item, raw, stockPrev, salesQty, stockResult, additionIsValid }) => (
                       <tr key={item.id} className="border-t">
                         <td className="px-3 py-2">
                           <div className="font-medium break-words leading-tight">
