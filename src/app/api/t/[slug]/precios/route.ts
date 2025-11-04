@@ -89,6 +89,7 @@ type Catalog = {
 };
 
 type SupabaseUserClient = Awaited<ReturnType<typeof getSupabaseUserServerClient>>;
+type SupabaseServiceClient = ReturnType<typeof getSupabaseServiceRoleClient>;
 type TenantRow = { id: string; slug: string };
 type MembershipRole = "owner" | "admin" | "staff";
 
@@ -218,8 +219,8 @@ function buildCatalog(rows: Record<string, unknown>[]): Catalog {
 }
 
 /** ===================== Supabase utils ===================== */
-async function getTenantBySlug(userClient: SupabaseUserClient, slug: string): Promise<TenantRow> {
-  const { data, error } = await userClient
+async function getTenantBySlug(client: SupabaseServiceClient, slug: string): Promise<TenantRow> {
+  const { data, error } = await client
     .from("tenants")
     .select("id, slug")
     .eq("slug", slug)
@@ -258,11 +259,9 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   try {
     const { slug } = await params;
 
-    const userClient = await getSupabaseUserServerClient();
     const service = getSupabaseServiceRoleClient();
 
-    const tenant = await getTenantBySlug(userClient, slug);
-    await assertMember(userClient, tenant.id);
+    const tenant = await getTenantBySlug(service, slug);
 
     const path = `${tenant.id}/prices.json`;
     const { data: file, error } = await service.storage.from("catalogs").download(path);
@@ -296,7 +295,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     const userClient = await getSupabaseUserServerClient();
     const service = getSupabaseServiceRoleClient();
 
-    const tenant = await getTenantBySlug(userClient, slug);
+    const tenant = await getTenantBySlug(service, slug);
     const { role } = await assertMember(userClient, tenant.id);
     if (role === "staff") throw new Error("Solo owner/admin pueden actualizar el catálogo.");
 

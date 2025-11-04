@@ -498,7 +498,12 @@ function Highlight({ text, q }: { text: string; q: string }) {
 }
 
 /** ✅ ÚNICO cambio de firma: recibe slug */
-export default function PriceSearch({ slug }: { slug: string }) {
+type PriceSearchProps = {
+  slug: string;
+  canManageCatalog?: boolean;
+};
+
+export default function PriceSearch({ slug, canManageCatalog = false }: PriceSearchProps) {
   const { items, count, importedAt, sourceMode, loading, error, notice, onUpload, refresh } = usePrices(slug);
   const [q, setQ] = React.useState("");
   const qDebounced = useDebounced(q, 180);
@@ -630,16 +635,18 @@ export default function PriceSearch({ slug }: { slug: string }) {
                   Resultados máx.: {LIMIT}
                 </span>
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    className="h-10 rounded-xl px-3 text-xs font-medium"
-                    title="Actualizar precios (subir archivo)"
-                    onClick={() => fileRef.current?.click()}
-                    disabled={loading}
-                    aria-busy={loading}
-                  >
-                    <Upload className="mr-2 h-4 w-4" /> Importar precios
-                  </Button>
+                  {canManageCatalog && (
+                    <Button
+                      variant="outline"
+                      className="h-10 rounded-xl px-3 text-xs font-medium"
+                      title="Actualizar precios (subir archivo)"
+                      onClick={() => fileRef.current?.click()}
+                      disabled={loading}
+                      aria-busy={loading}
+                    >
+                      <Upload className="mr-2 h-4 w-4" /> Importar precios
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     className="h-10 w-10 rounded-xl p-0"
@@ -770,27 +777,29 @@ export default function PriceSearch({ slug }: { slug: string }) {
           </section>
 
           {/* Input file oculto */}
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
-            className="hidden"
-            onChange={(e) => {
-              const input = e.currentTarget;
-              const f = input.files?.[0];
-              if (f) {
-                (async () => {
-                  try {
-                    await onUpload(f);
-                  } finally {
-                    input.value = "";
-                  }
-                })();
-              } else {
-                input.value = "";
-              }
-            }}
-          />
+          {canManageCatalog && (
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const input = e.currentTarget;
+                const f = input.files?.[0];
+                if (f) {
+                  (async () => {
+                    try {
+                      await onUpload(f);
+                    } finally {
+                      input.value = "";
+                    }
+                  })();
+                } else {
+                  input.value = "";
+                }
+              }}
+            />
+          )}
 
           <div className="pb-24 md:pb-32" />
         </div>

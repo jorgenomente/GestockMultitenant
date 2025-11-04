@@ -43,13 +43,7 @@ const parseMembership = (row: MembershipQueryRow | null | undefined) => {
 export default async function TenantPriceSearchPage({ params }: PageProps) {
   const { slug } = await params;
   const supabase = await getSupabaseUserServerClient();
-
-  // 1) Usuario autenticado → si NO, redirigir a /login con ?next
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    const next = `/t/${slug}/prices`;
-    redirect(`/login?next=${encodeURIComponent(next)}`);
-  }
 
   let adminClient: ReturnType<typeof getSupabaseServiceRoleClient> | undefined;
 
@@ -57,6 +51,21 @@ export default async function TenantPriceSearchPage({ params }: PageProps) {
     adminClient ??= getSupabaseServiceRoleClient();
     return adminClient;
   };
+
+  if (!user) {
+    const admin = ensureAdminClient();
+    const { data: tenantRow, error: tenantErr } = await admin
+      .from("tenants")
+      .select("id, slug")
+      .eq("slug", slug)
+      .maybeSingle<TenantInfo>();
+
+    if (tenantErr || !tenantRow) {
+      notFound();
+    }
+
+    return <PriceSearch slug={slug} canManageCatalog={false} />;
+  }
 
   // 2) Intento A: membership + tenant por slug con cliente del usuario
   const { data: membershipRow } = await supabase
@@ -142,5 +151,6 @@ export default async function TenantPriceSearchPage({ params }: PageProps) {
   }
 
   // 5) Render
-  return <PriceSearch slug={slug} />;
+  const canManageCatalog = membership?.role === "owner" || membership?.role === "admin";
+  return <PriceSearch slug={slug} canManageCatalog={canManageCatalog} />;
 }
