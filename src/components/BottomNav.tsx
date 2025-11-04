@@ -15,6 +15,8 @@ import {
   BadgePercent,
   Palette,
   LineChart,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import React from "react";
 import clsx from "clsx";
@@ -42,7 +44,30 @@ export default function BottomNav() {
 
   // 2) Montado cliente para evitar hydration mismatch visual
   const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
+  const [collapsed, setCollapsed] = React.useState(false);
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        if (window.localStorage.getItem("gestock:desktop-nav-collapsed") === "true") {
+          setCollapsed(true);
+        }
+      } catch {
+        // Ignoramos el estado persistido si el acceso falla
+      }
+    }
+    setMounted(true);
+  }, []);
+
+  React.useEffect(() => {
+    if (!mounted || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("gestock:desktop-nav-collapsed", collapsed ? "true" : "false");
+    } catch {
+      // Ignoramos errores de persistencia
+    }
+  }, [collapsed, mounted]);
+
   if (!mounted) return null;
 
   const branchSlug = currentBranch?.slug ?? null;
@@ -113,38 +138,55 @@ export default function BottomNav() {
     { label: "Salir", icon: LogOut, onClick: logout },
   ];
 
+  const navClassName = clsx(
+    "fixed inset-x-0 bottom-0 z-40",
+    "border-t border-border/60",
+    "bg-sidebar text-muted-foreground",
+    "shadow-[var(--shadow-elevated)] backdrop-blur supports-[backdrop-filter]:backdrop-blur",
+    collapsed
+      ? "md:hidden"
+      : "md:static md:inset-auto md:bottom-auto md:z-0 md:flex md:min-h-dvh md:w-72 md:flex-col md:border-t-0 md:border-r md:border-border/60 md:bg-sidebar md:px-4 md:py-6 md:text-sidebar-foreground md:shadow-none md:backdrop-blur-none"
+  );
+
   return (
-    <nav
-      role="navigation"
-      aria-label="Navegación inferior"
-      className={clsx(
-        "fixed inset-x-0 bottom-0 z-40",
-        "border-t border-border/60",
-        "bg-sidebar text-muted-foreground",
-        "shadow-[var(--shadow-elevated)] backdrop-blur supports-[backdrop-filter]:backdrop-blur",
-        "md:static md:inset-auto md:bottom-auto md:z-0 md:flex md:min-h-dvh md:w-72 md:flex-col md:border-t-0 md:border-r md:border-border/60 md:bg-sidebar md:px-4 md:py-6 md:text-sidebar-foreground md:shadow-none md:backdrop-blur-none"
-      )}
-      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}
-    >
-      <div className="mx-auto w-full max-w-md md:max-w-full md:flex md:h-full md:flex-col md:gap-8">
-        <div className="hidden items-center gap-3 md:flex">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-primary shadow-sm">
-            G
-          </span>
-          <div className="flex flex-col">
-            <span className="text-base font-semibold tracking-tight text-sidebar-foreground">GeStock</span>
-            <span className="text-xs text-muted-foreground">Gestión simple</span>
+    <>
+      <nav
+        role="navigation"
+        aria-label="Navegación inferior"
+        className={navClassName}
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}
+      >
+        <div className="mx-auto w-full max-w-md md:max-w-full md:flex md:h-full md:flex-col md:gap-8">
+          <div className="hidden items-center justify-between gap-3 md:flex">
+            <div className="flex items-center gap-3">
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-primary shadow-sm">
+                G
+              </span>
+              <div className="flex flex-col">
+                <span className="text-base font-semibold tracking-tight text-sidebar-foreground">GeStock</span>
+                <span className="text-xs text-muted-foreground">Gestión simple</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCollapsed(true)}
+              className="hidden items-center gap-1 rounded-lg border border-border/50 bg-sidebar-accent/40 px-2 py-1 text-xs font-medium text-sidebar-foreground transition hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sidebar-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--sidebar)] md:inline-flex"
+              aria-label="Ocultar navegación"
+              aria-expanded={!collapsed}
+            >
+              <ChevronsLeft className="h-4 w-4" />
+              <span>Ocultar</span>
+            </button>
           </div>
-        </div>
-        <ul
-          className={clsx(
-            "flex items-stretch gap-1.5 px-3 py-1.5",
-            "overflow-x-auto flex-nowrap snap-x snap-mandatory",
-            "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-            "md:flex-1 md:flex-col md:items-stretch md:gap-1 md:overflow-visible md:px-0 md:py-0 md:snap-none"
-          )}
-          style={{ WebkitOverflowScrolling: "touch" }}
-        >
+          <ul
+            className={clsx(
+              "flex items-stretch gap-1.5 px-3 py-1.5",
+              "overflow-x-auto flex-nowrap snap-x snap-mandatory",
+              "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              "md:flex-1 md:flex-col md:items-stretch md:gap-1 md:overflow-visible md:px-0 md:py-0 md:snap-none"
+            )}
+            style={{ WebkitOverflowScrolling: "touch" }}
+          >
           {NAV_ITEMS.map((item) => {
             if (item.onlyRoles && (!role || !item.onlyRoles.includes(role))) {
               return null;
@@ -252,7 +294,21 @@ export default function BottomNav() {
             );
           })}
         </ul>
-      </div>
-    </nav>
+        </div>
+      </nav>
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        className={clsx(
+          "hidden fixed left-4 top-4 z-40 items-center gap-2 rounded-full border border-border/60 bg-sidebar px-3 py-2 text-sm font-medium text-sidebar-foreground shadow-sm transition hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sidebar-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--sidebar)]",
+          collapsed ? "md:flex" : "md:hidden"
+        )}
+        aria-label="Mostrar navegación"
+        aria-expanded={!collapsed}
+      >
+        <ChevronsRight className="h-4 w-4" />
+        <span>Mostrar menú</span>
+      </button>
+    </>
   );
 }

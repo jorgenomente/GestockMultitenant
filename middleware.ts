@@ -32,7 +32,11 @@ export async function middleware(req: NextRequest) {
   }
 
   const pathname = req.nextUrl.pathname;
-  const mustAuth = pathname.startsWith("/admin") || pathname.startsWith("/t/");
+  const tenantPriceSearchRx = /^\/t\/[^/]+\/(prices|pricesearch)\/?$/;
+  const isTenantPriceSearch = tenantPriceSearchRx.test(pathname);
+
+  const mustAuth =
+    (pathname.startsWith("/admin") || pathname.startsWith("/t/")) && !isTenantPriceSearch;
 
   if (mustAuth) {
     const { data: { user } } = await supabase.auth.getUser();
