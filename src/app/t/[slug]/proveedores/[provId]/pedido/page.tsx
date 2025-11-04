@@ -418,6 +418,19 @@ type Stats = {
   lastUnitRetail?: number;
   avgUnitRetail30d?: number;
 };
+type ProductStatsEntry = {
+  stats: Stats;
+  anchor: number;
+};
+type PendingTotals = {
+  orderId: string;
+  providerId: string;
+  orderTable: string;
+  weekId: string | null;
+  total: number;
+  qty: number;
+  updatedAt: string;
+};
 type XlsxModule = typeof import("xlsx");
 type StyledCell = CellObject & { s?: NonNullable<CellObject["s"]> };
 type CssVars = React.CSSProperties & Record<`--${string}`, string>;
@@ -463,6 +476,7 @@ type GroupSectionProps = {
   items: ItemRow[];
   productNames: string[];
   sales: SalesRow[];
+  statsByProduct: Map<string, ProductStatsEntry>;
   margin: number;
   tokenMatch: (...args: [string, string]) => boolean;
   placeholder: string;
@@ -860,9 +874,7 @@ async function getActiveSalesMeta(
   return { url: VENTAS_URL, tenant_id: tenantId ?? null, branch_id: branchId ?? null, scope_key: SALES_KEY_ROOT };
 }
 
-function computeStats(sales: SalesRow[], product: string, now = Date.now()): Stats {
-  const key = normKey(product);
-  const rows = sales.filter((s) => normKey(s.product) === key);
+function computeStatsFromRows(rows: SalesRow[], now = Date.now()): Stats {
   if (!rows.length) {
     return {
       avg4w: 0,
@@ -907,16 +919,26 @@ function computeStats(sales: SalesRow[], product: string, now = Date.now()): Sta
     avgUnitRetail30d,
   };
 }
+
+function computeStats(sales: SalesRow[], product: string, now = Date.now()): Stats {
+  const key = normKey(product);
+  const rows = sales.filter((s) => normKey(s.product) === key);
+  return computeStatsFromRows(rows, now);
+}
 const estCost = (st?: Stats, marginPct = 48) =>
   Math.round((st?.lastUnitRetail ?? st?.avgUnitRetail30d ?? 0) * (1 - marginPct / 100));
+
+function latestDateForRows(rows: SalesRow[]): number {
+  if (!rows.length) return Date.now();
+  const latest = rows.reduce((max, row) => (row.date > max ? row.date : max), rows[0].date);
+  return startOfDayUTC(latest);
+}
 
 /** Devuelve la última fecha registrada para un producto; si no hay, usa “hoy”. */
 function latestDateForProduct(sales: SalesRow[], product: string): number {
   const key = normKey(product);
   const rows = sales.filter((s) => normKey(s.product) === key);
-  if (!rows.length) return Date.now();
-  const latest = rows.reduce((max, row) => (row.date > max ? row.date : max), rows[0].date);
-  return startOfDayUTC(latest);
+  return latestDateForRows(rows);
 }
 
 const normalizeSearchParam = (value: string | null) => {
@@ -924,6 +946,13 @@ const normalizeSearchParam = (value: string | null) => {
   const trimmed = value.trim();
   if (!trimmed || trimmed === "null" || trimmed === "undefined") return null;
   return trimmed;
+};
+
+const EMPTY_STATS: Stats = {
+  avg4w: 0,
+  sum7d: 0,
+  sum2w: 0,
+  sum30d: 0,
 };
 
 /* =================== Página =================== */
@@ -1058,6 +1087,31 @@ export default function ProviderOrderPage() {
     return map;
   }, [sales]);
 
+  const statsByProduct = React.useMemo(() => {
+    const map = new Map<string, ProductStatsEntry>();
+    const keys = new Set<string>();
+
+    items.forEach((item) => {
+      if (item.product_name && item.product_name !== GROUP_PLACEHOLDER) {
+        keys.add(normKey(item.product_name));
+      }
+    });
+    salesByProduct.forEach((_rows, key) => {
+      keys.add(key);
+    });
+
+    keys.forEach((key) => {
+      const rows = salesByProduct.get(key) ?? [];
+      const anchor = latestDateForRows(rows);
+      map.set(key, {
+        stats: computeStatsFromRows(rows, anchor),
+        anchor,
+      });
+    });
+
+    return map;
+  }, [items, salesByProduct]);
+
   const actionableItems = React.useMemo(
     () => items.filter((item) => item.product_name !== GROUP_PLACEHOLDER),
     [items]
@@ -1088,8 +1142,10 @@ export default function ProviderOrderPage() {
     const byNameAsc = (a: ItemRow, b: ItemRow) =>
       a.product_name.localeCompare(b.product_name, "es", { sensitivity: "base" });
     const byNameDesc = (a: ItemRow, b: ItemRow) => -byNameAsc(a, b);
-    const avg = (name: string) =>
-      computeStats(sales, name, latestDateForProduct(sales, name)).avg4w || 0;
+    const avg = (name: string) => {
+      const entry = statsByProduct.get(normKey(name));
+      return entry?.stats.avg4w || 0;
+    };
 
     const ordered: ItemRow[] = [];
     for (const name of sortedGroupNames) {
@@ -1105,7 +1161,7 @@ export default function ProviderOrderPage() {
     }
 
     return ordered;
-  }, [actionableItems, groupOrder, sortMode, sales]);
+  }, [actionableItems, groupOrder, sortMode, statsByProduct]);
 
   const computeSalesSinceStock = React.useCallback(
     (productName: string, fromTs: number | null) => {
@@ -1938,6 +1994,79 @@ React.useEffect(() => {
     if (openGroup && !names.includes(openGroup)) setOpenGroup(undefined);
   }, [groups, openGroup]);
 
+  const totalsDebounceRef = React.useRef<number | null>(null);
+  const pendingTotalsRef = React.useRef<PendingTotals | null>(null);
+
+  const flushPendingTotals = React.useCallback(async () => {
+    const pending = pendingTotalsRef.current;
+    if (!pending) return;
+    pendingTotalsRef.current = null;
+
+    const { orderId, providerId, orderTable, weekId, total, qty, updatedAt } = pending;
+
+    try {
+      const mutations: Array<Promise<unknown>> = [
+        supabase.from(orderTable).update({ total }).eq("id", orderId),
+        supabase
+          .from(TABLE_ORDER_SUMMARIES)
+          .upsert(
+            { provider_id: providerId, total, items: qty, updated_at: updatedAt },
+            { onConflict: "provider_id" },
+          ),
+      ];
+      if (weekId) {
+        mutations.push(
+          supabase
+            .from(TABLE_ORDER_SUMMARIES_WEEK)
+            .upsert(
+              { week_id: weekId, provider_id: providerId, total, items: qty, updated_at: updatedAt },
+              { onConflict: "week_id,provider_id" },
+            ),
+        );
+      }
+      await Promise.all(mutations);
+    } catch (err) {
+      console.error("flushOrderTotals error", err);
+    }
+  }, [supabase]);
+
+  const recomputeOrderTotal = React.useCallback((newItems?: ItemRow[]) => {
+    if (!order) return;
+
+    const rows = newItems ?? items;
+    const total = rows.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
+    const qty = rows.reduce((a, it) => a + (it.qty || 0), 0);
+    const updatedAt = new Date().toISOString();
+
+    pendingTotalsRef.current = {
+      orderId: order.id,
+      providerId: order.provider_id,
+      orderTable: ordersTable,
+      weekId: selectedWeekId ?? null,
+      total,
+      qty,
+      updatedAt,
+    };
+
+    if (totalsDebounceRef.current != null) window.clearTimeout(totalsDebounceRef.current);
+    totalsDebounceRef.current = window.setTimeout(() => {
+      totalsDebounceRef.current = null;
+      void flushPendingTotals();
+    }, 500);
+  }, [order, items, ordersTable, selectedWeekId, flushPendingTotals]);
+
+  React.useEffect(() => {
+    return () => {
+      if (totalsDebounceRef.current != null) window.clearTimeout(totalsDebounceRef.current);
+      void flushPendingTotals();
+    };
+  }, [flushPendingTotals]);
+
+  React.useEffect(() => {
+    if (!order?.id) return;
+    void flushPendingTotals();
+  }, [order?.id, flushPendingTotals]);
+
   // Totales
   const grandTotal = React.useMemo(() => items.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0), [items]);
   const grandQty   = React.useMemo(() => items.reduce((a, it) => a + (it.qty || 0), 0), [items]);
@@ -1955,34 +2084,6 @@ const checkedCount = React.useMemo(
 const allChecked = totalSelectable > 0 && checkedCount === totalSelectable;
 const someChecked = checkedCount > 0 && checkedCount < totalSelectable;
 const bulkState: CheckedState = allChecked ? true : someChecked ? "indeterminate" : false;
-
-  // Actualiza el total del pedido en DB y sincroniza el resumen en order_summaries
-async function recomputeOrderTotal(newItems?: ItemRow[]) {
-  const rows = newItems ?? items;
-  const total = rows.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
-  const qty   = rows.reduce((a, it) => a + (it.qty || 0), 0);
-  if (!order) return;
-
-  const updated_at = new Date().toISOString();
-
-  await supabase.from(ordersTable).update({ total }).eq('id', order.id);
-
-  await supabase
-    .from(TABLE_ORDER_SUMMARIES)
-    .upsert(
-      { provider_id: order.provider_id, total, items: qty, updated_at },
-      { onConflict: 'provider_id' }
-    );
-
-  if (selectedWeekId) {
-    await supabase
-      .from(TABLE_ORDER_SUMMARIES_WEEK)
-      .upsert(
-        { week_id: selectedWeekId, provider_id: order.provider_id, total, items: qty, updated_at },
-        { onConflict: 'week_id,provider_id' }
-      );
-  }
-}
 
 
 
@@ -2237,10 +2338,7 @@ async function applySuggested(mode: "week" | "2w" | "30d"): Promise<boolean> {
 
     setItems(next);
 
-    // si falla el recálculo del total, no lo tratamos como error fatal
-    await recomputeOrderTotal(next).catch((e) => {
-      console.warn("recomputeOrderTotal warning", e);
-    });
+    recomputeOrderTotal(next);
 
     return true;
   } catch (e) {
@@ -2274,7 +2372,7 @@ async function zeroAllQuantities() {
     if (error) throw error;
 
     // Recalcular total y sincronizar resumen
-    await recomputeOrderTotal(nextItems);
+    recomputeOrderTotal(nextItems);
   } catch (e) {
     console.error("zeroAllQuantities error", e);
     alert("No se pudo poner todo en 0. Volvé a intentar.");
@@ -2363,7 +2461,7 @@ async function addItem(product: string, groupName: string) {
     }
     if (table !== itemsTable) setItemsTable(table);
     setItems((prev) => [...prev, data as ItemRow]);
-    await recomputeOrderTotal();
+    recomputeOrderTotal();
     return;
   }
   alert('No se pudo agregar el producto.');
@@ -2411,7 +2509,7 @@ async function bulkAddItems(names: string[], groupName: string) {
     }
     if (table !== itemsTable) setItemsTable(table);
     setItems((prev) => [...prev, ...((data as ItemRow[]) ?? [])]);
-    await recomputeOrderTotal();
+    recomputeOrderTotal();
     return;
   }
   alert('No se pudieron agregar los productos.');
@@ -2422,17 +2520,47 @@ async function bulkAddItems(names: string[], groupName: string) {
     const toRemove = items.filter((r) => (r.group_name || null) === (groupName || null) && names.includes(r.product_name));
     if (!toRemove.length) return;
     const ids = toRemove.map((r) => r.id);
-    const { error } = await supabase.from(itemsTable).delete().in("id", ids);
-    if (error) { console.error(error); alert("No se pudieron quitar productos."); return; }
-    setItems((prev) => prev.filter((r) => !ids.includes(r.id)));
-    await recomputeOrderTotal();
+    const previousItems = items;
+
+    setItems(() => {
+      const next = previousItems.filter((r) => !ids.includes(r.id));
+      recomputeOrderTotal(next);
+      return next;
+    });
+
+    try {
+      const { error } = await supabase.from(itemsTable).delete().in("id", ids);
+      if (error) throw error;
+    } catch (error) {
+      console.error(error);
+      alert("No se pudieron quitar productos.");
+      setItems(() => {
+        recomputeOrderTotal(previousItems);
+        return previousItems;
+      });
+    }
   }
 
   async function removeItem(id: string) {
-    const { error } = await supabase.from(itemsTable).delete().eq("id", id);
-    if (error) { console.error(error); alert("No se pudo quitar el producto."); return; }
-    setItems((prev) => prev.filter((r) => r.id !== id));
-    await recomputeOrderTotal();
+    const previousItems = items;
+
+    setItems((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      recomputeOrderTotal(next);
+      return next;
+    });
+
+    try {
+      const { error } = await supabase.from(itemsTable).delete().eq("id", id);
+      if (error) throw error;
+    } catch (error) {
+      console.error(error);
+      alert("No se pudo quitar el producto.");
+      setItems(() => {
+        recomputeOrderTotal(previousItems);
+        return previousItems;
+      });
+    }
   }
 
   async function updateStock(id: string, stock: number | null) {
@@ -2459,24 +2587,40 @@ async function bulkAddItems(names: string[], groupName: string) {
   const safe = Math.max(0, Number.isFinite(unit_price) ? Math.round(unit_price) : 0);
   const nowIso = new Date().toISOString();
 
-  const { error } = await supabase
-    .from(itemsTable)
-    .update({ unit_price: safe, price_updated_at: nowIso }) // 👈 guarda sello de tiempo
-    .eq("id", id);
+  let previous: ItemRow | null = null;
+  let nextState: ItemRow[] = [];
 
-  if (error) {
+  setItems((prev) => {
+    nextState = prev.map((item) => {
+      if (item.id === id) {
+        previous = item;
+        return { ...item, unit_price: safe, price_updated_at: nowIso };
+      }
+      return item;
+    });
+    return nextState;
+  });
+
+  if (!previous) return;
+
+  recomputeOrderTotal(nextState);
+
+  try {
+    const { error } = await supabase
+      .from(itemsTable)
+      .update({ unit_price: safe, price_updated_at: nowIso })
+      .eq("id", id);
+
+    if (error) throw error;
+  } catch (error) {
     console.error(error);
     alert("No se pudo actualizar el precio.");
-    return;
+    setItems((current) => {
+      const rollback = current.map((item) => (item.id === id ? previous! : item));
+      recomputeOrderTotal(rollback);
+      return rollback;
+    });
   }
-
-  setItems((prev) =>
-    prev.map((r) =>
-      r.id === id ? { ...r, unit_price: safe, price_updated_at: nowIso } : r
-    )
-  );
-
-  await recomputeOrderTotal();
 }
 
 async function updatePackSize(id: string, pack: number | null) {
@@ -2497,10 +2641,36 @@ async function updatePackSize(id: string, pack: number | null) {
 
 
   async function updateQty(id: string, qty: number) {
-    const { error } = await supabase.from(itemsTable).update({ qty }).eq("id", id);
-    if (error) { console.error(error); alert("No se pudo actualizar la cantidad."); return; }
-    setItems((prev) => prev.map((r) => (r.id === id ? { ...r, qty } : r)));
-    await recomputeOrderTotal();
+    let previous: ItemRow | null = null;
+    let nextState: ItemRow[] = [];
+
+    setItems((prev) => {
+      nextState = prev.map((item) => {
+        if (item.id === id) {
+          previous = item;
+          return { ...item, qty };
+        }
+        return item;
+      });
+      return nextState;
+    });
+
+    if (!previous) return;
+
+    recomputeOrderTotal(nextState);
+
+    try {
+      const { error } = await supabase.from(itemsTable).update({ qty }).eq("id", id);
+      if (error) throw error;
+    } catch (error) {
+      console.error(error);
+      alert("No se pudo actualizar la cantidad.");
+      setItems((current) => {
+        const rollback = current.map((item) => (item.id === id ? previous! : item));
+        recomputeOrderTotal(rollback);
+        return rollback;
+      });
+    }
   }
   async function updateDisplayName(id: string, label: string) {
   const clean = (label || "").trim();
@@ -2562,7 +2732,7 @@ async function updatePackSize(id: string, pack: number | null) {
       .eq("group_name", gKey);
     if (error) { console.error(error); alert("No se pudo eliminar el grupo."); return; }
     setItems((prev) => prev.filter((r) => !groupIds.includes(r.id)));
-    await recomputeOrderTotal();
+    recomputeOrderTotal();
   }
 
     /* ===== Copiar lista simple (qty + nombre) ===== */
@@ -2976,7 +3146,7 @@ async function exportOrderAsXlsx() {
 
     const newItems = (inserted as ItemRow[]) ?? [];
     setItems(newItems);
-    await recomputeOrderTotal(newItems);
+    recomputeOrderTotal(newItems);
     applyImportedUIState({ checkedMap: {} });
     alert("Archivo importado correctamente ✅");
   }
@@ -3070,7 +3240,7 @@ async function exportOrderAsXlsx() {
 
     const newItems = (inserted as ItemRow[]) ?? [];
     setItems(newItems);
-    await recomputeOrderTotal(newItems);
+    recomputeOrderTotal(newItems);
 
     const validIds = new Set(newItems.map((it) => it.id));
     const groupOrderRaw = (parsed.groupOrder ?? parsed.group_order) as unknown;
@@ -3400,7 +3570,7 @@ async function exportOrderAsXlsx() {
 
     if (!normalizedItems.length) {
       setItems([]);
-      await recomputeOrderTotal([]);
+      recomputeOrderTotal([]);
       setHistoryOpen(false);
       return;
     }
@@ -3418,7 +3588,7 @@ async function exportOrderAsXlsx() {
 
     const newItems = (inserted as ItemRow[]) ?? [];
     setItems(newItems);
-    await recomputeOrderTotal(newItems);
+    recomputeOrderTotal(newItems);
     setHistoryOpen(false);
   }
 
@@ -4185,6 +4355,7 @@ async function exportOrderAsXlsx() {
                 items={arr}
                 productNames={productNames}
                 sales={sales}
+                statsByProduct={statsByProduct}
                 margin={margin}
                 tokenMatch={tokenMatch}
                 placeholder={GROUP_PLACEHOLDER}
@@ -4694,6 +4865,7 @@ function GroupSection(props: GroupSectionProps) {
     onMoveUp, onMoveDown, checkedMap, setItemChecked,
     containerProps, onUpdatePackSize, onUpdateStock,
     onRenameItemLabel, computeSalesSinceStock,
+    statsByProduct,
     statsOpenMap, onToggleStats
   } = props;
 
@@ -5122,8 +5294,10 @@ const mergedClassName = [
 
           {sortedVisible.map((it) => {
             const subtotal = (it.unit_price || 0) * (it.qty || 0);
-            const anchor = latestDateForProduct(sales, it.product_name);
-            const st = computeStats(sales, it.product_name, anchor);
+            const key = normKey(it.product_name);
+            const entry = statsByProduct.get(key);
+            const anchor = entry?.anchor ?? latestDateForProduct(sales, it.product_name);
+            const st = entry?.stats ?? EMPTY_STATS;
             const productLabel = (it.display_name?.trim() || it.product_name).trim();
             const lastStockTs = it.stock_updated_at ? new Date(it.stock_updated_at).getTime() : null;
             const pendingSales = lastStockTs ? computeSalesSinceStock(productLabel, lastStockTs) : 0;
