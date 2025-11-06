@@ -5243,8 +5243,10 @@ const mergedClassName = [
               <div className="py-1">
                 {suggestions.map((name, idx) => {
                   const checked = arrVisible.some((it) => it.product_name === name);
-                  const st = computeStats(sales, name, latestDateForProduct(sales, name));
-                  const uEst = Math.round((st?.lastUnitRetail ?? st?.avgUnitRetail30d ?? 0) * (1 - (margin / 100)));
+                  const statsEntry = statsByProduct.get(normKey(name));
+                  const stats = statsEntry?.stats ?? EMPTY_STATS;
+                  const uEstBase = stats.lastUnitRetail ?? stats.avgUnitRetail30d ?? 0;
+                  const uEst = Math.round(uEstBase * (1 - margin / 100));
                   const suggestionId = `suggestion-${normKey(groupName || "sin-grupo")}-${idx}`;
                   return (
                     <Label
