@@ -120,6 +120,16 @@ const DAY_LABELS_EXT: Record<number, string> = {
   0: DAYS[0], 1: DAYS[1], 2: DAYS[2], 3: DAYS[3], 4: DAYS[4], 5: DAYS[5], 6: DAYS[6],
   [-1]: "Sin día",
 };
+const FREQ_LABELS: Record<Freq, string> = {
+  SEMANAL: "Semanal",
+  QUINCENAL: "Quincenal",
+  MENSUAL: "Mensual",
+};
+const PAYMENT_LABELS: Record<PaymentMethod, string> = {
+  EFECTIVO: "Efectivo",
+  TRANSFERENCIA: "Transferencia",
+};
+const FREQ_ORDER: readonly Freq[] = ["SEMANAL", "QUINCENAL", "MENSUAL"];
 
 const SALES_KEY_ROOT = "sales_url";
 const salesKeyForScope = (tenantId?: string | null, branchId?: string | null) => {
@@ -407,6 +417,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const [importingData, setImportingData] = React.useState(false);
   const [importingOrders, setImportingOrders] = React.useState(false);
   const [copyingData, setCopyingData] = React.useState(false);
+  const [downloadingExcel, setDownloadingExcel] = React.useState(false);
   const [downloadingJson, setDownloadingJson] = React.useState(false);
   const [downloadingOrders, setDownloadingOrders] = React.useState(false);
   const [exportDialogOpen, setExportDialogOpen] = React.useState(false);
@@ -2185,6 +2196,88 @@ const buildExportPayload = React.useCallback(async (
     }
   }, [branch, branchId, buildExportPayload, persistBranchSnapshot, tenantId]);
 
+  const handleDownloadExcel = React.useCallback(async () => {
+    if (!tenantId || !branchId) {
+      await showAlert("Seleccioná una sucursal antes de descargar.");
+      return;
+    }
+    if (!providers.length) {
+      await showAlert("No hay proveedores en esta sucursal para exportar.");
+      return;
+    }
+
+    setDownloadingExcel(true);
+    try {
+      const XLSX = await import("xlsx");
+
+      const sorted = [...providers].sort((a, b) => {
+        const freqDiff = FREQ_ORDER.indexOf(a.freq) - FREQ_ORDER.indexOf(b.freq);
+        if (freqDiff !== 0) return freqDiff;
+        return byName(a, b);
+      });
+
+      const header = [
+        "Proveedor",
+        "Frecuencia",
+        "Forma de pago",
+        "Día que se realiza",
+        "Día que se recibe",
+        "Responsable",
+      ] as const;
+
+      const rows = sorted.map((prov) => {
+        const freqLabel = FREQ_LABELS[prov.freq] ?? prov.freq;
+        const payment = PAYMENT_LABELS[normalizePayment(prov.payment_method)] ?? PAYMENT_LABELS.EFECTIVO;
+        const orderIdx = normalizeDay(prov.order_day);
+        const receiveIdx = normalizeDay(prov.receive_day);
+        const orderLabel = DAY_LABELS_EXT[orderIdx] ?? DAY_LABELS_EXT[-1];
+        const receiveLabel = DAY_LABELS_EXT[receiveIdx] ?? DAY_LABELS_EXT[-1];
+        return [
+          prov.name ?? "",
+          freqLabel,
+          payment,
+          orderLabel,
+          receiveLabel,
+          prov.responsible ?? "",
+        ];
+      });
+
+      const worksheet = XLSX.utils.aoa_to_sheet([
+        [...header],
+        ...rows,
+      ]);
+
+      worksheet["!cols"] = header.map((_, idx) => {
+        const base = idx === 0 ? 28 : idx === 2 ? 18 : 16;
+        return { wch: base };
+      });
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Proveedores");
+
+      const arrayBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([arrayBuffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      const safeSlug = branch?.trim() || branchId;
+      const today = new Date().toISOString().slice(0, 10);
+      anchor.download = `proveedores-${safeSlug}-${today}.xlsx`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("download excel error", err);
+      const message = err instanceof Error ? err.message : String(err);
+      await showAlert(`No se pudo generar el Excel.\n${message}`);
+    } finally {
+      setDownloadingExcel(false);
+    }
+  }, [branch, branchId, providers, tenantId]);
+
   const handleDownloadJson = React.useCallback(async () => {
     if (!tenantId || !branchId) {
       await showAlert("Seleccioná una sucursal antes de descargar.");
@@ -2862,6 +2955,15 @@ const buildExportPayload = React.useCallback(async (
               disabled={downloadingOrders || importingOrders || importingData || copyingData}
             >
               {downloadingOrders ? "Descargando pedidos…" : "Descargar pedidos"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-lg"
+              onClick={() => { void handleDownloadExcel(); }}
+              disabled={downloadingExcel || copyingData || importingData || importingOrders || downloadingOrders}
+            >
+              {downloadingExcel ? "Descargando Excel…" : "Descargar Excel"}
             </Button>
             <Button
               variant="outline"

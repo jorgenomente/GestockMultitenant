@@ -6,12 +6,13 @@ import React from "react";
 import * as XLSX from "xlsx";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { useBranch } from "@/components/branch/BranchProvider";
+import BarcodeScanner from "@/components/BarcodeScanner";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 /* UI */
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   Check,
   Trash2,
@@ -26,6 +27,7 @@ import {
   CalendarClock,
   Clock4,
   Flame,
+  Camera,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -87,6 +89,11 @@ type Draft = (
   }
 );
 
+type ScanFeedback = {
+  type: "success" | "warning";
+  text: string;
+};
+
 /* Outbox */
 type OutboxOp = "insert" | "update" | "delete";
 type OutboxEntry = {
@@ -125,6 +132,44 @@ type ExpirationArchiveInsertPayload = {
 
 /* =================== Utils =================== */
 const NBSP_RX = /[\u00A0\u202F]/g;
+const BARCODE_HEADER_ALIASES = [
+  "barcode",
+  "barra",
+  "barras",
+  "codigo barras",
+  "código barras",
+  "codigo de barras",
+  "código de barras",
+  "cod barras",
+  "cod. barras",
+  "ean",
+];
+
+const stripInvisibles = (s: string) => s.replace(NBSP_RX, " ");
+
+function normBarcode(val: unknown): string | undefined {
+  if (val == null) return undefined;
+  let s =
+    typeof val === "number"
+      ? Math.round(val).toLocaleString("en-US", { useGrouping: false })
+      : stripInvisibles(String(val));
+  s = s.trim();
+  if (!s) return undefined;
+  const compact = s.replace(/\s+/g, " ");
+  if (/[A-Za-z]/.test(compact)) return compact;
+  const digits = compact.replace(/\D+/g, "");
+  return digits || undefined;
+}
+
+function registerBarcode(index: Map<string, string>, raw: unknown, name: string) {
+  const normalized = normBarcode(raw);
+  if (!normalized) return;
+  if (!index.has(normalized)) index.set(normalized, name);
+  if (/^\d+$/.test(normalized)) {
+    const trimmed = normalized.replace(/^0+/, "");
+    if (trimmed && !index.has(trimmed)) index.set(trimmed, name);
+  }
+}
 const hasFreezerErr = (msg?: string) =>
   !!msg && /freezer/i.test(msg) && /column|schema/i.test(msg);
 
@@ -302,9 +347,12 @@ export default function VencimientosPage() {
   // Autocomplete
   const [suggestions, setSuggestions] = React.useState<string[]>([]);
   const suggestionsRef = React.useRef<string[]>([]);
+  const barcodeIndexRef = React.useRef<Map<string, string>>(new Map());
   const autoBoxRef = React.useRef<HTMLDivElement>(null);
+  const productInputRef = React.useRef<HTMLInputElement | null>(null);
   const [openDrop, setOpenDrop] = React.useState(false);
   const [activeIdx, setActiveIdx] = React.useState<number>(-1);
+  const [scanFeedback, setScanFeedback] = React.useState<ScanFeedback | null>(null);
 
   // Drafts
   const [drafts, setDrafts] = React.useState<Record<string, Draft>>({});
@@ -325,6 +373,7 @@ export default function VencimientosPage() {
   const [qty, setQty] = React.useState<number | "">(1);
   const [newFreezer, setNewFreezer] = React.useState<boolean>(false);
   const [registerModalOpen, setRegisterModalOpen] = React.useState(false);
+  const [scannerOpen, setScannerOpen] = React.useState(false);
 
   const [items, setItems] = React.useState<ExpItem[]>([]);
   const [archives, setArchives] = React.useState<ArchivedItem[]>([]);
@@ -529,14 +578,37 @@ export default function VencimientosPage() {
         const wb = XLSX.read(buf, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
-        const descKey = Object.keys(rows[0] || {}).find((k) => {
+        const headers = Object.keys(rows[0] || {});
+        const descKey = headers.find((k) => {
           const nk = normText(String(k));
           return nk === "descripcion" || nk.includes("descripcion");
         });
         if (!descKey) throw new Error("No se encontró la columna DESCRIPCIÓN");
-        const uniq = Array.from(new Set(rows.map((r) => String(r[descKey] ?? "").trim()).filter(Boolean)))
-          .sort((a, b) => a.localeCompare(b));
+
+        let barcodeKey: string | null = null;
+        for (const key of headers) {
+          const nk = normText(String(key));
+          if (BARCODE_HEADER_ALIASES.some((alias) => nk === alias || nk.includes(alias))) {
+            barcodeKey = key;
+            break;
+          }
+        }
+
+        const uniqNames = new Set<string>();
+        const barcodeIndex = new Map<string, string>();
+
+        for (const row of rows) {
+          const rawName = String(row[descKey] ?? "").trim();
+          if (!rawName) continue;
+          uniqNames.add(rawName);
+          if (barcodeKey) {
+            registerBarcode(barcodeIndex, row[barcodeKey], rawName);
+          }
+        }
+
+        const uniq = Array.from(uniqNames).sort((a, b) => a.localeCompare(b));
         suggestionsRef.current = uniq;
+        barcodeIndexRef.current = barcodeIndex;
       } catch (error: unknown) {
         setError(getErrorMessage(error, "No pude leer precios.xlsx"));
       }
@@ -706,7 +778,59 @@ export default function VencimientosPage() {
     return () => { supabase.removeChannel(ch); };
   }, [branchId, tenantId]);
 
+  React.useEffect(() => {
+    if (!registerModalOpen) {
+      setScannerOpen(false);
+      setScanFeedback(null);
+    }
+  }, [registerModalOpen]);
+
   /* ---------- Handlers ---------- */
+  const handleScannerClose = React.useCallback(() => {
+    setScannerOpen(false);
+    const node = productInputRef.current;
+    if (node) {
+      node.focus();
+      try {
+        const len = node.value.length;
+        node.setSelectionRange(len, len);
+      } catch {
+        /* selection range not supported */
+      }
+    }
+  }, []);
+
+  const handleScanDetected = React.useCallback(
+    (raw: string) => {
+      const normalized = normBarcode(raw);
+      if (!normalized) {
+        setScanFeedback({ type: "warning", text: "No se reconoció el código escaneado." });
+        handleScannerClose();
+        return;
+      }
+      const index = barcodeIndexRef.current;
+      const trimmed = normalized.replace(/^0+/, "");
+      const productName = index.get(normalized) || index.get(trimmed) || null;
+
+      if (productName) {
+        setName(productName);
+        setOpenDrop(false);
+        setActiveIdx(-1);
+        setSuggestions([]);
+        setScanFeedback({ type: "success", text: `Producto detectado: ${productName}` });
+      } else {
+        setName(normalized);
+        setOpenDrop(false);
+        setActiveIdx(-1);
+        setSuggestions([]);
+        setScanFeedback({ type: "warning", text: `No encontramos el código ${normalized} en precios.xlsx.` });
+      }
+
+      handleScannerClose();
+    },
+    [handleScannerClose]
+  );
+
   function updateSuggestions(query: string) {
     const q = normText(query);
     if (!q) { setSuggestions([]); setOpenDrop(false); setActiveIdx(-1); return; }
@@ -715,7 +839,12 @@ export default function VencimientosPage() {
     setOpenDrop(found.length > 0);
     setActiveIdx(found.length ? 0 : -1);
   }
-  function onSelectSuggestion(s: string) { setName(s); setOpenDrop(false); setActiveIdx(-1); }
+  function onSelectSuggestion(s: string) {
+    setScanFeedback(null);
+    setName(s);
+    setOpenDrop(false);
+    setActiveIdx(-1);
+  }
   function onKeyDownName(e: React.KeyboardEvent<HTMLInputElement>) {
     if (!openDrop || suggestions.length === 0) return;
     if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1)); }
@@ -813,6 +942,7 @@ export default function VencimientosPage() {
     setSuggestions([]);
     setOpenDrop(false);
     setActiveIdx(-1);
+    setScanFeedback(null);
   }
 
   function onEditNameDraft(id: string, value: string) { setDraft(id, { name: value }); }
@@ -1378,58 +1508,88 @@ export default function VencimientosPage() {
             </Button>
           </DialogTrigger>
           <DialogContent className="max-w-2xl border-none bg-transparent p-0 shadow-none sm:max-w-3xl">
+            <DialogTitle className="sr-only">Registrar nuevo vencimiento</DialogTitle>
             <Card className="rounded-3xl border border-border/40 bg-[color:var(--surface-nav-hover)] shadow-[0_24px_60px_-30px_rgba(0,0,0,0.85)]">
               <CardContent className={`space-y-4 ${compact ? "px-4 py-4" : "px-6 py-6"}`}>
                 <div className="relative" ref={autoBoxRef}>
                   <label htmlFor="prod" className="mb-2 block text-sm font-semibold text-card-foreground">
                     Producto (autocompletar por DESCRIPCIÓN)
                   </label>
-                  <Input
-                    id="prod"
-                    value={name}
-                    onChange={(e) => {
-                      setName(e.target.value);
-                      updateSuggestions(e.target.value);
-                    }}
-                    onKeyDown={onKeyDownName}
-                    placeholder="Escribe para buscar…"
-                    autoComplete="off"
-                    aria-autocomplete="list"
-                    aria-expanded={openDrop}
-                    aria-controls="prod-suggestions"
-                    className={`${inputCls} w-full ${compact ? "text-sm" : "text-base"}`}
-                  />
-                  {openDrop && suggestions.length > 0 && (
-                    <div
-                      id="prod-suggestions"
-                      role="listbox"
-                      aria-label="Sugerencias de producto"
-                      className="absolute z-30 mt-2 max-h-60 w-full overflow-auto rounded-2xl border border-border/40 bg-[color:var(--surface-background-strong)] text-popover-foreground shadow-[0_28px_60px_-28px_rgba(0,0,0,0.85)] backdrop-blur-md"
-                    >
-                      {suggestions.map((s, i) => (
-                        <button
-                          key={s + i}
-                          type="button"
-                          role="option"
-                          aria-selected={i === activeIdx}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            setName(s);
-                            onSelectSuggestion(s);
-                          }}
-                          onMouseEnter={() => setActiveIdx(i)}
-                          className={`w-full px-4 py-2 text-left text-sm transition hover:bg-[color:var(--surface-overlay-muted)] ${
-                            i === activeIdx ? "bg-[color:var(--surface-overlay-muted)]" : ""
-                          }`}
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        ref={productInputRef}
+                        id="prod"
+                        value={name}
+                        onChange={(e) => {
+                          setScanFeedback(null);
+                          setName(e.target.value);
+                          updateSuggestions(e.target.value);
+                        }}
+                        onKeyDown={onKeyDownName}
+                        placeholder="Escribe para buscar…"
+                        autoComplete="off"
+                        aria-autocomplete="list"
+                        aria-expanded={openDrop}
+                        aria-controls="prod-suggestions"
+                        className={`${inputCls} w-full ${compact ? "text-sm" : "text-base"}`}
+                      />
+                      {openDrop && suggestions.length > 0 && (
+                        <div
+                          id="prod-suggestions"
+                          role="listbox"
+                          aria-label="Sugerencias de producto"
+                          className="absolute z-30 mt-2 max-h-60 w-full overflow-auto rounded-2xl border border-border/40 bg-[color:var(--surface-background-strong)] text-popover-foreground shadow-[0_28px_60px_-28px_rgba(0,0,0,0.85)] backdrop-blur-md"
                         >
-                          {s}
-                        </button>
-                      ))}
+                          {suggestions.map((s, i) => (
+                            <button
+                              key={s + i}
+                              type="button"
+                              role="option"
+                              aria-selected={i === activeIdx}
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                setName(s);
+                                onSelectSuggestion(s);
+                              }}
+                              onMouseEnter={() => setActiveIdx(i)}
+                              className={`w-full px-4 py-2 text-left text-sm transition hover:bg-[color:var(--surface-overlay-muted)] ${
+                                i === activeIdx ? "bg-[color:var(--surface-overlay-muted)]" : ""
+                              }`}
+                            >
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="outline"
+                      onClick={() => {
+                        setScanFeedback(null);
+                        setScannerOpen(true);
+                      }}
+                      title="Escanear código de barras"
+                      aria-label="Escanear código de barras"
+                      className="h-11 w-11 rounded-xl border border-border/40 bg-[color:var(--surface-muted)] text-card-foreground hover:bg-[color:var(--surface-muted-strong)]"
+                    >
+                      <Camera className="h-4 w-4" />
+                    </Button>
+                  </div>
                   {error && (
                     <p className="mt-2 text-xs text-red-500">
                       {error} (ruta: {PRECIOS_URL})
+                    </p>
+                  )}
+                  {scanFeedback && (
+                    <p
+                      className={`mt-2 text-xs ${
+                        scanFeedback.type === "success" ? "text-emerald-500" : "text-amber-500"
+                      }`}
+                    >
+                      {scanFeedback.text}
                     </p>
                   )}
                 </div>
@@ -1519,6 +1679,30 @@ export default function VencimientosPage() {
                 </div>
               </CardContent>
             </Card>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={scannerOpen}
+          onOpenChange={(open) => {
+            if (open) {
+              setScanFeedback(null);
+            } else {
+              handleScannerClose();
+            }
+          }}
+        >
+          <DialogContent className="max-w-xl border-none bg-transparent p-0 shadow-none" showCloseButton={false}>
+            <DialogTitle className="sr-only">Escanear código de barras</DialogTitle>
+            <div className="mx-auto max-w-xl space-y-4 rounded-3xl border border-border/40 bg-[color:var(--surface-background-strong)]/95 p-4 shadow-[0_24px_60px_-30px_rgba(0,0,0,0.88)]">
+              <div className="px-1">
+                <h2 className="text-base font-semibold text-card-foreground">Escanear código de barras</h2>
+                <p className="text-sm text-muted-foreground">
+                  Alineá el código dentro del recuadro. El resultado completa el producto automáticamente.
+                </p>
+              </div>
+              <BarcodeScanner onDetected={handleScanDetected} onClose={handleScannerClose} />
+            </div>
           </DialogContent>
         </Dialog>
 

@@ -105,7 +105,8 @@ function formatStats(item: DemoProviderOrderItem) {
 
 type StepperProps = {
   value: number;
-  onChange: (next: number) => void;
+  // eslint-disable-next-line no-unused-vars
+  onChange: (value: number) => void;
   unit?: string;
 };
 
@@ -394,4 +395,3 @@ export default function ProviderOrderDemoView({ providerId }: ProviderOrderDemoV
     </div>
   );
 }
-

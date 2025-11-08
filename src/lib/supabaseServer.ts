@@ -1,6 +1,6 @@
 // src/lib/supabaseServer.ts
 import { cookies } from "next/headers";
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 
 /**
@@ -14,12 +14,9 @@ export async function getSupabaseUserServerClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          return cookieStore.getAll().map(({ name, value }) => ({ name, value }));
         },
-        // En RSC no escribimos cookies
-        set() {},
-        remove() {},
       },
     }
   );
@@ -37,14 +34,13 @@ export async function getSupabaseRouteClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          return cookieStore.getAll().map(({ name, value }) => ({ name, value }));
         },
-        set(name: string, value: string, options: CookieOptions) {
-          cookieStore.set({ name, value, ...options });
-        },
-        remove(name: string, options: CookieOptions) {
-          cookieStore.set({ name, value: "", ...options });
+        setAll(cookies) {
+          cookies.forEach(({ name, value, options }) => {
+            cookieStore.set({ name, value, ...(options ?? {}) });
+          });
         },
       },
     }

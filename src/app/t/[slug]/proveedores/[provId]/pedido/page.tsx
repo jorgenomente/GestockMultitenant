@@ -503,6 +503,26 @@ type GroupSectionProps = {
 };
 
 type SortMode = "alpha_asc" | "alpha_desc" | "avg_desc" | "avg_asc";
+const SORT_MODES: SortMode[] = ["alpha_asc", "alpha_desc", "avg_desc", "avg_asc"];
+const isSortMode = (value: unknown): value is SortMode =>
+  typeof value === "string" && SORT_MODES.includes(value as SortMode);
+
+const UI_STATE_STORAGE_VERSION = 2;
+
+type StoredUiStatePayload = {
+  version: number;
+  checked?: Record<string, boolean>;
+  sortMode?: SortMode;
+  openGroup?: string | null;
+  statsOpen?: string[];
+};
+
+type ParsedUiState = {
+  checked: Record<string, boolean>;
+  sortMode?: SortMode;
+  openGroup?: string | null;
+  statsOpenIds: string[];
+};
 
 type SnapshotItem = {
   product_name: string;
@@ -568,10 +588,89 @@ type OrderExportJsonPayload = {
   items: OrderExportJsonItem[];
   groupOrder: string[];
   checkedMap: Record<string, boolean>;
+  uiState?: {
+    sortMode?: SortMode;
+    openGroup?: string | null;
+    statsOpenIds?: string[];
+  };
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const statsOpenIdsToMap = (ids: string[]): Record<string, boolean> =>
+  ids.reduce<Record<string, boolean>>((acc, id) => {
+    if (typeof id === "string" && id) acc[id] = true;
+    return acc;
+  }, {});
+
+const mapStatsOpenIds = (map: Record<string, boolean>): string[] =>
+  Object.entries(map)
+    .filter(([, value]) => Boolean(value))
+    .map(([key]) => key);
+
+const parseStoredUiState = (raw: unknown): ParsedUiState => {
+  const base: ParsedUiState = { checked: {}, sortMode: undefined, openGroup: undefined, statsOpenIds: [] };
+  if (!isRecord(raw)) return base;
+
+  const looksStructured =
+    typeof raw.version === "number" ||
+    isRecord(raw.checked) ||
+    typeof raw.sortMode === "string" ||
+    Array.isArray(raw.statsOpen) ||
+    raw.openGroup === null ||
+    typeof raw.openGroup === "string";
+
+  if (!looksStructured) {
+    const legacyChecked = Object.entries(raw).reduce<Record<string, boolean>>((acc, [key, value]) => {
+      if (typeof value === "boolean") acc[key] = value;
+      return acc;
+    }, {});
+    return { checked: legacyChecked, sortMode: undefined, openGroup: undefined, statsOpenIds: [] };
+  }
+
+  const checkedRaw = isRecord(raw.checked) ? raw.checked : undefined;
+  const checked = checkedRaw
+    ? Object.entries(checkedRaw).reduce<Record<string, boolean>>((acc, [key, value]) => {
+        if (typeof value === "boolean") acc[key] = value;
+        return acc;
+      }, {})
+    : {};
+
+  const sortMode = isSortMode(raw.sortMode) ? (raw.sortMode as SortMode) : undefined;
+  const openGroup =
+    raw.openGroup === null || typeof raw.openGroup === "string"
+      ? (raw.openGroup as string | null)
+      : undefined;
+  const statsOpenIds = Array.isArray(raw.statsOpen)
+    ? (raw.statsOpen as unknown[]).filter((id): id is string => typeof id === "string" && id.length > 0)
+    : [];
+
+  return { checked, sortMode, openGroup, statsOpenIds };
+};
+
+const buildStoredUiStatePayload = (args: {
+  checked: Record<string, boolean>;
+  sortMode: SortMode;
+  openGroup: string | null;
+  statsOpenIds: string[];
+}): StoredUiStatePayload => ({
+  version: UI_STATE_STORAGE_VERSION,
+  checked: { ...args.checked },
+  sortMode: args.sortMode,
+  openGroup: args.openGroup,
+  statsOpen: [...args.statsOpenIds],
+});
+
+const shallowEqualRecord = (a: Record<string, boolean>, b: Record<string, boolean>): boolean => {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+};
 
 /* ========= Drag & Drop de grupos (HTML5 nativo) ========= */
 import { GripVertical } from "lucide-react";
@@ -1011,9 +1110,6 @@ export default function ProviderOrderPage() {
   const [lastStockAppliedAt, setLastStockAppliedAt] = React.useState<string | null>(null);
   const [stockUndoSnapshot, setStockUndoSnapshot] = React.useState<StockUndoSnapshot | null>(null);
   const [statsOpenMap, setStatsOpenMap] = React.useState<Record<string, boolean>>({});
-  const toggleStats = React.useCallback((id: string) => {
-    setStatsOpenMap((prev) => ({ ...prev, [id]: !prev[id] }));
-  }, []);
 
   const filterInputRef = React.useRef<HTMLInputElement | null>(null);
   const floatingFilterStyle = React.useMemo<React.CSSProperties>(() => ({
@@ -1597,8 +1693,18 @@ export default function ProviderOrderPage() {
         console.error("loadUIState error", error);
         return;
       }
-      if (data?.group_order) setGroupOrder(data.group_order as string[]);
-      if (data?.checked_map) setCheckedMap(data.checked_map as Record<string, boolean>);
+      if (Array.isArray(data?.group_order)) {
+        const sanitized = (data.group_order as unknown[])
+          .filter((val): val is string => typeof val === "string" && val.trim().length > 0)
+          .map((val) => val.trim());
+        setGroupOrder(sanitized);
+      }
+
+      const parsedUI = parseStoredUiState(data?.checked_map);
+      setCheckedMap(parsedUI.checked);
+      if (parsedUI.sortMode) setSortMode(parsedUI.sortMode);
+      if (parsedUI.openGroup !== undefined) setOpenGroup(parsedUI.openGroup ?? undefined);
+      setStatsOpenMap(statsOpenIdsToMap(parsedUI.statsOpenIds));
     } catch (err) {
       console.error("loadUIState exception", err);
     }
@@ -1988,12 +2094,6 @@ React.useEffect(() => {
     return entries;
   }, [items, filter, groupOrder]);
 
-  // Mantener coherencia: si el grupo abierto ya no existe (renombre/eliminación), cerramos
-  React.useEffect(() => {
-    const names = groups.map(([g]) => g || "Sin grupo");
-    if (openGroup && !names.includes(openGroup)) setOpenGroup(undefined);
-  }, [groups, openGroup]);
-
   const totalsDebounceRef = React.useRef<number | null>(null);
   const pendingTotalsRef = React.useRef<PendingTotals | null>(null);
 
@@ -2121,16 +2221,18 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
 
 
 
-  async function saveUIState(orderId: string, patch: {
+  type UiStatePatch = {
     group_order?: string[];
-    checked_map?: Record<string, boolean>;
-  }) {
+    checked_map?: StoredUiStatePayload;
+  };
+
+  const saveUIState = React.useCallback(async (orderId: string, patch: UiStatePatch) => {
     try {
       type UiStateRow = {
         order_id: string;
         updated_at: string;
         group_order?: string[];
-        checked_map?: Record<string, boolean>;
+        checked_map?: StoredUiStatePayload;
       };
       const payload: UiStateRow = { order_id: orderId, updated_at: new Date().toISOString() };
       if (patch.group_order) payload.group_order = patch.group_order;
@@ -2143,25 +2245,127 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
     } catch (e) {
       console.error("saveUIState exception", e);
     }
-  }
+  }, [supabase]);
+
+  const persistUiState = React.useCallback(
+    (overrides?: {
+      checked?: Record<string, boolean>;
+      sortMode?: SortMode;
+      openGroup?: string | null | undefined;
+      statsOpenMap?: Record<string, boolean>;
+    }) => {
+      if (!order?.id) return;
+
+      const hasCheckedOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "checked") : false;
+      const hasSortOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "sortMode") : false;
+      const hasOpenOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "openGroup") : false;
+      const hasStatsOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "statsOpenMap") : false;
+
+      const nextChecked = hasCheckedOverride ? overrides!.checked ?? {} : checkedMap;
+      const nextSortMode = hasSortOverride ? overrides!.sortMode ?? sortMode : sortMode;
+      const nextOpenGroup = hasOpenOverride ? overrides!.openGroup ?? null : openGroup ?? null;
+      const nextStatsMap = hasStatsOverride ? overrides!.statsOpenMap ?? {} : statsOpenMap;
+
+      const payload = buildStoredUiStatePayload({
+        checked: nextChecked,
+        sortMode: nextSortMode,
+        openGroup: nextOpenGroup,
+        statsOpenIds: mapStatsOpenIds(nextStatsMap),
+      });
+
+      void saveUIState(order.id, { checked_map: payload });
+    },
+    [order?.id, checkedMap, sortMode, openGroup, statsOpenMap, saveUIState]
+  );
+
+  // Mantener coherencia: si el grupo abierto ya no existe (renombre/eliminación), cerramos
+  React.useEffect(() => {
+    const names = groups.map(([g]) => g || "Sin grupo");
+    if (openGroup && !names.includes(openGroup)) {
+      setOpenGroup(undefined);
+      persistUiState({ openGroup: null });
+    }
+  }, [groups, openGroup, persistUiState]);
+
+  React.useEffect(() => {
+    const validIds = new Set(items.map((it) => it.id));
+
+    const sanitizedChecked = Object.entries(checkedMap).reduce<Record<string, boolean>>((acc, [id, value]) => {
+      if (validIds.has(id)) acc[id] = Boolean(value);
+      return acc;
+    }, {});
+
+    const sanitizedStats = Object.entries(statsOpenMap).reduce<Record<string, boolean>>((acc, [id, value]) => {
+      if (validIds.has(id) && value) acc[id] = true;
+      return acc;
+    }, {});
+
+    const checkedChanged = !shallowEqualRecord(checkedMap, sanitizedChecked);
+    const statsChanged = !shallowEqualRecord(statsOpenMap, sanitizedStats);
+
+    if (!checkedChanged && !statsChanged) return;
+
+    if (checkedChanged) setCheckedMap(sanitizedChecked);
+    if (statsChanged) setStatsOpenMap(sanitizedStats);
+    persistUiState({ checked: sanitizedChecked, statsOpenMap: sanitizedStats });
+  }, [items, checkedMap, statsOpenMap, persistUiState]);
 
   function applyImportedUIState(opts: {
     groupOrder?: string[];
     checkedMap?: Record<string, boolean>;
+    sortMode?: SortMode;
+    openGroup?: string | null;
+    statsOpenIds?: string[];
   }) {
-    const patch: { group_order?: string[]; checked_map?: Record<string, boolean> } = {};
+    const patch: UiStatePatch = {};
     if (opts.groupOrder !== undefined) {
       setGroupOrder(opts.groupOrder);
       patch.group_order = opts.groupOrder;
     }
-    if (opts.checkedMap !== undefined) {
-      setCheckedMap(opts.checkedMap);
-      patch.checked_map = opts.checkedMap;
+
+    const hasUiOverrides =
+      opts.checkedMap !== undefined ||
+      opts.sortMode !== undefined ||
+      opts.openGroup !== undefined ||
+      opts.statsOpenIds !== undefined;
+
+    if (hasUiOverrides) {
+      const resolvedChecked = opts.checkedMap ?? checkedMap;
+      const resolvedSortMode = opts.sortMode ?? sortMode;
+      const resolvedOpenGroup = opts.openGroup !== undefined ? opts.openGroup : openGroup ?? null;
+      const resolvedStatsMap = opts.statsOpenIds !== undefined ? statsOpenIdsToMap(opts.statsOpenIds) : statsOpenMap;
+
+      if (opts.checkedMap !== undefined) setCheckedMap(resolvedChecked);
+      if (opts.sortMode !== undefined) setSortMode(resolvedSortMode);
+      if (opts.openGroup !== undefined) setOpenGroup(resolvedOpenGroup ?? undefined);
+      if (opts.statsOpenIds !== undefined) setStatsOpenMap(resolvedStatsMap);
+
+      const payload = buildStoredUiStatePayload({
+        checked: resolvedChecked,
+        sortMode: resolvedSortMode,
+        openGroup: resolvedOpenGroup,
+        statsOpenIds: mapStatsOpenIds(resolvedStatsMap),
+      });
+      patch.checked_map = payload;
     }
+
     if (order?.id && (patch.group_order !== undefined || patch.checked_map !== undefined)) {
       void saveUIState(order.id, patch);
     }
   }
+
+  const toggleStats = React.useCallback(
+    (id: string) => {
+      setStatsOpenMap((prev) => {
+        const next = { ...prev };
+        if (next[id]) delete next[id];
+        else next[id] = true;
+        persistUiState({ statsOpenMap: next });
+        return next;
+      });
+    },
+    [persistUiState]
+  );
 
   // Persistir orden de grupos
   function persistGroupOrder(next: string[]) {
@@ -2204,7 +2408,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
   function setItemChecked(id: string, val: boolean) {
     setCheckedMap((prev) => {
       const next = { ...prev, [id]: val };
-      if (order?.id) void saveUIState(order.id, { checked_map: next });
+      persistUiState({ checked: next });
       return next;
     });
   }
@@ -2217,7 +2421,7 @@ function setAllChecked(val: boolean) {
         next[it.id] = val;
       }
     }
-    if (order?.id) void saveUIState(order.id, { checked_map: next });
+    persistUiState({ checked: next });
     return next;
   });
 }
@@ -3004,6 +3208,8 @@ async function exportOrderAsXlsx() {
     const cleanedCheckedMap = Object.fromEntries(
       Object.entries(checkedMap).filter(([id]) => validIds.has(id)).map(([id, val]) => [id, Boolean(val)])
     );
+    const statsOpenIds = mapStatsOpenIds(statsOpenMap).filter((id) => validIds.has(id));
+    const currentOpenGroup = openGroup ?? null;
 
     return {
       kind: ORDER_EXPORT_KIND,
@@ -3038,6 +3244,11 @@ async function exportOrderAsXlsx() {
       })),
       groupOrder: [...groupOrder],
       checkedMap: cleanedCheckedMap,
+      uiState: {
+        sortMode,
+        openGroup: currentOpenGroup,
+        statsOpenIds,
+      },
     };
   }
 
@@ -3249,17 +3460,37 @@ async function exportOrderAsXlsx() {
       : undefined;
 
     const checkedMapRaw = (parsed.checkedMap ?? parsed.checked_map) as unknown;
-    const sanitizedCheckedMap = isRecord(checkedMapRaw)
+    const legacyChecked = isRecord(checkedMapRaw)
       ? Object.entries(checkedMapRaw).reduce<Record<string, boolean>>((acc, [id, val]) => {
           if (validIds.has(id)) acc[id] = Boolean(val);
           return acc;
         }, {})
       : {};
 
-    const uiPatch: { groupOrder?: string[]; checkedMap?: Record<string, boolean> } = {
-      checkedMap: sanitizedCheckedMap,
+    const uiStateRaw = isRecord(parsed.uiState) ? parsed.uiState : undefined;
+    const importedSortMode = uiStateRaw && isSortMode(uiStateRaw.sortMode) ? (uiStateRaw.sortMode as SortMode) : undefined;
+    const importedOpenGroup = uiStateRaw && (uiStateRaw.openGroup === null || typeof uiStateRaw.openGroup === "string")
+      ? (uiStateRaw.openGroup as string | null)
+      : undefined;
+    const importedStatsOpenIds = Array.isArray(uiStateRaw?.statsOpenIds)
+      ? (uiStateRaw!.statsOpenIds as unknown[]).filter(
+          (id): id is string => typeof id === "string" && validIds.has(id),
+        )
+      : undefined;
+
+    const uiPatch: {
+      groupOrder?: string[];
+      checkedMap?: Record<string, boolean>;
+      sortMode?: SortMode;
+      openGroup?: string | null;
+      statsOpenIds?: string[];
+    } = {
+      checkedMap: legacyChecked,
     };
     if (sanitizedGroupOrder !== undefined) uiPatch.groupOrder = sanitizedGroupOrder;
+    if (importedSortMode) uiPatch.sortMode = importedSortMode;
+    if (importedOpenGroup !== undefined) uiPatch.openGroup = importedOpenGroup;
+    if (importedStatsOpenIds !== undefined) uiPatch.statsOpenIds = importedStatsOpenIds;
     applyImportedUIState(uiPatch);
 
     alert("Pedido importado correctamente ✅");
@@ -4134,7 +4365,14 @@ async function exportOrderAsXlsx() {
         <div className="mt-1 flex items-center gap-2">
           {/* Select de orden, ocupa el espacio */}
           <div className="flex-1">
-            <Select value={sortMode} onValueChange={(v) => setSortMode(v as SortMode)}>
+            <Select
+              value={sortMode}
+              onValueChange={(v) => {
+                const next = v as SortMode;
+                setSortMode(next);
+                persistUiState({ sortMode: next });
+              }}
+            >
               <SelectTrigger id="sort-mode" className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-5 text-sm">
                 <SelectValue placeholder="Ordenar por..." />
               </SelectTrigger>
@@ -4341,7 +4579,11 @@ async function exportOrderAsXlsx() {
           type="single"
           collapsible
           value={openGroup}
-          onValueChange={(v) => setOpenGroup((v as string) || undefined)}
+          onValueChange={(v) => {
+            const next = (v as string) || undefined;
+            setOpenGroup(next);
+            persistUiState({ openGroup: next ?? null });
+          }}
         >
           <DraggableGroupList
             groups={groups}
