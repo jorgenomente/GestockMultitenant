@@ -46,6 +46,7 @@ import {
   Plus, Minus, Search, Download, Upload, Trash2, ArrowLeft,
   History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package, Loader2, Save,
 } from "lucide-react";
+import { useVisualViewportBottomOffset, isStandaloneDisplayMode } from "@/lib/useVisualViewportBottomOffset";
 
 /* =================== Config =================== */
 const VENTAS_URL = "/ventas.xlsx";
@@ -108,6 +109,21 @@ async function ensureSalesBucketOnce() {
 const getVisualViewport = (): VisualViewport | null => {
   if (typeof window === "undefined") return null;
   return window.visualViewport ?? null;
+};
+
+const RECT_EPSILON = 0.5;
+const areRectsEqual = (
+  a: DOMRect | DOMRectReadOnly | null,
+  b: DOMRect | DOMRectReadOnly | null,
+) => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    Math.abs(a.top - b.top) < RECT_EPSILON &&
+    Math.abs(a.left - b.left) < RECT_EPSILON &&
+    Math.abs(a.width - b.width) < RECT_EPSILON &&
+    Math.abs(a.height - b.height) < RECT_EPSILON
+  );
 };
 
 type ErrorWithStatus = { statusCode?: unknown; status?: unknown; message?: unknown };
@@ -500,6 +516,8 @@ type GroupSectionProps = {
   statsOpenMap: Record<string, boolean>;
   onToggleStats: ToggleStatsHandler;
   containerProps?: React.HTMLAttributes<HTMLDivElement>;
+  bottomViewportOffset: number;
+  floatingActionBottomOffset: string;
 };
 
 type SortMode = "alpha_asc" | "alpha_desc" | "avg_desc" | "avg_asc";
@@ -1024,7 +1042,7 @@ function computeStats(sales: SalesRow[], product: string, now = Date.now()): Sta
   const rows = sales.filter((s) => normKey(s.product) === key);
   return computeStatsFromRows(rows, now);
 }
-const estCost = (st?: Stats, marginPct = 48) =>
+const estCost = (st?: Stats, marginPct = 45) =>
   Math.round((st?.lastUnitRetail ?? st?.avgUnitRetail30d ?? 0) * (1 - marginPct / 100));
 
 function latestDateForRows(rows: SalesRow[]): number {
@@ -1059,12 +1077,19 @@ export default function ProviderOrderPage() {
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
   const router = useRouter();
   const isDesktop = useMediaQuery("(min-width: 768px)");
+  const [isStandalone, setIsStandalone] = React.useState(false);
+  React.useEffect(() => {
+    setIsStandalone(isStandaloneDisplayMode());
+  }, []);
+
   const barsHidden = useHideBarsOnScroll({
     threshold: 5,
     revealOnStopMs: null,
     minYToHide: 24,
-    disabled: isDesktop,
+    disabled: isDesktop || isStandalone,
   });
+  const viewportBottomOffset = useVisualViewportBottomOffset();
+  const effectiveViewportOffset = isStandalone ? 0 : viewportBottomOffset;
 
   const params = useParams<{ slug: string; provId: string }>();
   const provId = String(params?.provId || "");
@@ -1095,7 +1120,7 @@ export default function ProviderOrderPage() {
   const [order, setOrder]   = React.useState<OrderRow | null>(null);
   const [items, setItems]   = React.useState<ItemRow[]>([]);
   const [sales, setSales]   = React.useState<SalesRow[]>([]);
-  const margin = 48;
+  const [marginPct, setMarginPct] = React.useState(45);
   const [filter, setFilter] = React.useState("");
   const [isFilterOpen, setIsFilterOpen] = React.useState(false);
   const [sortMode, setSortMode] = React.useState<SortMode>("alpha_asc");
@@ -1555,7 +1580,7 @@ export default function ProviderOrderPage() {
   const [checkedMap, setCheckedMap] = React.useState<Record<string, boolean>>({});
 
   // NUEVO: acordeón controlado (todos cerrados al entrar; uno abierto a la vez)
-  const [openGroup, setOpenGroup] = React.useState<string | undefined>(undefined);
+  const [openGroup, setOpenGroup] = React.useState<string>("");
 
   // NUEVO: meta + input file para Importar Ventas (Storage)
   const [salesMeta, setSalesMeta] = React.useState<{ source: "default" | "imported"; label: string }>({
@@ -1601,6 +1626,17 @@ export default function ProviderOrderPage() {
     }),
     [isDesktop, bottomNavHeightPx],
   );
+
+  const safeAreaBottom = "env(safe-area-inset-bottom, 0px)";
+  const baseBottomOffsetPx = isDesktop ? 0 : bottomNavHeightPx;
+  const footerBottomOffset = `calc(${safeAreaBottom} + ${baseBottomOffsetPx}px)`;
+  const floatingActionBottomOffset = `calc(${safeAreaBottom} + ${baseBottomOffsetPx + 120}px)`;
+
+  const footerTransform = React.useMemo(() => {
+    if (isStandalone) return undefined;
+    return effectiveViewportOffset ? `translate3d(0, ${effectiveViewportOffset}px, 0)` : undefined;
+  }, [effectiveViewportOffset, isStandalone]);
+
 
   React.useEffect(() => {
     if (tenantIdFromQuery && tenantIdFromQuery !== contextIds.tenantId) {
@@ -1703,7 +1739,7 @@ export default function ProviderOrderPage() {
       const parsedUI = parseStoredUiState(data?.checked_map);
       setCheckedMap(parsedUI.checked);
       if (parsedUI.sortMode) setSortMode(parsedUI.sortMode);
-      if (parsedUI.openGroup !== undefined) setOpenGroup(parsedUI.openGroup ?? undefined);
+      if (parsedUI.openGroup !== undefined) setOpenGroup(parsedUI.openGroup ?? "");
       setStatsOpenMap(statsOpenIdsToMap(parsedUI.statsOpenIds));
     } catch (err) {
       console.error("loadUIState exception", err);
@@ -2263,7 +2299,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
 
       const nextChecked = hasCheckedOverride ? overrides!.checked ?? {} : checkedMap;
       const nextSortMode = hasSortOverride ? overrides!.sortMode ?? sortMode : sortMode;
-      const nextOpenGroup = hasOpenOverride ? overrides!.openGroup ?? null : openGroup ?? null;
+      const nextOpenGroup = hasOpenOverride ? overrides!.openGroup ?? null : openGroup || null;
       const nextStatsMap = hasStatsOverride ? overrides!.statsOpenMap ?? {} : statsOpenMap;
 
       const payload = buildStoredUiStatePayload({
@@ -2282,7 +2318,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
   React.useEffect(() => {
     const names = groups.map(([g]) => g || "Sin grupo");
     if (openGroup && !names.includes(openGroup)) {
-      setOpenGroup(undefined);
+      setOpenGroup("");
       persistUiState({ openGroup: null });
     }
   }, [groups, openGroup, persistUiState]);
@@ -2332,12 +2368,12 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
     if (hasUiOverrides) {
       const resolvedChecked = opts.checkedMap ?? checkedMap;
       const resolvedSortMode = opts.sortMode ?? sortMode;
-      const resolvedOpenGroup = opts.openGroup !== undefined ? opts.openGroup : openGroup ?? null;
+      const resolvedOpenGroup = opts.openGroup !== undefined ? opts.openGroup : openGroup || null;
       const resolvedStatsMap = opts.statsOpenIds !== undefined ? statsOpenIdsToMap(opts.statsOpenIds) : statsOpenMap;
 
       if (opts.checkedMap !== undefined) setCheckedMap(resolvedChecked);
       if (opts.sortMode !== undefined) setSortMode(resolvedSortMode);
-      if (opts.openGroup !== undefined) setOpenGroup(resolvedOpenGroup ?? undefined);
+      if (opts.openGroup !== undefined) setOpenGroup(resolvedOpenGroup ?? "");
       if (opts.statsOpenIds !== undefined) setStatsOpenMap(resolvedStatsMap);
 
       const payload = buildStoredUiStatePayload({
@@ -2635,7 +2671,7 @@ async function addItem(product: string, groupName: string) {
   const tenantForInsert = order?.tenant_id ?? tenantId ?? tenantIdFromQuery ?? null;
   const branchForInsert = order?.branch_id ?? branchId ?? branchIdFromQuery ?? null;
   const st = computeStats(sales, product, latestDateForProduct(sales, product));
-  const unit = estCost(st, margin);
+  const unit = estCost(st, marginPct);
 
   const candidates = [itemsTable, ...ITEM_TABLE_CANDIDATES.filter((t) => t !== itemsTable)];
   for (const table of candidates) {
@@ -2684,7 +2720,7 @@ async function bulkAddItems(names: string[], groupName: string) {
       order_id: order.id,
       product_name: name,
       qty: st?.avg4w ?? 0,
-      unit_price: estCost(st, margin) || 0,
+      unit_price: estCost(st, marginPct) || 0,
       group_name: groupName || null,
     };
     if (tenantForInsert) payload.tenant_id = tenantForInsert;
@@ -3209,7 +3245,7 @@ async function exportOrderAsXlsx() {
       Object.entries(checkedMap).filter(([id]) => validIds.has(id)).map(([id, val]) => [id, Boolean(val)])
     );
     const statsOpenIds = mapStatsOpenIds(statsOpenMap).filter((id) => validIds.has(id));
-    const currentOpenGroup = openGroup ?? null;
+    const currentOpenGroup = openGroup || null;
 
     return {
       kind: ORDER_EXPORT_KIND,
@@ -4363,26 +4399,56 @@ async function exportOrderAsXlsx() {
           Ordenar items
         </Label>
         <div className="mt-1 flex items-center gap-2">
-          {/* Select de orden, ocupa el espacio */}
-          <div className="flex-1">
-            <Select
-              value={sortMode}
-              onValueChange={(v) => {
-                const next = v as SortMode;
-                setSortMode(next);
-                persistUiState({ sortMode: next });
-              }}
-            >
-              <SelectTrigger id="sort-mode" className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-5 text-sm">
-                <SelectValue placeholder="Ordenar por..." />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="alpha_asc">Alfabético A→Z</SelectItem>
-                <SelectItem value="alpha_desc">Alfabético Z→A</SelectItem>
-                <SelectItem value="avg_desc">Prom/sem ↓</SelectItem>
-                <SelectItem value="avg_asc">Prom/sem ↑</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="flex flex-1 items-center gap-3">
+            {/* Select de orden, ocupa el espacio */}
+            <div className="flex-1">
+              <Select
+                value={sortMode}
+                onValueChange={(v) => {
+                  const next = v as SortMode;
+                  setSortMode(next);
+                  persistUiState({ sortMode: next });
+                }}
+              >
+                <SelectTrigger id="sort-mode" className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-5 text-sm">
+                  <SelectValue placeholder="Ordenar por..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="alpha_asc">Alfabético A→Z</SelectItem>
+                  <SelectItem value="alpha_desc">Alfabético Z→A</SelectItem>
+                  <SelectItem value="avg_desc">Prom/sem ↓</SelectItem>
+                  <SelectItem value="avg_asc">Prom/sem ↑</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              <span>Margen P.E.</span>
+              <div className="relative text-[var(--foreground)]">
+                <Input
+                  id="pe-margin"
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={marginPct}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === "") {
+                      setMarginPct(0);
+                      return;
+                    }
+                    const parsed = Number(raw);
+                    if (Number.isNaN(parsed)) return;
+                    const clamped = Math.max(0, Math.min(100, parsed));
+                    setMarginPct(clamped);
+                  }}
+                  className="h-11 w-24 rounded-full border border-[var(--border)] bg-[var(--input-background)] pr-8 text-right text-sm font-medium uppercase tracking-normal"
+                  aria-label="Margen para precio estimado"
+                />
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground">%</span>
+              </div>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -4580,9 +4646,9 @@ async function exportOrderAsXlsx() {
           collapsible
           value={openGroup}
           onValueChange={(v) => {
-            const next = (v as string) || undefined;
+            const next = typeof v === "string" ? v : "";
             setOpenGroup(next);
-            persistUiState({ openGroup: next ?? null });
+            persistUiState({ openGroup: next || null });
           }}
         >
           <DraggableGroupList
@@ -4598,7 +4664,7 @@ async function exportOrderAsXlsx() {
                 productNames={productNames}
                 sales={sales}
                 statsByProduct={statsByProduct}
-                margin={margin}
+                margin={marginPct}
                 tokenMatch={tokenMatch}
                 placeholder={GROUP_PLACEHOLDER}
                 onAddItem={addItem}
@@ -4621,6 +4687,8 @@ async function exportOrderAsXlsx() {
                 statsOpenMap={statsOpenMap}
                 onToggleStats={toggleStats}
                 containerProps={containerProps} // <-- clave
+                bottomViewportOffset={effectiveViewportOffset}
+                floatingActionBottomOffset={floatingActionBottomOffset}
               />
             )}
           />
@@ -4631,9 +4699,11 @@ async function exportOrderAsXlsx() {
 
       {/* Footer */}
       <div
-        className={`fixed left-0 md:left-72 right-0 px-4 md:px-8 lg:px-10 pb-4 pt-2 z-50
-     bottom-[calc(env(safe-area-inset-bottom)+var(--bottom-nav-h))]
-     transition-transform duration-300 will-change-transform ${barsHidden ? "translate-y-full" : ""}`}
+        className="fixed left-0 right-0 z-50 px-4 pb-4 pt-2 transition-transform duration-300 will-change-transform md:left-72 md:px-8 lg:px-10"
+        style={{
+          transform: footerTransform,
+          bottom: footerBottomOffset,
+        }}
       >
         <div className="mx-auto w-full max-w-5xl rounded-[24px] border border-[var(--border)] bg-card/95 px-4 py-3 text-[var(--foreground)] shadow-card md:px-6 md:py-4">
           <div className="flex flex-col gap-3">
@@ -5108,7 +5178,10 @@ function GroupSection(props: GroupSectionProps) {
     containerProps, onUpdatePackSize, onUpdateStock,
     onRenameItemLabel, computeSalesSinceStock,
     statsByProduct,
-    statsOpenMap, onToggleStats
+    statsOpenMap, onToggleStats,
+    margin: marginPct,
+    bottomViewportOffset,
+    floatingActionBottomOffset,
   } = props;
 
   // === Estado del texto del buscador (queda ARRIBA del bloque nuevo)
@@ -5116,16 +5189,34 @@ function GroupSection(props: GroupSectionProps) {
 
   // ========= Refs/estado del dropdown + seguridad con teclado móvil =========
   const [open, setOpen] = React.useState(false);
+  const [isSearchFocused, setIsSearchFocused] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const portalRef = React.useRef<HTMLDivElement | null>(null);
   const [rect, setRect] = React.useState<DOMRect | null>(null);
+  const handleInputRef = React.useCallback((node: HTMLInputElement | null) => {
+    inputRef.current = node;
+    if (!node) return;
+    const nextRect = node.getBoundingClientRect();
+    setRect((prev) => {
+      if (areRectsEqual(prev, nextRect)) return prev;
+      return nextRect;
+    });
+  }, []);
+  const isMobileSearch = useMediaQuery("(max-width: 767px)");
+  const showFullscreenSearch = isMobileSearch && open;
+  const canUseDOM = typeof document !== "undefined";
+  const portalTarget = canUseDOM ? document.body : null;
+  const floatingActionTransform = bottomViewportOffset
+    ? `translate3d(0, ${bottomViewportOffset}px, 0)`
+    : undefined;
+
 
   const readRect = React.useCallback(() => {
     if (!inputRef.current) return;
     setRect(inputRef.current.getBoundingClientRect());
   }, []);
 
-  function ensureInputVisible() {
+  const ensureInputVisible = React.useCallback(() => {
     if (!inputRef.current) return;
     const r = inputRef.current.getBoundingClientRect();
     const viewport = getVisualViewport();
@@ -5135,7 +5226,21 @@ function GroupSection(props: GroupSectionProps) {
     const safeBottom = viewportOffsetTop + viewportHeight - 12;
     if (r.top >= safeTop && r.bottom <= safeBottom) return;
     inputRef.current.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
-  }
+  }, []);
+
+  const scrollInputToTop = React.useCallback(() => {
+    if (!inputRef.current || typeof window === "undefined") return;
+
+    const prefersTop = window.innerWidth < 1024;
+    if (!prefersTop) {
+      ensureInputVisible();
+      return;
+    }
+
+    const rectNow = inputRef.current.getBoundingClientRect();
+    const top = Math.max(window.scrollY + rectNow.top - 16, 0);
+    window.scrollTo({ top, behavior: "smooth" });
+  }, [ensureInputVisible]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -5147,7 +5252,7 @@ function GroupSection(props: GroupSectionProps) {
     const viewport = getVisualViewport();
     const onViewportChange = () => {
       update();
-      ensureInputVisible();
+      scrollInputToTop();
     };
     if (viewport) {
       viewport.addEventListener("resize", onViewportChange);
@@ -5155,9 +5260,10 @@ function GroupSection(props: GroupSectionProps) {
     }
 
     update();
+    scrollInputToTop();
     const t = setTimeout(() => {
       update();
-      ensureInputVisible();
+      scrollInputToTop();
     }, 80);
 
     return () => {
@@ -5168,6 +5274,31 @@ function GroupSection(props: GroupSectionProps) {
         viewport.removeEventListener("scroll", onViewportChange);
       }
       clearTimeout(t);
+    };
+  }, [open, readRect, scrollInputToTop]);
+
+  React.useLayoutEffect(() => {
+    if (!inputRef.current) return;
+    readRect();
+  }, [readRect]);
+
+  React.useLayoutEffect(() => {
+    if (!open) return;
+    if (typeof window === "undefined" || typeof ResizeObserver === "undefined") {
+      readRect();
+      return;
+    }
+
+    const el = inputRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver(() => {
+      readRect();
+    });
+    observer.observe(el);
+
+    return () => {
+      observer.disconnect();
     };
   }, [open, readRect]);
 
@@ -5186,8 +5317,18 @@ function GroupSection(props: GroupSectionProps) {
     };
   }, [open]);
 
+  React.useEffect(() => {
+    if (!showFullscreenSearch) return;
+    if (typeof document === "undefined") return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [showFullscreenSearch]);
+
   const portalStyle: React.CSSProperties = React.useMemo(() => {
-    if (!rect) return {};
+    if (!rect || showFullscreenSearch) return { display: "none" };
     const viewport = getVisualViewport();
     const viewportHeight = viewport?.height ?? window.innerHeight;
     const viewportOffsetTop = viewport?.offsetTop ?? 0;
@@ -5204,7 +5345,7 @@ function GroupSection(props: GroupSectionProps) {
       overflow: "auto",
       zIndex: 60,
     } as React.CSSProperties;
-  }, [rect]);
+  }, [rect, showFullscreenSearch]);
 
   const [editing, setEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(groupName || "Sin grupo");
@@ -5228,7 +5369,14 @@ const confirmedCount = React.useMemo(
 );
 
   const groupSubtotal = arrVisible.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
-  const suggestions = q ? productNames.filter((n) => tokenMatch(n, q)).slice(0, 50) : [];
+  const suggestions = React.useMemo(() => {
+    if (!q) return [] as string[];
+    const matches = productNames.filter((n) => tokenMatch(n, q));
+    return matches;
+  }, [productNames, q, tokenMatch]);
+  const inlineSuggestions = suggestions.slice(0, 6);
+  const shouldRenderInlineDropdown =
+    !showFullscreenSearch && open && rect && portalTarget && inlineSuggestions.length > 0;
 
   const sortedVisible = React.useMemo(() => {
     const arr = [...arrVisible];
@@ -5251,29 +5399,174 @@ const confirmedCount = React.useMemo(
     await onRenameGroup(groupName, nv === "Sin grupo" ? "" : nv);
   }
 
-  function scrollInputToTop() {
-    ensureInputVisible();
-  }
+  const renderSearchInput = React.useCallback((className?: string) => (
+    <div className={clsx("relative", className)}>
+      <Input
+        ref={handleInputRef}
+        value={q}
+        onFocus={() => {
+          setIsSearchFocused(true);
+          setOpen(true);
+          scrollInputToTop();
+          setTimeout(() => {
+            readRect();
+            scrollInputToTop();
+          }, 50);
+        }}
+        onChange={(e) => {
+          const text = e.target.value;
+          setQ(text);
+          if (!open) setOpen(true);
+          scrollInputToTop();
+          setTimeout(() => {
+            readRect();
+            scrollInputToTop();
+          }, 20);
+        }}
+        onBlur={() => {
+          setIsSearchFocused(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false);
+          if (e.key === "Enter") {
+            const name = q.trim(); if (!name) return;
+            const exists = arrVisible.some((it) => it.product_name === name);
+            if (!exists) void onAddItem(name, groupName);
+            setQ(""); setOpen(false);
+          }
+        }}
+        placeholder="Buscar producto…"
+        className="h-10 rounded-full border border-[var(--border)] bg-[var(--input-background)] pl-12 pr-12 text-sm shadow-inner"
+        aria-expanded={open}
+        aria-controls={`suggestions-${groupName || "sin"}`}
+        onFocusCapture={scrollInputToTop}
+        style={!showFullscreenSearch ? { scrollMarginTop: "calc(env(safe-area-inset-top) + 56px)" } : undefined}
+      />
+      <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      {q && (
+        <button
+          type="button"
+          className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted"
+          aria-label="Limpiar búsqueda"
+          onClick={() => { setQ(""); setOpen(false); inputRef.current?.focus(); }}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  ), [arrVisible, groupName, handleInputRef, open, q, readRect, scrollInputToTop, showFullscreenSearch]);
+
+  const SuggestionsContent = ({ scrollable }: { scrollable?: boolean }) => {
+    const entries = scrollable ? suggestions : inlineSuggestions;
+    const inner = (
+      <>
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--border)] bg-muted/40 px-3 py-2">
+          <div className="text-xs text-muted-foreground">{suggestions.length} resultados</div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={async () => {
+              if (onBulkAddItems) {
+                const toAdd = suggestions.filter((n) => !arrVisible.some((it) => it.product_name === n));
+                await onBulkAddItems(toAdd, groupName);
+              }
+            }}>
+              Seleccionar visibles
+            </Button>
+            <Button size="sm" variant="outline" onClick={async () => {
+              if (!onBulkRemoveByNames) return;
+              const names = suggestions.filter((n) => arrVisible.some((it) => it.product_name === n));
+              await onBulkRemoveByNames(names, groupName);
+            }}>
+              Deseleccionar visibles
+            </Button>
+          </div>
+        </div>
+
+        <div className="py-1">
+          {entries.map((name, idx) => {
+            const checked = arrVisible.some((it) => it.product_name === name);
+            const statsEntry = statsByProduct.get(normKey(name));
+            const stats = statsEntry?.stats ?? EMPTY_STATS;
+            const pv = stats.lastUnitRetail ?? stats.avgUnitRetail30d ?? 0;
+            const pe = Math.round(pv * (1 - marginPct / 100));
+            const suggestionId = `suggestion-${normKey(groupName || "sin-grupo")}-${idx}`;
+            return (
+              <Label
+                key={name}
+                htmlFor={suggestionId}
+                className="flex items-center gap-2 px-3 py-2 hover:bg-accent cursor-pointer"
+              >
+                <Checkbox
+                  id={suggestionId}
+                  checked={checked}
+                  onCheckedChange={async (v: CheckedState) => {
+                    if (v === true) {
+                      await onAddItem(name, groupName);
+                    } else {
+                      const it = arrVisible.find((r) => r.product_name === name);
+                      if (it) await onRemoveItem(it.id);
+                    }
+                  }}
+                  aria-label={`Seleccionar ${name}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium leading-snug text-[var(--foreground)] whitespace-normal break-words">
+                    {name}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-muted-foreground font-medium">
+                    <span>P.V.: {fmtMoney(pv)}</span>
+                    <span>P.E.: {fmtMoney(pe)}</span>
+                  </div>
+                </div>
+              </Label>
+            );
+          })}
+        </div>
+      </>
+    );
+
+    if (scrollable) {
+      return <div className="flex-1 overflow-y-auto">{inner}</div>;
+    }
+
+    return inner;
+  };
 
 const mergedClassName = [
   "mb-4 overflow-visible rounded-3xl border border-[var(--border)] bg-card/80 shadow-card",
   containerProps?.className || "",
 ].join(" ");
+type DragHandleProps = {
+  draggable?: boolean;
+  onDragStart?: React.DragEventHandler<any>;
+  onDragOver?: React.DragEventHandler<any>;
+  onDrop?: React.DragEventHandler<any>;
+  onDragEnd?: React.DragEventHandler<any>;
+};
+const dragHandleProps = React.useMemo<DragHandleProps>(() => {
+  if (!containerProps) return {};
+  const { className: _ignoredClassName, ...rest } = containerProps;
+  return {
+    draggable: Boolean(rest.draggable),
+    onDragStart: rest.onDragStart as React.DragEventHandler<any>,
+    onDragOver: rest.onDragOver as React.DragEventHandler<any>,
+    onDrop: rest.onDrop as React.DragEventHandler<any>,
+    onDragEnd: rest.onDragEnd as React.DragEventHandler<any>,
+  };
+}, [containerProps]);
 
   return (
   <AccordionItem
     value={groupName || "Sin grupo"}
-    // aplicamos DnD sin pisar className
-    draggable={containerProps?.draggable}
-    onDragStart={containerProps?.onDragStart}
-    onDragOver={containerProps?.onDragOver}
-    onDrop={containerProps?.onDrop}
-    onDragEnd={containerProps?.onDragEnd}
     className={mergedClassName}
   >
     {/* HEADER */}
     <AccordionTrigger
       ref={triggerRef}
+      draggable={dragHandleProps.draggable}
+      onDragStart={dragHandleProps.onDragStart}
+      onDragOver={dragHandleProps.onDragOver}
+      onDrop={dragHandleProps.onDrop}
+      onDragEnd={dragHandleProps.onDragEnd}
       className="rounded-t-3xl bg-muted/40 px-5 py-4 text-left text-base font-semibold text-[var(--foreground)] transition-colors data-[state=open]:rounded-b-none"
     >
       <div className="flex w-full items-center gap-3">
@@ -5408,52 +5701,10 @@ const mergedClassName = [
       <AccordionContent className="!overflow-visible rounded-b-3xl bg-card/70 px-5 pb-6">
           <div className="space-y-5">
           {/* Buscador */}
-          <div className="relative">
-            <Input
-              ref={inputRef}
-              value={q}
-              onFocus={() => {
-                setOpen(Boolean(q));
-                ensureInputVisible();
-                setTimeout(readRect, 50);
-              }}
-              onChange={(e) => {
-                const text = e.target.value;
-                setQ(text);
-                setOpen(Boolean(text));
-                //ensureInputVisible();
-                setTimeout(readRect, 20);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setOpen(false);
-                if (e.key === "Enter") {
-                  const name = q.trim(); if (!name) return;
-                  const exists = arrVisible.some((it) => it.product_name === name);
-                  if (!exists) void onAddItem(name, groupName);
-                  setQ(""); setOpen(false);
-                }
-              }}
-              placeholder="Buscar producto…"
-              className="h-10 rounded-full border border-[var(--border)] bg-[var(--input-background)] pl-12 pr-12 text-sm shadow-inner"
-              aria-expanded={open}
-              aria-controls={`suggestions-${groupName || "sin"}`}
-              onFocusCapture={scrollInputToTop}
-            />
-            <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            {q && (
-              <button
-                type="button"
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted"
-                aria-label="Limpiar búsqueda"
-                onClick={() => { setQ(""); setOpen(false); inputRef.current?.focus(); }}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
+          {!showFullscreenSearch && renderSearchInput()}
 
-          {/* Dropdown en portal */}
-          {open && q && rect && createPortal(
+          {/* Dropdown */}
+          {shouldRenderInlineDropdown && createPortal(
             <div
               id={`suggestions-${groupName || "sin"}`}
               ref={portalRef}
@@ -5461,74 +5712,62 @@ const mergedClassName = [
               className="rounded-md border bg-popover text-popover-foreground shadow"
               role="listbox"
             >
-              <div className="flex items-center justify-between gap-2 p-2 border-b bg-muted/40 sticky top-0">
-                <div className="text-xs text-muted-foreground">{suggestions.length} resultados</div>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="secondary" onClick={async () => {
-                    if (onBulkAddItems) {
-                      const toAdd = suggestions.filter((n) => !arrVisible.some((it) => it.product_name === n));
-                      await onBulkAddItems(toAdd, groupName);
-                    }
-                  }}>
-                    Seleccionar visibles
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={async () => {
-                    if (!onBulkRemoveByNames) return;
-                    const names = suggestions.filter((n) => arrVisible.some((it) => it.product_name === n));
-                    await onBulkRemoveByNames(names, groupName);
-                  }}>
-                    Deseleccionar visibles
-                  </Button>
-                </div>
-              </div>
-
-              <div className="py-1">
-                {suggestions.map((name, idx) => {
-                  const checked = arrVisible.some((it) => it.product_name === name);
-                  const statsEntry = statsByProduct.get(normKey(name));
-                  const stats = statsEntry?.stats ?? EMPTY_STATS;
-                  const uEstBase = stats.lastUnitRetail ?? stats.avgUnitRetail30d ?? 0;
-                  const uEst = Math.round(uEstBase * (1 - margin / 100));
-                  const suggestionId = `suggestion-${normKey(groupName || "sin-grupo")}-${idx}`;
-                  return (
-                    <Label
-                      key={name}
-                      htmlFor={suggestionId}
-                      className="flex items-center gap-2 px-3 py-2 hover:bg-accent cursor-pointer"
-                    >
-                      <Checkbox
-                        id={suggestionId}
-                        checked={checked}
-                        onCheckedChange={async (v: CheckedState) => {
-                          if (v === true) {
-                            await onAddItem(name, groupName);
-                          } else {
-                            const it = arrVisible.find((r) => r.product_name === name);
-                            if (it) await onRemoveItem(it.id);
-                          }
-                        }}
-                        aria-label={`Seleccionar ${name}`}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium truncate">{name}</div>
-                        <div className="text-xs text-muted-foreground">Precio est.: {fmtMoney(uEst)}</div>
-                      </div>
-                    </Label>
-                  );
-                })}
-              </div>
-
+              <SuggestionsContent />
               {q && !suggestions.find((s) => s.toLowerCase() === q.toLowerCase()) && (
                 <button
-                  className="w-full px-3 py-2 text-left hover:bg-accent border-t"
-                  onClick={() => { const name = q.trim(); if (!name) return; void onAddItem(name, groupName); setQ(""); setOpen(false); }}
+                  className="w-full border-t px-3 py-2 text-left hover:bg-accent"
+                  onClick={() => {
+                    const name = q.trim(); if (!name) return;
+                    void onAddItem(name, groupName);
+                    setQ("");
+                    setOpen(false);
+                  }}
                 >
                   <div className="text-xs text-muted-foreground">Agregar producto nuevo:</div>
                   <div className="font-medium">“{q}”</div>
                 </button>
               )}
             </div>,
-            document.body
+            portalTarget
+          )}
+
+          {showFullscreenSearch && portalTarget && createPortal(
+            <div ref={portalRef} className="fixed inset-0 z-[80] bg-[var(--background)]/95 backdrop-blur-sm">
+              <div className="mx-auto flex h-full w-full max-w-md flex-col px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-[calc(env(safe-area-inset-top)+16px)]">
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">{renderSearchInput()}</div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Cerrar buscador"
+                    className="h-10 w-10 rounded-full text-muted-foreground"
+                    onClick={() => { setOpen(false); inputRef.current?.blur(); }}
+                  >
+                    <X className="h-5 w-5" />
+                  </Button>
+                </div>
+
+                <div className="mt-4 flex flex-1 flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-card shadow-xl">
+                  <SuggestionsContent scrollable />
+                  {q && !suggestions.find((s) => s.toLowerCase() === q.toLowerCase()) && (
+                    <button
+                      className="w-full border-t px-4 py-3 text-left text-sm hover:bg-accent"
+                      onClick={() => {
+                        const name = q.trim(); if (!name) return;
+                        void onAddItem(name, groupName);
+                        setQ("");
+                        setOpen(false);
+                      }}
+                    >
+                      <div className="text-xs text-muted-foreground">Agregar producto nuevo:</div>
+                      <div className="font-medium">“{q}”</div>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>,
+            portalTarget
           )}
 
           {/* Items */}
@@ -5691,7 +5930,13 @@ const mergedClassName = [
 
           {/* Botón flotante para cerrar el grupo */}
           {!open && (
-            <div className="fixed inset-x-0 z-70 pointer-events-none bottom-[calc(env(safe-area-inset-bottom)+var(--bottom-nav-h)+120px)] px-3 md:px-6 lg:px-8">
+            <div
+              className="fixed inset-x-0 z-70 pointer-events-none px-3 md:px-6 lg:px-8"
+              style={{
+                bottom: floatingActionBottomOffset,
+                transform: floatingActionTransform,
+              }}
+            >
               <div className="mx-auto w-full max-w-md md:max-w-3xl lg:max-w-4xl flex justify-end">
                 <Button
                   size="icon"

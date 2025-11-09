@@ -22,6 +22,7 @@ import React from "react";
 import clsx from "clsx";
 import { useBranch } from "@/components/branch/BranchProvider";
 import { useLogout } from "@/lib/useLogout";
+import { useVisualViewportBottomOffset } from "@/lib/useVisualViewportBottomOffset";
 
 type NavItem = {
   label: string;
@@ -41,6 +42,7 @@ export default function BottomNav() {
   const slug = (slugParam ?? "").toString();
   const { currentBranch, loading: branchLoading, role } = useBranch();
   const { logout } = useLogout();
+  const viewportBottomOffset = useVisualViewportBottomOffset();
 
   // 2) Montado cliente para evitar hydration mismatch visual
   const [mounted, setMounted] = React.useState(false);
@@ -154,7 +156,10 @@ export default function BottomNav() {
         role="navigation"
         aria-label="Navegación inferior"
         className={navClassName}
-        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}
+        style={{
+          paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)",
+          transform: viewportBottomOffset ? `translate3d(0, ${viewportBottomOffset}px, 0)` : undefined,
+        }}
       >
         <div className="mx-auto w-full max-w-md md:max-w-full md:flex md:h-full md:flex-col md:gap-8">
           <div className="hidden items-center justify-between gap-3 md:flex">
