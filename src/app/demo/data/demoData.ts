@@ -1,24 +1,21 @@
 export const DASHBOARD_METRICS = [
   {
-    label: "Ventas del mes",
-    value: "$4,2M",
-    delta: "+12%",
-    trend: "up" as const,
-    context: "vs. abril 2024",
+    label: "Pedidos a realizar hoy",
+    value: "5 órdenes",
+    detail: "2 rutas críticas sin asignar",
+    context: "Sucursales Centro y Norte",
   },
   {
-    label: "Margen bruto",
-    value: "38,6%",
-    delta: "+3,1 pts",
-    trend: "up" as const,
-    context: "Objetivo: 36%",
+    label: "Pedidos a recibir hoy",
+    value: "4 entregas",
+    detail: "1 proveedor en ventanilla prioritaria",
+    context: "ETA promedio 13:45 h",
   },
   {
-    label: "Inventario útil",
-    value: "24 días",
-    delta: "-4 días",
-    trend: "down" as const,
-    context: "Cobertura promedio",
+    label: "Efectivo requerido",
+    value: "$1,8M",
+    detail: "Pagos a proveedores y logística",
+    context: "Cubierto al 82%",
   },
 ];
 

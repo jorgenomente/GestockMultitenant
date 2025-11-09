@@ -580,12 +580,15 @@ export default function EtiquetasPage() {
   // refs para detectar click afuera
   const wrapperRef = React.useRef<HTMLDivElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const skipBlurCommitRef = React.useRef<Set<string>>(new Set());
 
   // visibles (para select/deselect masivo)
   const [visibleIds, setVisibleIds] = React.useState<Set<string>>(new Set());
 
   // lista final para imprimir
   const [items, setItems] = React.useState<LabelItem[]>([]);
+  const [positionDrafts, setPositionDrafts] = React.useState<Record<string, string>>({});
 
   // feedback copiar
   const [copiedExcel, setCopiedExcel] = React.useState(false);
@@ -710,24 +713,64 @@ export default function EtiquetasPage() {
   const updateItem = (id: string, patch: Partial<LabelItem>) => {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   };
-  const moveUp = (idx: number) => {
-    if (idx <= 0) return;
+  const moveItem = (fromIdx: number, toIdx: number) => {
     setItems((prev) => {
+      if (fromIdx < 0 || fromIdx >= prev.length) return prev;
+      const clamped = Math.max(0, Math.min(prev.length - 1, toIdx));
+      if (clamped === fromIdx) return prev;
       const arr = prev.slice();
-      [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+      const [moved] = arr.splice(fromIdx, 1);
+      arr.splice(clamped, 0, moved);
       return arr;
     });
   };
+  const moveUp = (idx: number) => {
+    if (idx <= 0) return;
+    moveItem(idx, idx - 1);
+  };
   const moveDown = (idx: number) => {
-    setItems((prev) => {
-      if (idx >= prev.length - 1) return prev;
-      const arr = prev.slice();
-      [arr[idx + 1], arr[idx]] = [arr[idx], arr[idx + 1]];
-      return arr;
-    });
+    moveItem(idx, idx + 1);
   };
   const removeItem = (id: string) => {
     setItems((prev) => prev.filter((it) => it.id !== id));
+  };
+
+  const handlePositionInputChange = (id: string, value: string) => {
+    setPositionDrafts((prev) => ({ ...prev, [id]: value }));
+  };
+
+  const clearPositionDraft = (id: string) => {
+    setPositionDrafts((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const commitPositionChange = (id: string, fromIdx: number, rawValue: string) => {
+    const trimmed = rawValue.trim();
+    clearPositionDraft(id);
+    if (!trimmed) return;
+    const desired = Number(trimmed);
+    if (!Number.isFinite(desired)) return;
+    moveItem(fromIdx, Math.round(desired) - 1);
+  };
+
+  const handlePositionKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    id: string,
+    idx: number
+  ) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitPositionChange(id, idx, e.currentTarget.value);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      skipBlurCommitRef.current.add(id);
+      clearPositionDraft(id);
+      e.currentTarget.blur();
+    }
   };
 
   /* ====== Export XLSX: una sola columna (A:B:C) ====== */
@@ -1003,6 +1046,7 @@ function exportPlainXlsxFallback(items: LabelItem[]) {
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <Input
+                ref={searchInputRef}
                 placeholder="Buscar artículo (palabras en cualquier orden)..."
                 value={query}
                 onChange={(e) => {
@@ -1010,6 +1054,13 @@ function exportPlainXlsxFallback(items: LabelItem[]) {
                   setOpenDrop(true);
                 }}
                 onFocus={() => setOpenDrop(true)}
+                onDoubleClick={() => {
+                  if (typeof window === "undefined") return;
+                  const input = searchInputRef.current;
+                  if (!input) return;
+                  const top = input.getBoundingClientRect().top + window.scrollY - 16;
+                  window.scrollTo({ top: top < 0 ? 0 : top, behavior: "smooth" });
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setOpenDrop(false);
                   if (e.key === "Enter") addFreeItem();
@@ -1036,7 +1087,7 @@ function exportPlainXlsxFallback(items: LabelItem[]) {
               {openDrop && (
                 <div
                   ref={dropdownRef}
-                  className="absolute z-20 mt-1 w-full rounded-xl border bg-background shadow-lg max-h-[300px] overflow-auto"
+                  className="absolute z-20 mt-1 w-full rounded-xl border bg-background shadow-lg max-h-[480px] overflow-auto"
                 >
                   {/* Barra superior del dropdown */}
                   <div className="sticky top-0 z-10 bg-background p-2 flex items-center gap-2 border-b">
@@ -1090,13 +1141,7 @@ function exportPlainXlsxFallback(items: LabelItem[]) {
                             aria-label={inListBySourceKey(s.id) ? "Quitar de la lista" : "Agregar a la lista"}
                           />
                           <div className="flex-1 min-w-0">
-                            {/* 2 líneas con ellipsis, sin plugin */}
-                            <div
-                              className={[
-                                "font-medium leading-tight whitespace-normal break-words pr-2",
-                                "[display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical] overflow-hidden",
-                              ].join(" ")}
-                            >
+                            <div className="font-medium leading-tight whitespace-normal break-words pr-2">
                               {s.name}
                             </div>
                             <div className="text-xs text-muted-foreground">
@@ -1132,51 +1177,77 @@ function exportPlainXlsxFallback(items: LabelItem[]) {
             </div>
 
             <ul className="space-y-2">
-              {items.map((it, idx) => (
-                <li key={it.id} className="border rounded-xl p-2">
-                  <div className="flex items-start gap-2 flex-wrap">
-                    <Button
-                      size="icon"
-                      variant="secondary"
-                      onClick={() => moveUp(idx)}
-                      aria-label="Subir"
-                    >
-                      <ChevronUp className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="secondary"
-                      onClick={() => moveDown(idx)}
-                      aria-label="Bajar"
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
+              {items.map((it, idx) => {
+                const positionValue = positionDrafts[it.id] ?? String(idx + 1);
+                const positionInputId = `item-pos-${it.id}`;
+                return (
+                  <li key={it.id} className="border rounded-xl p-2">
+                    <div className="flex items-start gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id={positionInputId}
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          max={Math.max(1, items.length)}
+                          value={positionValue}
+                          onChange={(e) => handlePositionInputChange(it.id, e.target.value)}
+                          onBlur={(e) => {
+                            if (skipBlurCommitRef.current.has(it.id)) {
+                              skipBlurCommitRef.current.delete(it.id);
+                              return;
+                            }
+                            commitPositionChange(it.id, idx, e.target.value);
+                          }}
+                          onKeyDown={(e) => handlePositionKeyDown(e, it.id, idx)}
+                          aria-label={`Posición del ítem ${idx + 1}`}
+                          className="w-16 text-center"
+                        />
+                      </div>
 
-                    {/* textarea que muestra TODO el nombre (multilínea) */}
-                    <div className="flex-1 min-w-[140px]">
-                      <AutoGrowTextarea
-                        value={it.name}
-                        onChange={(e) => updateItem(it.id, { name: e.target.value })}
-                        aria-label="Nombre artículo"
-                      />
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        onClick={() => moveUp(idx)}
+                        aria-label="Subir"
+                      >
+                        <ChevronUp className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        onClick={() => moveDown(idx)}
+                        aria-label="Bajar"
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+
+                      {/* textarea que muestra TODO el nombre (multilínea) */}
+                      <div className="flex-1 min-w-[140px]">
+                        <AutoGrowTextarea
+                          value={it.name}
+                          onChange={(e) => updateItem(it.id, { name: e.target.value })}
+                          aria-label="Nombre artículo"
+                        />
+                      </div>
+
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => removeItem(it.id)}
+                        aria-label="Borrar"
+                      >
+                        <XIcon className="h-4 w-4" />
+                      </Button>
                     </div>
-
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => removeItem(it.id)}
-                      aria-label="Borrar"
-                    >
-                      <XIcon className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
 
             <div className="pt-2 flex items-center justify-between gap-2 flex-wrap">
               <div className="text-xs text-muted-foreground">
-                Editá nombre. Usá ↑↓ para ordenar. Enter en el buscador crea ítem.
+                Editá nombre. Usá ↑↓ o el número de posición para ordenar. Enter en el buscador crea ítem.
               </div>
               <div className="flex gap-2 flex-wrap">
                 <Button onClick={copiarTablaExcel} variant="secondary" className="gap-2" aria-label="Copiar para Excel">

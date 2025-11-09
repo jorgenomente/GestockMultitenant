@@ -8,46 +8,55 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   DASHBOARD_ACTIVITY,
   DASHBOARD_EXPIRIES,
   DASHBOARD_METRICS,
   DASHBOARD_SERIES,
 } from "../data/demoData";
-import { TrendingDown, TrendingUp } from "lucide-react";
+import { BarChart2, PackagePlus, Settings2 } from "lucide-react";
+
+const QUICK_ACTIONS = [
+  { label: "Hacer un pedido", icon: PackagePlus },
+  { label: "Estadísticas", icon: BarChart2 },
+  { label: "Configuración", icon: Settings2 },
+];
 
 export default function DashboardDemoView() {
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid gap-4 md:grid-cols-3">
-        {DASHBOARD_METRICS.map((metric) => (
-          <Card key={metric.label} className="h-full">
-            <CardHeader>
-              <CardTitle>{metric.label}</CardTitle>
-              <CardDescription>{metric.context}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="flex items-end justify-between gap-3">
-                <span className="text-3xl font-semibold tracking-tight">{metric.value}</span>
-                <Badge
-                  variant={metric.trend === "down" ? "destructive" : "default"}
-                  className="flex items-center gap-1 text-[0.65rem]"
-                >
-                  {metric.trend === "down" ? (
-                    <TrendingDown className="h-3.5 w-3.5" aria-hidden="true" />
-                  ) : (
-                    <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
-                  )}
-                  {metric.delta}
-                </Badge>
+      <Card className="border border-border/60 bg-background/70 shadow-[var(--shadow-card)]">
+        <CardHeader className="space-y-2">
+          <CardTitle>Métricas clave de la operación</CardTitle>
+          <CardDescription>Así amaneció tu negocio hoy.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-3">
+            {DASHBOARD_METRICS.map((metric) => (
+              <div
+                key={metric.label}
+                className="rounded-2xl border border-border/60 bg-background/70 p-4 shadow-sm"
+              >
+                <p className="text-sm font-semibold text-foreground">{metric.label}</p>
+                <p className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
+                  {metric.value}
+                </p>
+                <p className="mt-2 text-sm text-muted-foreground">{metric.detail}</p>
+                <p className="text-xs text-muted-foreground">{metric.context}</p>
               </div>
-              <div className="text-xs text-muted-foreground">
-                Pronóstico generado con base en histórico de 90 días.
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {QUICK_ACTIONS.map((action) => (
+              <Button key={action.label} variant="outline" className="gap-2">
+                <action.icon className="h-4 w-4" aria-hidden="true" />
+                {action.label}
+              </Button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-[1.15fr,0.85fr]">
         <Card>

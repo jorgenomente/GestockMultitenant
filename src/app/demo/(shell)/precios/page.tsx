@@ -12,7 +12,7 @@ export default function DemoPricesPage() {
     <div className="space-y-8">
       <DemoPageHeader
         title="Listas de precios"
-        description="Explorá cómo la demo calcula sugerencias inteligentes, resalta alertas y muestra el impacto antes de publicar cambios."
+        description="Explora cómo funciona el buscador de precios. Escribe una palabra, código de articulo o escanea el código de barras con la cámara de tu celular para ver el precio del artículo."
         badge="Precios"
       />
       <PricesDemoView />

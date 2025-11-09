@@ -12,6 +12,7 @@ import {
   Handshake,
   Palette,
   Settings2,
+  LogOut,
 } from "lucide-react";
 import { useDemoBranch } from "./DemoBranchProvider";
 
@@ -30,6 +31,7 @@ const DEMO_NAV_ITEMS: DemoNavItem[] = [
   { label: "Vencimientos", href: "/demo/vencimientos", icon: CalendarClock, requiresBranch: true },
   { label: "Configuración", href: "/demo/configuracion", icon: Settings2 },
   { label: "Temas", href: "/demo/temas", icon: Palette },
+  { label: "Salir", href: "/demo", icon: LogOut },
 ];
 
 export default function DemoBottomNav() {
@@ -71,6 +73,7 @@ export default function DemoBottomNav() {
             const Icon = item.icon;
             const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
             const isDisabled = item.requiresBranch && (loading || !branchSlug);
+            const isExit = item.href === "/demo";
 
             return (
               <li key={item.label} className="shrink-0 min-w-[76px] snap-start md:min-w-0 md:w-full">
@@ -86,11 +89,18 @@ export default function DemoBottomNav() {
                     "text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sidebar-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--sidebar)]",
                     "md:h-11 md:flex-row md:justify-start md:gap-3 md:rounded-xl md:border-l-4 md:border-transparent md:px-3 md:text-sm md:font-medium md:tracking-normal md:text-muted-foreground md:hover:border-primary md:hover:bg-sidebar-accent/60 md:hover:text-foreground",
                     isActive &&
-                      "text-foreground shadow-sm md:border-primary md:bg-sidebar-accent md:text-sidebar-foreground"
+                      "text-foreground shadow-sm md:border-primary md:bg-sidebar-accent md:text-sidebar-foreground",
+                    isExit &&
+                      "text-destructive hover:text-destructive focus-visible:ring-destructive md:hover:border-destructive md:hover:bg-destructive/10 md:text-destructive"
                   )}
                   aria-disabled={isDisabled}
                 >
-                  <Icon className="h-5 w-5 text-muted-foreground transition-transform group-hover:scale-105 group-hover:text-sidebar-foreground md:h-5 md:w-5 md:text-inherit" />
+                  <Icon
+                    className={clsx(
+                      "h-5 w-5 text-muted-foreground transition-transform group-hover:scale-105 group-hover:text-sidebar-foreground md:h-5 md:w-5 md:text-inherit",
+                      isExit && "text-destructive group-hover:text-destructive md:text-destructive"
+                    )}
+                  />
                   <span className="mt-0.5 group-hover:text-sidebar-foreground md:mt-0">
                     {item.label}
                   </span>

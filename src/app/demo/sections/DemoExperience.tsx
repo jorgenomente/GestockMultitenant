@@ -17,20 +17,20 @@ import OrdersDemoView from "../views/OrdersDemoView";
 import ExpiriesDemoView from "../views/ExpiriesDemoView";
 import { useDemoTheme } from "../components/DemoThemeProvider";
 import { cn } from "@/lib/utils";
-import { DEFAULT_BRANCH_THEME, type BranchThemeFormValues } from "@/lib/theme/branchTheme";
+import { DEFAULT_BRANCH_THEME, adjustLightness, type BranchThemeFormValues } from "@/lib/theme/branchTheme";
 
 const NAV_SECTIONS = [
   {
     id: "dashboard",
     label: "Inicio",
-    description: "Métricas clave y actividad reciente en todas las sucursales.",
+    description: "Métricas clave de la operación de tu negocio.",
     icon: LineChart,
     accent: "from-purple-500/20 via-blue-500/10 to-transparent",
   },
   {
     id: "prices",
     label: "Precios",
-    description: "Listas sincronizadas, márgenes sugeridos y simulaciones de cambio.",
+    description: "Chequea el precio de tus productos al instante con un scanner de código de barras integrado. Ideal para que los vendedores puedan asistir a los clientes en la búsqueda de precios sin abandonar la góndola.",
     icon: BarChart3,
     accent: "from-amber-500/20 via-orange-500/10 to-transparent",
   },
@@ -79,11 +79,14 @@ export default function DemoExperience() {
 
   return (
     <div className="relative isolate overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 -z-20 bg-[color:var(--color-dark-bg-main)]" />
-      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,var(--color-action-secondary-glow)_0%,rgba(0,5,20,0.85)_55%,rgba(2,6,23,1)_80%)]" />
-      <div className="pointer-events-none absolute inset-0 -z-10 opacity-80" style={{ background: "linear-gradient(120deg, rgba(64,112,255,0.08), rgba(255,79,133,0.05))" }} />
-      <div className="pointer-events-none absolute inset-x-0 top-48 -z-10 h-[70%] bg-[color:var(--surface-overlay-soft)]/30 blur-[140px]" />
-      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-24 bg-gradient-to-b from-white/5 to-transparent opacity-40" />
+      <div className="pointer-events-none absolute inset-0 -z-20" style={{ background: heroTone.pageBaseBackground }} />
+      <div className="pointer-events-none absolute inset-0 -z-10" style={{ background: heroTone.pageRadialOverlay }} />
+      <div className="pointer-events-none absolute inset-0 -z-10" style={{ background: heroTone.pageLinearOverlay }} />
+      <div
+        className="pointer-events-none absolute inset-x-0 top-48 -z-10 h-[70%] blur-[140px]"
+        style={{ background: heroTone.pageBlurOverlay }}
+      />
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-24" style={{ background: heroTone.pageTopGlow }} />
 
       <div className="mx-auto flex max-w-6xl flex-col gap-12 px-4 py-16 text-[color:var(--color-dark-text-primary)] sm:px-6 lg:px-8">
         <header
@@ -104,40 +107,28 @@ export default function DemoExperience() {
           >
             Demo guiada
           </Badge>
-          <div className="space-y-4">
+          <div className="space-y-5">
             <h1 className="text-balance text-4xl font-semibold tracking-tight text-[color:var(--color-dark-text-primary)] sm:text-5xl">
               Explorá Gestock
             </h1>
-            <p className="text-balance text-base text-[color:var(--color-dark-text-secondary)] sm:text-lg">
-              Navegá la interfaz de GeStock, optimizada para tiendas físicas multi-sucursal. Es una versión demostrativa, por lo que algunos módulos o acciones de escritura se encuentran limitados.
+            <p className="text-balance text-lg text-[color:var(--color-dark-text-primary)] sm:text-2xl">
+              Navegá la interfaz de GeStock, una aplicación web optimizada para organizar tiendas físicas.
+            </p>
+            <p className="text-balance text-sm text-white sm:text-base">
+              Esta es una versión demostrativa, el contenido de los módulos depende de las necesidades de cada negocio.
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <Button
               asChild
               variant="secondary"
-              className="border border-white/10 bg-gradient-to-r from-[color:var(--surface-action-primary-strong)] to-[color:var(--color-action-secondary-glow)] text-[color:var(--color-dark-text-primary)] shadow-[0_15px_40px_rgba(110,91,255,0.35)] transition-all hover:scale-[1.01]"
+              className="border border-white/20 bg-gradient-to-r from-[#0F172A] via-[#1E1B4B] to-[color:var(--color-action-primary)] text-white shadow-[0_25px_55px_rgba(6,11,25,0.75)] transition-all hover:scale-[1.02]"
             >
               <a href="/demo/dashboard" className="flex items-center gap-2 text-base">
                 Ver interfaz demo
                 <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
               </a>
             </Button>
-          </div>
-          <div className="grid w-full gap-3 text-left text-xs text-[color:var(--color-dark-text-secondary)] sm:grid-cols-3 sm:text-sm">
-            {["Sin datos reales", "Modo nocturno", "Contenido interactivo"].map((item) => (
-              <div
-                key={item}
-                className="rounded-2xl border px-4 py-3 text-[color:var(--color-dark-text-primary)]"
-                style={{
-                  backgroundColor: heroTone.chipBg,
-                  borderColor: heroTone.chipBorder,
-                  color: heroTone.chipText,
-                }}
-              >
-                {item}
-              </div>
-            ))}
           </div>
         </header>
 
@@ -234,52 +225,17 @@ export default function DemoExperience() {
           </div>
         </section>
 
-        <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
-          <aside
-            className="self-start rounded-3xl border p-6 backdrop-blur-2xl"
-            style={{
-              background: heroTone.sidePanelBg,
-              borderColor: heroTone.sidePanelBorder,
-              boxShadow: heroTone.sidePanelShadow,
-            }}
-          >
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold tracking-tight text-[color:var(--color-dark-text-primary)]">
-                Mapa interactivo
-              </h2>
-              <p className="text-sm text-[color:var(--color-dark-text-secondary)]">
-                Activá las secciones que quieras mostrar durante una demo y expandí solo la información relevante para tu relato.
-              </p>
-              <div className="grid gap-3 text-xs text-[color:var(--color-dark-text-secondary)]">
-                <div
-                  className="rounded-2xl border px-4 py-3"
-                  style={{ background: heroTone.infoCardBg, borderColor: heroTone.infoCardBorder }}
-                >
-                  <p className="font-medium text-[color:var(--color-dark-text-primary)]">Actualizaciones simuladas</p>
-                  <p>La data refresca automáticamente para mantener la narrativa.</p>
-                </div>
-                <div
-                  className="rounded-2xl border px-4 py-3"
-                  style={{ background: heroTone.infoCardBg, borderColor: heroTone.infoCardBorder }}
-                >
-                  <p className="font-medium text-[color:var(--color-dark-text-primary)]">Sin riesgo</p>
-                  <p>El entorno bloquea cualquier escritura en bases reales.</p>
-                </div>
-              </div>
-            </div>
-          </aside>
-
-          <section
-            className="rounded-[2.75rem] border"
-            style={{
-              background: heroTone.accordionShellBg,
-              borderColor: heroTone.accordionShellBorder,
-              boxShadow: heroTone.accordionShellShadow,
-            }}
-          >
-            <div className="flex items-center justify-between px-6 pb-4 pt-6 text-sm text-[color:var(--color-dark-text-secondary)] sm:px-10">
-              <p>Elegí un módulo para desplegar la vista en vivo.</p>
-              <span
+        <section
+          className="rounded-[2.75rem] border"
+          style={{
+            background: heroTone.accordionShellBg,
+            borderColor: heroTone.accordionShellBorder,
+            boxShadow: heroTone.accordionShellShadow,
+          }}
+        >
+          <div className="flex items-center justify-between px-6 pb-4 pt-6 text-sm text-[color:var(--color-dark-text-secondary)] sm:px-10">
+            <p>Elegí un módulo para desplegar la vista en vivo.</p>
+            <span
                 className="rounded-full border px-3 py-1 text-xs uppercase tracking-widest"
                 style={{
                   background: heroTone.accordionHeaderBadgeBg,
@@ -371,7 +327,6 @@ export default function DemoExperience() {
               })}
             </Accordion>
           </section>
-        </div>
 
         <footer className="mx-auto max-w-4xl text-center text-sm text-[color:var(--color-dark-text-secondary)]">
           Este entorno no ejecuta llamadas reales ni altera datos de producción. Todo el contenido es generado para fines demostrativos.
@@ -388,18 +343,12 @@ type HeroTone = {
   badgeBg: string;
   badgeBorder: string;
   badgeText: string;
-  chipBg: string;
-  chipBorder: string;
-  chipText: string;
   themeSectionBg: string;
   themeSectionBorder: string;
   themeSectionShadow: string;
   themeSectionLabelBg: string;
   themeSectionLabelBorder: string;
   presetCardBg: string;
-  sidePanelBg: string;
-  sidePanelBorder: string;
-  sidePanelShadow: string;
   infoCardBg: string;
   infoCardBorder: string;
   accordionShellBg: string;
@@ -411,6 +360,12 @@ type HeroTone = {
   accordionContentBg: string;
   accordionContentBorder: string;
   accordionInnerSurfaceBg: string;
+  pageBaseBackground: string;
+  pageRadialOverlay: string;
+  pageLinearOverlay: string;
+  pageBlurOverlay: string;
+  pageTopGlow: string;
+  isLightTheme: boolean;
 };
 
 function createHeroTone(theme: BranchThemeFormValues): HeroTone {
@@ -418,18 +373,16 @@ function createHeroTone(theme: BranchThemeFormValues): HeroTone {
   const primary = ensureHex(theme.primary, DEFAULT_BRANCH_THEME.primary);
   const textPrimary = ensureHex(theme.textPrimary, DEFAULT_BRANCH_THEME.textPrimary);
   const isLight = isLightColor(background);
+  const heroStart = isLight ? adjustLightness(primary, 0.35) : adjustLightness(background, -0.05);
+  const heroMid = isLight ? adjustLightness(primary, 0.12) : adjustLightness(primary, -0.02);
+  const heroEnd = isLight ? adjustLightness(primary, -0.1) : adjustLightness(primary, 0.22);
 
-  const heroBackground = isLight
-    ? `linear-gradient(135deg, ${toRgba("#FFFFFF", 0.96)}, ${toRgba(primary, 0.2)})`
-    : `linear-gradient(135deg, ${toRgba(background, 0.92)}, ${toRgba(primary, 0.28)})`;
+  const heroBackground = `linear-gradient(135deg, ${toRgba(heroStart, isLight ? 0.98 : 0.9)}, ${toRgba(heroMid, isLight ? 0.65 : 0.75)}, ${toRgba(heroEnd, 0.55)})`;
 
   const heroBorder = isLight ? "rgba(15,23,42,0.12)" : "rgba(255,255,255,0.16)";
   const heroShadow = isLight ? "0 25px 60px rgba(15,23,42,0.18)" : "0 30px 90px rgba(2,6,23,0.6)";
   const translucentChipBg = isLight ? "rgba(15,23,42,0.06)" : "rgba(255,255,255,0.08)";
   const translucentChipBorder = isLight ? "rgba(15,23,42,0.12)" : "rgba(255,255,255,0.12)";
-  const sidePanelBg = isLight ? "rgba(255,255,255,0.92)" : toRgba(background, 0.65);
-  const sidePanelBorder = isLight ? "rgba(15,23,42,0.12)" : "rgba(255,255,255,0.08)";
-  const sidePanelShadow = isLight ? "0 25px 65px rgba(15,23,42,0.18)" : "0 30px 80px rgba(2,6,23,0.65)";
   const infoCardBg = isLight ? "rgba(15,23,42,0.05)" : "rgba(255,255,255,0.04)";
   const infoCardBorder = isLight ? "rgba(15,23,42,0.08)" : "rgba(255,255,255,0.08)";
   const accordionShellBg = isLight ? "rgba(255,255,255,0.97)" : toRgba(background, 0.78);
@@ -449,18 +402,12 @@ function createHeroTone(theme: BranchThemeFormValues): HeroTone {
     badgeBg: translucentChipBg,
     badgeBorder: translucentChipBorder,
     badgeText: textPrimary,
-    chipBg: translucentChipBg,
-    chipBorder: translucentChipBorder,
-    chipText: textPrimary,
     themeSectionBg: isLight ? "rgba(255,255,255,0.95)" : "rgba(15,23,42,0.55)",
     themeSectionBorder: heroBorder,
     themeSectionShadow: heroShadow,
     themeSectionLabelBg: isLight ? "rgba(15,23,42,0.08)" : "rgba(255,255,255,0.12)",
     themeSectionLabelBorder: translucentChipBorder,
     presetCardBg: isLight ? "rgba(15,23,42,0.04)" : "rgba(255,255,255,0.05)",
-    sidePanelBg,
-    sidePanelBorder,
-    sidePanelShadow,
     infoCardBg,
     infoCardBorder,
     accordionShellBg,
@@ -472,6 +419,16 @@ function createHeroTone(theme: BranchThemeFormValues): HeroTone {
     accordionContentBg,
     accordionContentBorder,
     accordionInnerSurfaceBg,
+    pageBaseBackground: isLight ? "#F8FAFC" : background,
+    pageRadialOverlay: isLight
+      ? `radial-gradient(circle at 25% 10%, rgba(255,255,255,0.95) 0%, ${toRgba(adjustLightness(primary, 0.35), 0.55)} 40%, ${toRgba(background, 0.92)} 85%)`
+      : "radial-gradient(circle at 10% -10%, var(--color-action-secondary-glow) 0%, rgba(2, 6, 23, 0.92) 52%, var(--color-dark-bg-main) 100%)",
+    pageLinearOverlay: isLight
+      ? `linear-gradient(130deg, rgba(148,163,184,0.25), rgba(148,163,184,0.08))`
+      : "linear-gradient(120deg, rgba(64,112,255,0.08), rgba(255,79,133,0.05))",
+    pageBlurOverlay: isLight ? "rgba(148,163,184,0.25)" : "rgba(15,23,42,0.55)",
+    pageTopGlow: isLight ? "linear-gradient(to bottom, rgba(255,255,255,0.9), transparent)" : "linear-gradient(to bottom, rgba(255,255,255,0.1), transparent)",
+    isLightTheme: isLight,
   };
 }
 

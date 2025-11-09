@@ -12,7 +12,7 @@ export default function DemoExpiriesPage() {
     <div className="space-y-8">
       <DemoPageHeader
         title="Control de vencimientos"
-        description="Mostrá cómo la demo ordena lotes según criticidad y ofrece un guion para explicar la analítica detrás de cada recomendación."
+        description="Ten los vencimientos bajo control. Aquí se guardan los vencimientos y se generan alertas para tomar acción con los productos próximos a vencer."
         badge="Vencimientos"
       />
       <ExpiriesDemoView />

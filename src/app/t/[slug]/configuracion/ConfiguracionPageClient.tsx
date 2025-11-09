@@ -18,6 +18,7 @@ import {
   sanitizeStoredTheme,
   sanitizeThemePresetList,
 } from "@/lib/theme/branchTheme";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -105,6 +106,54 @@ const FIELD_SECTIONS: FieldSection[] = [
   {
     title: "Tipografía",
     fields: ["textPrimary", "textSecondary"],
+  },
+];
+
+type ColorPreviewItem = {
+  field: keyof BranchThemeFormValues;
+  label: string;
+  usage: string;
+  cssVar?: string;
+  type?: "text" | "surface";
+};
+
+type ColorPreviewGroup = {
+  title: string;
+  description?: string;
+  items: ColorPreviewItem[];
+};
+
+const COLOR_PREVIEW_GROUPS: ColorPreviewGroup[] = [
+  {
+    title: "Acciones y estados",
+    description: "Colores que afectan CTA, métricas y feedback visual.",
+    items: [
+      { field: "primary", label: "Primario", usage: "CTA y énfasis", cssVar: "--primary" },
+      { field: "secondary", label: "Secundario", usage: "Acciones suaves", cssVar: "--secondary" },
+      { field: "accent", label: "Datos / acento", usage: "KPIs y gráficos", cssVar: "--accent" },
+      { field: "success", label: "Éxito", usage: "Mensajes positivos", cssVar: "--success" },
+      { field: "alert", label: "Alerta", usage: "Advertencias", cssVar: "--destructive" },
+      { field: "orderQty", label: "Cantidad pedido", usage: "Stepers de pedido", type: "surface" },
+    ],
+  },
+  {
+    title: "Superficies y contenedores",
+    description: "Fondos donde vive tu contenido.",
+    items: [
+      { field: "background", label: "Fondo app", usage: "Lienzo principal", cssVar: "--background", type: "surface" },
+      { field: "surface", label: "Superficie", usage: "Paneles y modales", cssVar: "--muted", type: "surface" },
+      { field: "card", label: "Tarjetas", usage: "Resaltados", cssVar: "--card", type: "surface" },
+      { field: "cardForeground", label: "Texto en tarjeta", usage: "Contenido destacado", cssVar: "--card-foreground", type: "text" },
+      { field: "nav", label: "Navegación", usage: "Sidebar y menús", cssVar: "--sidebar", type: "surface" },
+    ],
+  },
+  {
+    title: "Tipografía",
+    description: "Contrastes para lectura.",
+    items: [
+      { field: "textPrimary", label: "Texto principal", usage: "Titulares", cssVar: "--foreground", type: "text" },
+      { field: "textSecondary", label: "Texto secundario", usage: "Descripciones", cssVar: "--muted-foreground", type: "text" },
+    ],
   },
 ];
 
@@ -712,6 +761,48 @@ export default function ConfiguracionPageClient() {
   const [hiddenPresetIds, setHiddenPresetIds] = React.useState<string[]>([]);
   const [hiddenPresetsHydrated, setHiddenPresetsHydrated] = React.useState(false);
   const presetNameInputRef = React.useRef<HTMLInputElement | null>(null);
+  const formColumnRef = React.useRef<HTMLFormElement | null>(null);
+  const [formColumnHeight, setFormColumnHeight] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    const sanitizedTheme = sanitizeStoredTheme(theme);
+    setFormValues((previous) => {
+      const differs = BRANCH_THEME_FIELDS.some((field) => previous[field] !== sanitizedTheme[field]);
+      return differs ? sanitizedTheme : previous;
+    });
+    setDraftValues((previous) => {
+      const differs = BRANCH_THEME_FIELDS.some((field) => previous[field] !== sanitizedTheme[field]);
+      return differs ? sanitizedTheme : previous;
+    });
+  }, [theme]);
+
+  const syncFormColumnHeight = React.useCallback(() => {
+    const column = formColumnRef.current;
+    if (!column) return;
+    const nextHeight = column.getBoundingClientRect().height;
+    if (!Number.isFinite(nextHeight)) return;
+    setFormColumnHeight((prev) => {
+      if (prev === null) return nextHeight;
+      return Math.abs(prev - nextHeight) > 1 ? nextHeight : prev;
+    });
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const column = formColumnRef.current;
+    if (!column) return;
+
+    syncFormColumnHeight();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", syncFormColumnHeight);
+      return () => window.removeEventListener("resize", syncFormColumnHeight);
+    }
+
+    const observer = new ResizeObserver(() => syncFormColumnHeight());
+    observer.observe(column);
+    return () => observer.disconnect();
+  }, [branchLoading, themeLoading, branchId, currentBranch?.id, syncFormColumnHeight]);
 
   const presetQuery = useQuery<ThemePreset[]>({
     queryKey: ["branch-theme-presets", tenantId],
@@ -748,6 +839,31 @@ export default function ConfiguracionPageClient() {
   const presetNameIsValid = presetName.trim().length >= 3;
   const previewVars = React.useMemo(() => buildCssVariableMap(formValues), [formValues]);
   const previewStyle = React.useMemo(() => previewVars as React.CSSProperties, [previewVars]);
+  const previewSectionStyle = React.useMemo<React.CSSProperties>(() => {
+    if (!formColumnHeight) return previewStyle;
+    return {
+      ...previewStyle,
+      height: formColumnHeight,
+      minHeight: formColumnHeight,
+      maxHeight: formColumnHeight,
+    };
+  }, [formColumnHeight, previewStyle]);
+  const resolveColor = React.useCallback(
+    (item: ColorPreviewItem) => {
+      const fallback = DEFAULT_BRANCH_THEME[item.field];
+      if (item.cssVar) {
+        return previewVars[item.cssVar] ?? fallback;
+      }
+      return sanitizeHexColor(formValues[item.field], fallback);
+    },
+    [formValues, previewVars]
+  );
+  const cardBackground = previewVars["--card"] || DEFAULT_BRANCH_THEME.card;
+  const cardForeground = previewVars["--card-foreground"] || DEFAULT_BRANCH_THEME.cardForeground;
+  const accentColor = previewVars["--accent"] || DEFAULT_BRANCH_THEME.accent;
+  const orderQtyColor = sanitizeHexColor(formValues.orderQty, DEFAULT_BRANCH_THEME.orderQty);
+  const textPrimaryColor = previewVars["--foreground"] || DEFAULT_BRANCH_THEME.textPrimary;
+  const textSecondaryColor = previewVars["--muted-foreground"] || DEFAULT_BRANCH_THEME.textSecondary;
   const hiddenPresetIdSet = React.useMemo(() => new Set(hiddenPresetIds), [hiddenPresetIds]);
 
   const canEdit = role === "owner";
@@ -1100,9 +1216,9 @@ export default function ConfiguracionPageClient() {
           )}
         </header>
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(280px,0.9fr)]">
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(280px,0.9fr)]">
           <div className="order-2 space-y-6 lg:order-1">
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form ref={formColumnRef} onSubmit={handleSubmit} className="space-y-6">
               <section className="space-y-8 rounded-2xl border border-border/60 bg-card/60 p-6">
                 {FIELD_SECTIONS.map((section) => (
                   <div key={section.title} className="space-y-4">
@@ -1397,10 +1513,13 @@ export default function ConfiguracionPageClient() {
 
           <aside className="order-1 space-y-4 lg:order-2">
             <section
-              style={previewStyle}
-              className="rounded-2xl border border-border/60 bg-background/85 p-6 text-foreground shadow-sm transition-[background-color,color,border-color] lg:sticky lg:top-24"
+              style={previewSectionStyle}
+              className={cn(
+                "rounded-2xl border border-border/60 bg-background/85 p-6 text-foreground shadow-lg transition-[background-color,color,border-color] backdrop-blur supports-[backdrop-filter]:bg-background/70",
+                formColumnHeight ? "lg:overflow-y-auto" : undefined
+              )}
             >
-              <div className="space-y-4">
+              <div className="space-y-6">
                 <div>
                   <h2 className="text-base font-semibold">Vista previa instantánea</h2>
                   <p className="text-xs text-muted-foreground">
@@ -1408,124 +1527,271 @@ export default function ConfiguracionPageClient() {
                   </p>
                 </div>
 
-                <div className="space-y-4">
-                  <div
-                    className="rounded-xl border p-4 shadow-sm transition-colors"
-                    style={{
-                      background: previewVars["--card"] || DEFAULT_BRANCH_THEME.card,
-                      borderColor: previewVars["--border"] || DEFAULT_BRANCH_THEME.surface,
-                    }}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p
-                          className="text-xs font-semibold uppercase tracking-wide"
-                          style={{ color: previewVars["--muted-foreground"] || DEFAULT_BRANCH_THEME.textSecondary }}
-                        >
-                          Tarjeta ejemplo
-                        </p>
-                        <h3 className="mt-1 text-lg font-semibold">Producto destacado</h3>
-                      </div>
-                      <span
-                        className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide"
-                        style={{
-                          background: previewVars["--surface-success-soft"] || "rgba(143, 189, 165, 0.18)",
-                          color: previewVars["--success-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
-                          border: `1px solid ${previewVars["--color-success"] || DEFAULT_BRANCH_THEME.success}`,
-                        }}
-                      >
-                        Listo
-                      </span>
+                <div className="space-y-5">
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Mapa de colores</p>
+                      <p className="text-xs text-muted-foreground">Todos los tokens configurables actualizados al vuelo.</p>
                     </div>
-                    <p
-                      className="mt-3 text-sm"
-                      style={{ color: previewVars["--muted-foreground"] || DEFAULT_BRANCH_THEME.textSecondary }}
-                    >
-                      Botones, badges y texto adaptan tu paleta.
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <span
-                        className="rounded-lg px-3 py-2 text-sm font-semibold shadow-sm transition-colors"
-                        style={{
-                          background: previewVars["--primary"] || DEFAULT_BRANCH_THEME.primary,
-                          color: previewVars["--primary-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
-                        }}
-                      >
-                        Primario
-                      </span>
-                      <span
-                        className="rounded-lg px-3 py-2 text-sm font-medium transition-colors"
-                        style={{
-                          background: previewVars["--secondary"] || DEFAULT_BRANCH_THEME.secondary,
-                          color: previewVars["--secondary-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
-                        }}
-                      >
-                        Secundario
-                      </span>
-                      <span
-                        className="rounded-lg px-3 py-2 text-sm font-medium transition-colors"
-                        style={{
-                          background: previewVars["--destructive"] || DEFAULT_BRANCH_THEME.alert,
-                          color: previewVars["--destructive-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
-                        }}
-                      >
-                        Alerta
-                      </span>
+                    <div className="space-y-5">
+                      {COLOR_PREVIEW_GROUPS.map((group) => (
+                        <div key={group.title} className="space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <h3 className="text-sm font-semibold text-foreground">{group.title}</h3>
+                            {group.description ? (
+                              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">{group.description}</span>
+                            ) : null}
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {group.items.map((item) => {
+                              const value = resolveColor(item);
+                              return (
+                                <div
+                                  key={item.field}
+                                  className="rounded-2xl border border-border/50 bg-card/60 p-3 text-xs shadow-sm"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-sm font-semibold text-foreground">{item.label}</span>
+                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{item.usage}</span>
+                                  </div>
+                                  <div className="mt-3 flex items-center gap-3">
+                                    <span
+                                      className="h-10 w-10 rounded-lg border border-border/50 shadow-inner"
+                                      style={{ background: value }}
+                                    />
+                                    <span className="font-mono text-[11px] uppercase text-muted-foreground">{value}</span>
+                                  </div>
+                                  {item.type === "text" ? (
+                                    <p
+                                      className="mt-2 rounded-lg border border-dashed border-border/60 px-2 py-1 text-sm font-medium"
+                                      style={{
+                                        color: value,
+                                        background: cardBackground,
+                                      }}
+                                    >
+                                      Texto de ejemplo
+                                    </p>
+                                  ) : item.type === "surface" ? (
+                                    <div
+                                      className="mt-2 h-8 w-full rounded-lg border border-dashed border-border/60"
+                                      style={{ background: value }}
+                                    />
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div
-                      className="overflow-hidden rounded-xl border shadow-sm transition-colors"
+                      className="rounded-xl border p-4 shadow-sm transition-colors"
                       style={{
-                        background: previewVars["--sidebar"] || DEFAULT_BRANCH_THEME.nav,
+                        background: cardBackground,
                         borderColor: previewVars["--border"] || DEFAULT_BRANCH_THEME.surface,
-                        color: previewVars["--sidebar-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
                       }}
                     >
-                      <div
-                        className="px-4 py-3 text-sm font-semibold"
-                        style={{
-                          background: previewVars["--sidebar-primary"] || DEFAULT_BRANCH_THEME.primary,
-                          color: previewVars["--sidebar-primary-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
-                        }}
-                      >
-                        Navegación
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p
+                            className="text-xs font-semibold uppercase tracking-wide"
+                            style={{ color: previewVars["--muted-foreground"] || DEFAULT_BRANCH_THEME.textSecondary }}
+                          >
+                            Tarjeta ejemplo
+                          </p>
+                          <h3 className="mt-1 text-lg font-semibold" style={{ color: cardForeground }}>
+                            Producto destacado
+                          </h3>
+                        </div>
+                        <span
+                          className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide"
+                          style={{
+                            background: previewVars["--surface-success-soft"] || "rgba(143, 189, 165, 0.18)",
+                            color: previewVars["--success-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
+                            border: `1px solid ${previewVars["--color-success"] || DEFAULT_BRANCH_THEME.success}`,
+                          }}
+                        >
+                          Listo
+                        </span>
                       </div>
-                      <div
-                        className="space-y-2 px-4 py-3 text-xs"
-                        style={{ color: previewVars["--sidebar-foreground"] || DEFAULT_BRANCH_THEME.textPrimary }}
+                      <p
+                        className="mt-3 text-sm"
+                        style={{ color: previewVars["--muted-foreground"] || DEFAULT_BRANCH_THEME.textSecondary }}
                       >
-                        <span className="block font-medium">Item activo</span>
-                        <span className="block text-sm" style={{ opacity: 0.72 }}>
-                          Hover y foco siguen esta misma relación.
+                        Botones, badges y texto adaptan tu paleta.
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <span
+                          className="rounded-lg px-3 py-2 text-sm font-semibold shadow-sm transition-colors"
+                          style={{
+                            background: previewVars["--primary"] || DEFAULT_BRANCH_THEME.primary,
+                            color: previewVars["--primary-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
+                          }}
+                        >
+                          Primario
+                        </span>
+                        <span
+                          className="rounded-lg px-3 py-2 text-sm font-medium transition-colors"
+                          style={{
+                            background: previewVars["--secondary"] || DEFAULT_BRANCH_THEME.secondary,
+                            color: previewVars["--secondary-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
+                          }}
+                        >
+                          Secundario
+                        </span>
+                        <span
+                          className="rounded-lg px-3 py-2 text-sm font-medium transition-colors"
+                          style={{
+                            background: previewVars["--destructive"] || DEFAULT_BRANCH_THEME.alert,
+                            color: previewVars["--destructive-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
+                          }}
+                        >
+                          Alerta
                         </span>
                       </div>
                     </div>
 
-                    <div
-                      className="rounded-xl border px-4 py-3 text-xs leading-relaxed transition-colors"
-                      style={{
-                        background: previewVars["--surface-action-primary-soft"] || "rgba(125, 170, 146, 0.18)",
-                        borderColor: previewVars["--border"] || DEFAULT_BRANCH_THEME.surface,
-                        color: previewVars["--muted-foreground"] || DEFAULT_BRANCH_THEME.textSecondary,
-                      }}
-                    >
-                      Acentos de datos, alertas y estados usan estas combinaciones.
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="rounded-xl border border-border/60 bg-card/60 p-4 shadow-sm transition-colors">
+                        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: textSecondaryColor }}>
+                          Indicador analítico
+                        </p>
+                        <div className="mt-3 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs" style={{ color: textSecondaryColor }}>
+                              Ventas semanales
+                            </p>
+                            <p className="text-2xl font-semibold" style={{ color: textPrimaryColor }}>
+                              +18%
+                            </p>
+                          </div>
+                          <span
+                            className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide"
+                            style={{
+                              background: previewVars["--surface-data-secondary-soft"] || "rgba(0, 0, 0, 0.08)",
+                              color: accentColor,
+                              border: `1px solid ${accentColor}`,
+                            }}
+                          >
+                            Datos
+                          </span>
+                        </div>
+                        <div
+                          className="mt-4 h-2 w-full rounded-full"
+                          style={{ background: previewVars["--surface-data-secondary-soft"] || "rgba(0, 0, 0, 0.1)" }}
+                        >
+                          <div className="h-full rounded-full" style={{ width: "68%", background: accentColor }} />
+                        </div>
+                        <p className="mt-2 text-xs" style={{ color: textSecondaryColor }}>
+                          KPIs, gráficos y chips informativos dependen del color de datos/acento.
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-border/60 bg-card/60 p-4 shadow-sm transition-colors">
+                        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: textSecondaryColor }}>
+                          Control de cantidades
+                        </p>
+                        <div className="mt-3 flex items-center gap-3">
+                          <button
+                            type="button"
+                            className="h-10 w-10 rounded-full border text-lg font-semibold transition"
+                            style={{ borderColor: orderQtyColor, color: orderQtyColor }}
+                          >
+                            −
+                          </button>
+                          <div
+                            className="min-w-[3rem] rounded-lg border border-border/60 px-4 py-2 text-center text-lg font-semibold"
+                            style={{ color: textPrimaryColor }}
+                          >
+                            12
+                          </div>
+                          <button
+                            type="button"
+                            className="h-10 w-10 rounded-full border text-lg font-semibold transition"
+                            style={{
+                              background: orderQtyColor,
+                              borderColor: orderQtyColor,
+                              color: cardForeground,
+                            }}
+                          >
+                            +
+                          </button>
+                        </div>
+                        <p className="mt-2 text-xs" style={{ color: textSecondaryColor }}>
+                          Este color se refleja en los botones suma/resta del pedido y resaltos numéricos.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-border/60 bg-card/60 p-4 shadow-sm transition-colors">
+                      <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: textSecondaryColor }}>
+                        Tipografía en contexto
+                      </p>
+                      <h3 className="mt-2 text-lg font-semibold" style={{ color: textPrimaryColor }}>
+                        Encabezado principal
+                      </h3>
+                      <p className="mt-1 text-sm" style={{ color: textSecondaryColor }}>
+                        Subtítulos, ayudas contextuales y copy secundario usan el tono configurado como texto
+                        secundario.
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div
+                        className="overflow-hidden rounded-xl border shadow-sm transition-colors"
+                        style={{
+                          background: previewVars["--sidebar"] || DEFAULT_BRANCH_THEME.nav,
+                          borderColor: previewVars["--border"] || DEFAULT_BRANCH_THEME.surface,
+                          color: previewVars["--sidebar-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
+                        }}
+                      >
+                        <div
+                          className="px-4 py-3 text-sm font-semibold"
+                          style={{
+                            background: previewVars["--sidebar-primary"] || DEFAULT_BRANCH_THEME.primary,
+                            color: previewVars["--sidebar-primary-foreground"] || DEFAULT_BRANCH_THEME.textPrimary,
+                          }}
+                        >
+                          Navegación
+                        </div>
+                        <div
+                          className="space-y-2 px-4 py-3 text-xs"
+                          style={{ color: previewVars["--sidebar-foreground"] || DEFAULT_BRANCH_THEME.textPrimary }}
+                        >
+                          <span className="block font-medium">Item activo</span>
+                          <span className="block text-sm" style={{ opacity: 0.72 }}>
+                            Hover y foco siguen esta misma relación.
+                          </span>
+                        </div>
+                      </div>
+
+                      <div
+                        className="rounded-xl border px-4 py-3 text-xs leading-relaxed transition-colors"
+                        style={{
+                          background: previewVars["--surface-action-primary-soft"] || "rgba(125, 170, 146, 0.18)",
+                          borderColor: previewVars["--border"] || DEFAULT_BRANCH_THEME.surface,
+                          color: previewVars["--muted-foreground"] || DEFAULT_BRANCH_THEME.textSecondary,
+                        }}
+                      >
+                        Acentos de datos, alertas y estados usan estas combinaciones.
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    onClick={handleRandomTheme}
-                    disabled={status === "saving"}
-                    className="inline-flex w-full items-center justify-center rounded-lg border border-border/70 px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Tema al azar
-                  </button>
-                  <p className="text-[11px] text-muted-foreground">Generá una propuesta armónica para inspirarte.</p>
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={handleRandomTheme}
+                      disabled={status === "saving"}
+                      className="inline-flex w-full items-center justify-center rounded-lg border border-border/70 px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Tema al azar
+                    </button>
+                    <p className="text-[11px] text-muted-foreground">Generá una propuesta armónica para inspirarte.</p>
+                  </div>
                 </div>
               </div>
             </section>
