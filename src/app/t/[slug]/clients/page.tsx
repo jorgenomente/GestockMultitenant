@@ -10,7 +10,7 @@ import { useBranch } from "@/components/branch/BranchProvider";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { X, Edit2, Save, Trash2, Search } from "lucide-react";
+import { X, Edit2, Save, Trash2, Search, MessageCircle } from "lucide-react";
 
 /* ========= Schema ========= */
 const ClientSchema = z
@@ -67,6 +67,29 @@ const norm = (s: string) =>
     .trim();
 
 const onlyDigits = (s: string) => (s ?? "").replace(/\D/g, "");
+
+/**
+ * WhatsApp requiere el número en formato internacional sin separadores.
+ * Estas utilidades ayudan a sanear, mostrar y construir enlaces con ese formato.
+ */
+const getWhatsappDigits = (phone?: string | null) => {
+  const digits = onlyDigits(phone ?? "");
+  return digits || null;
+};
+
+const sanitizePhoneForWhatsApp = (phone: string): string | null => {
+  const digits = getWhatsappDigits(phone);
+  if (!digits) return null;
+  const trimmed = phone.trim();
+  return trimmed.startsWith("+") ? `+${digits}` : digits;
+};
+
+const formatPhoneForDisplay = (phone?: string | null) => {
+  const digits = getWhatsappDigits(phone);
+  if (!digits) return null;
+  const trimmed = (phone ?? "").trim();
+  return trimmed.startsWith("+") ? `+${digits}` : digits;
+};
 
 /** Parsea "Artículo @ Proveedor" -> { article, provider } */
 function parseArticleProvider(raw: string): { article: string; provider: string | null } {
@@ -270,12 +293,15 @@ export default function ClientsPage() {
   const [saving, setSaving] = React.useState(false);
   const [clients, setClients] = React.useState<ClientWithOrders[]>([]);
   const [q, setQ] = React.useState("");
+  const [searchSource, setSearchSource] = React.useState<"form" | "search" | null>(null);
   const searchRef = React.useRef<HTMLInputElement>(null);
 
   const form = useForm<ClientForm>({
     resolver: zodResolver(ClientSchema),
     defaultValues: { name: "", phone: "", articles: [] },
   });
+  const nameField = form.register("name");
+  const phoneField = form.register("phone");
 
   const fetchData = React.useCallback(async () => {
     if (!tenantId || !branchId) {
@@ -373,12 +399,17 @@ export default function ClientsPage() {
       return;
     }
 
+    const trimmedName = values.name.trim();
+    const trimmedPhone = values.phone.trim();
+    const phoneValue = trimmedPhone ? sanitizePhoneForWhatsApp(trimmedPhone) : null;
+
+    if (trimmedPhone && !phoneValue) {
+      alert("El teléfono debe contener sólo dígitos y un '+' inicial opcional.");
+      return;
+    }
+
     setSaving(true);
     try {
-      const trimmedName = values.name.trim();
-      const trimmedPhone = values.phone.trim();
-      const phoneValue = trimmedPhone ? trimmedPhone : null;
-
       let finder = sb
         .from("clients")
         .select("*")
@@ -440,6 +471,10 @@ export default function ClientsPage() {
       }
 
       form.reset({ name: "", phone: "", articles: [] });
+      if (searchSource === "form") {
+        setQ("");
+        setSearchSource(null);
+      }
       await fetchData();
     } catch (error: unknown) {
       console.error(error);
@@ -545,12 +580,28 @@ export default function ClientsPage() {
         <Card>
           <CardContent className="p-4 space-y-3">
             <form onSubmit={form.handleSubmit(onSubmit)} className="grid grid-cols-1 gap-3">
-              <Input placeholder="Nombre" {...form.register("name")} />
+              <Input
+                placeholder="Nombre"
+                {...nameField}
+                onChange={(event) => {
+                  nameField.onChange(event);
+                  setSearchSource("form");
+                  setQ(event.target.value);
+                }}
+              />
               {form.formState.errors.name && (
                 <p className="text-xs text-[color:var(--destructive)]">{form.formState.errors.name.message}</p>
               )}
 
-              <Input placeholder="Teléfono" {...form.register("phone")} />
+              <Input
+                placeholder="Teléfono"
+                {...phoneField}
+                onChange={(event) => {
+                  phoneField.onChange(event);
+                  setSearchSource("form");
+                  setQ(event.target.value);
+                }}
+              />
               {form.formState.errors.phone && (
                 <p className="text-xs text-[color:var(--destructive)]">{form.formState.errors.phone.message}</p>
               )}
@@ -596,11 +647,15 @@ export default function ClientsPage() {
     <Input
       ref={searchRef}
       value={q}
-      onChange={(e) => setQ(e.target.value)}
+      onChange={(e) => {
+        setSearchSource("search");
+        setQ(e.target.value);
+      }}
       onKeyDown={(e) => {
         if (e.key === "Escape" && q) {
           e.preventDefault();
           setQ("");
+          setSearchSource("search");
           searchRef.current?.focus();
         }
       }}
@@ -616,6 +671,7 @@ export default function ClientsPage() {
         type="button"
         onClick={() => {
           setQ("");
+          setSearchSource("search");
           searchRef.current?.focus();
         }}
         aria-label="Limpiar búsqueda"
@@ -685,7 +741,11 @@ function ClientCard({
   // === Edición inline de nombre/teléfono ===
   const [editMode, setEditMode] = React.useState(false);
   const [editName, setEditName] = React.useState(client.name);
-  const [editPhone, setEditPhone] = React.useState(client.phone ?? "");
+  const normalizedClientPhone = React.useMemo(
+    () => formatPhoneForDisplay(client.phone) ?? client.phone ?? "",
+    [client.phone],
+  );
+  const [editPhone, setEditPhone] = React.useState(normalizedClientPhone);
   const [savingClient, setSavingClient] = React.useState(false);
   const editNameInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -696,21 +756,35 @@ function ClientCard({
     }
   }, [editMode]);
 
+  React.useEffect(() => {
+    if (!editMode) {
+      setEditPhone(normalizedClientPhone);
+    }
+  }, [editMode, normalizedClientPhone]);
+
   const normalizePhone = (v: string) => v.replace(/[^\d+()\-\s]/g, "").replace(/\s+/g, " ");
+  const whatsappDigits = getWhatsappDigits(client.phone);
+  const whatsappUrl = whatsappDigits ? `https://wa.me/${whatsappDigits}` : null;
+  const displayPhone = formatPhoneForDisplay(client.phone);
 
   async function saveClientEdits() {
     const nextName = editName.trim();
     const nextPhone = editPhone.trim();
     if (!nextName) return alert("El nombre no puede estar vacío.");
-    if (nextPhone && nextPhone.replace(/\D/g, "").length < 6) {
+    if (nextPhone && onlyDigits(nextPhone).length < 6) {
       return alert("El teléfono parece muy corto.");
+    }
+
+    const sanitizedPhone = nextPhone ? sanitizePhoneForWhatsApp(nextPhone) : null;
+    if (nextPhone && !sanitizedPhone) {
+      return alert("El teléfono debe contener sólo dígitos y un '+' inicial opcional.");
     }
 
     setSavingClient(true);
     try {
       const { error } = await sb
         .from("clients")
-        .update({ name: nextName, phone: nextPhone || null })
+        .update({ name: nextName, phone: sanitizedPhone })
         .eq("id", client.id);
       if (error) {
         alert(`No se pudo actualizar el cliente: ${error.message}`);
@@ -726,7 +800,7 @@ function ClientCard({
   function cancelClientEdits() {
     setEditMode(false);
     setEditName(client.name);
-    setEditPhone(client.phone ?? "");
+    setEditPhone(normalizedClientPhone);
   }
 
   const onKeyDownEdit: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
@@ -842,7 +916,24 @@ function ClientCard({
             ) : (
               <>
                 <h2 className="text-sm font-semibold truncate">{client.name}</h2>
-                <p className="text-[11px] text-muted-foreground truncate">{client.phone || "Sin teléfono"}</p>
+                <div className="min-w-0 flex flex-wrap items-center gap-2 pt-1">
+                  <p className="text-[11px] text-muted-foreground truncate">
+                    {displayPhone || "Sin teléfono"}
+                  </p>
+                  {whatsappUrl && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[10px]"
+                      asChild
+                    >
+                      <a href={whatsappUrl} target="_blank" rel="noreferrer">
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        Notificar por WhatsApp
+                      </a>
+                    </Button>
+                  )}
+                </div>
               </>
             )}
           </div>
