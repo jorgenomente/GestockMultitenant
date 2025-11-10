@@ -10,6 +10,7 @@ import { useBranch } from "@/components/branch/BranchProvider";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { X, Edit2, Save, Trash2, Search, MessageCircle } from "lucide-react";
 
 /* ========= Schema ========= */
@@ -56,6 +57,13 @@ type ClientWithOrders = Client & {
   orders: Array<ClientOrder & { items: ClientOrderItem[]; comments?: ClientOrderComment[] }>;
 };
 
+type ClientOpenOrderSummary = {
+  id: string;
+  name: string;
+  openOrders: number;
+  pendingItems: number;
+};
+
 /* ========= Utils ========= */
 const NBSP_RX = /[\u00A0\u202F]/g;
 const norm = (s: string) =>
@@ -90,6 +98,8 @@ const formatPhoneForDisplay = (phone?: string | null) => {
   const trimmed = (phone ?? "").trim();
   return trimmed.startsWith("+") ? `+${digits}` : digits;
 };
+
+const RESET_OPEN_CLIENT_SELECT_VALUE = "__reset-open-client__";
 
 /** Parsea "Artículo @ Proveedor" -> { article, provider } */
 function parseArticleProvider(raw: string): { article: string; provider: string | null } {
@@ -295,6 +305,7 @@ export default function ClientsPage() {
   const [q, setQ] = React.useState("");
   const [searchSource, setSearchSource] = React.useState<"form" | "search" | null>(null);
   const searchRef = React.useRef<HTMLInputElement>(null);
+  const [selectedOpenClientId, setSelectedOpenClientId] = React.useState<string | undefined>(undefined);
 
   const form = useForm<ClientForm>({
     resolver: zodResolver(ClientSchema),
@@ -512,6 +523,25 @@ export default function ClientsPage() {
     });
   }, [clients, q]);
 
+  const clientsWithOpenOrders = React.useMemo<ClientOpenOrderSummary[]>(() => {
+    return clients
+      .map((client) => {
+        const openOrders = client.orders.filter((o) => o.status !== "entregado" && o.status !== "cancelado");
+        if (!openOrders.length) return null;
+        const pendingItems = openOrders.reduce((acc, order) => {
+          return acc + order.items.filter((item) => !item.done).length;
+        }, 0);
+        return {
+          id: client.id,
+          name: client.name,
+          openOrders: openOrders.length,
+          pendingItems,
+        } satisfies ClientOpenOrderSummary;
+      })
+      .filter((entry): entry is ClientOpenOrderSummary => Boolean(entry))
+      .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+  }, [clients]);
+
   /* 🧾 Lista global de proveedores (deduplicada) — para autocomplete */
   const providerList = React.useMemo(() => {
     const set = new Set<string>();
@@ -524,6 +554,27 @@ export default function ClientsPage() {
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
   }, [clients]);
+
+  const handleOpenClientSelect = React.useCallback(
+    (value: string) => {
+      if (value === RESET_OPEN_CLIENT_SELECT_VALUE) {
+        setSelectedOpenClientId(undefined);
+        return;
+      }
+      setSelectedOpenClientId(value);
+      if (q) {
+        setQ("");
+        setSearchSource(null);
+      }
+    },
+    [q],
+  );
+
+  React.useEffect(() => {
+    if (!selectedOpenClientId) return;
+    const card = document.getElementById(`client-card-${selectedOpenClientId}`);
+    card?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [selectedOpenClientId]);
 
   /* 🗑️ Borrar cliente */
   async function deleteClient(clientId: string) {
@@ -616,7 +667,7 @@ export default function ClientsPage() {
                   placeholder='Escribe: "Harina 1kg @ Dicomere" o solo "Harina 1kg"…'
                   hint={
                     <>
-                      Tip: escribí <b>@</b> para autocompletar proveedores ya usados.
+                      Cómo usar: escribí el nombre del artículo, luego un <b>@</b> y el proveedor, terminá con un punto o coma y repetí para sumar más artículos.
                     </>
                   }
                   providerOptions={providerList}
@@ -687,6 +738,32 @@ export default function ClientsPage() {
   </div>
 
   <p className="mt-1 text-[11px] text-muted-foreground">{filteredClients.length} resultado(s)</p>
+
+  {clientsWithOpenOrders.length > 0 && (
+    <div className="mt-4 space-y-1">
+      <p className="text-xs font-semibold text-muted-foreground">Clientes con pedidos abiertos</p>
+      <Select value={selectedOpenClientId ?? undefined} onValueChange={handleOpenClientSelect}>
+        <SelectTrigger className="h-10 w-full">
+          <SelectValue placeholder="Elegí un cliente para saltar a su tarjeta" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={RESET_OPEN_CLIENT_SELECT_VALUE}>Mostrar todos</SelectItem>
+          {clientsWithOpenOrders.map(({ id, name, openOrders, pendingItems }) => {
+            const orderLabel = `${openOrders} pedido${openOrders === 1 ? "" : "s"}`;
+            const pendingLabel = pendingItems
+              ? ` · ${pendingItems} ítem${pendingItems === 1 ? "" : "s"} pendientes`
+              : "";
+            return (
+              <SelectItem key={id} value={id}>
+                {name} · {orderLabel}
+                {pendingLabel}
+              </SelectItem>
+            );
+          })}
+        </SelectContent>
+      </Select>
+    </div>
+  )}
 </section>
 
 
@@ -707,6 +784,7 @@ export default function ClientsPage() {
             providerList={providerList}
             tenantId={tenantId}
             branchId={branchId}
+            isHighlighted={selectedOpenClientId === c.id}
           />
         ))}
       </section>
@@ -725,6 +803,7 @@ type ClientCardProps = {
   providerList: string[];
   tenantId: string;
   branchId: string;
+  isHighlighted?: boolean;
 };
 
 function ClientCard({
@@ -735,6 +814,7 @@ function ClientCard({
   providerList,
   tenantId,
   branchId,
+  isHighlighted = false,
 }: ClientCardProps) {
   const [orderItems, setOrderItems] = React.useState<string[]>([]);
 
@@ -854,7 +934,12 @@ function ClientCard({
   }
 
   return (
-    <Card className="relative rounded-lg shadow-sm">
+    <Card
+      id={`client-card-${client.id}`}
+      className={`relative rounded-lg shadow-sm transition-shadow ${
+        isHighlighted ? "ring-2 ring-[color:var(--ring)] ring-offset-2 ring-offset-background" : ""
+      }`}
+    >
       {/* 🗑️ Eliminar cliente (icono discreto) */}
       <button
         type="button"

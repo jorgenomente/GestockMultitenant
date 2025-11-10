@@ -626,6 +626,10 @@ export default function PriceSearch({ slug, canManageCatalog = false }: PriceSea
                 <p className="text-xs text-muted-foreground">
                   Actualizado: {lastLabel} · Fuente: {sourceLabel}
                 </p>
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">Modo de uso:</span> Buscá un producto por nombre,
+                  número de artículo o código de barras, o escaneá el código con el botón de cámara.
+                </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full border border-border/60 bg-background px-3 py-1 text-xs text-muted-foreground">
