@@ -39,6 +39,8 @@ type ClientOrderItem = {
   article: string;
   done: boolean;
   provider: string | null; // por ítem
+  ordered: boolean;
+  ordered_at: string | null;
   created_at: string;
 };
 
@@ -757,17 +759,18 @@ function ClientCard({
       .single();
     if (oErr) return alert("No se pudo crear el pedido");
 
-    const rows = orderItems.map((raw) => {
-      const parsed = parseArticleProvider(raw);
-      return {
-        order_id: order.id,
-        article: parsed.article,
-        done: false,
-        provider: parsed.provider,
-        tenant_id: tenantId,
-        branch_id: branchId,
-      };
-    });
+      const rows = orderItems.map((raw) => {
+        const parsed = parseArticleProvider(raw);
+        return {
+          order_id: order.id,
+          article: parsed.article,
+          done: false,
+          provider: parsed.provider,
+          ordered: false,
+          tenant_id: tenantId,
+          branch_id: branchId,
+        };
+      });
 
     const { error: iErr } = await sb.from("client_order_items").insert(rows);
     if (iErr) return alert("No se pudieron agregar ítems del pedido");
@@ -1191,6 +1194,7 @@ function OrderItemsList({
         article: parsed.article,
         done: false,
         provider: parsed.provider,
+        ordered: false,
         tenant_id: tenantId,
         branch_id: branchId,
       };

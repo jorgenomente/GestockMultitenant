@@ -82,6 +82,8 @@ model client_order_items {
   article       String
   provider      String?
   done          Boolean       @default(false)
+  ordered       Boolean       @default(false)
+  ordered_at    DateTime?     @db.Timestamptz(6)
   created_at    DateTime      @default(now()) @db.Timestamptz(6)
   updated_at    DateTime      @default(now()) @db.Timestamptz(6)
   branches      branches      @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)

@@ -9,7 +9,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowDown, ArrowUp, Loader2, Upload } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ArrowDown, ArrowUp, Check, Loader2, Undo2, Upload } from "lucide-react";
 import { useBranch } from "@/components/branch/BranchProvider";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
@@ -73,6 +83,35 @@ type SelectedProduct = {
   key: string;
   name: string;
   rows: SalesRow[];
+};
+
+type WeightStockEntry = {
+  currentStock?: number;
+  minDesiredStock?: number;
+  suggestedOrder?: number;
+};
+
+type WeightStockMap = Record<string, WeightStockEntry>;
+
+type WeightStockDraft = {
+  current?: string;
+  min?: string;
+  order?: string;
+};
+
+type WeightStockDraftMap = Record<string, WeightStockDraft>;
+
+type WeightAutoPreviewRow = {
+  key: string;
+  name: string;
+  currentStock: number;
+  incoming: number;
+  salesKg: number;
+  nextStock: number;
+  hasChange: boolean;
+  clearCurrentDraft: boolean;
+  clearOrderDraft: boolean;
+  hadPersistedOrder: boolean;
 };
 
 const EMPTY_STATS: Stats = { avg4w: 0, sum2w: 0, sum30d: 0, lastUnitPrice: undefined, lastDate: undefined };
@@ -222,6 +261,57 @@ const formatCurrency = (value: number) => {
 };
 const FRACTION_THRESHOLD = 1e-3;
 const isFractionalQuantity = (qty: number) => Math.abs(qty - Math.round(qty)) > FRACTION_THRESHOLD;
+
+const sanitizeWeightStockMap = (value: unknown): WeightStockMap => {
+  if (!value || typeof value !== "object") return {};
+  const result: WeightStockMap = {};
+  for (const [rawKey, rawEntry] of Object.entries(value as Record<string, unknown>)) {
+    const key = rawKey.trim();
+    if (!key || !rawEntry || typeof rawEntry !== "object") continue;
+    const entry = rawEntry as { currentStock?: unknown; minDesiredStock?: unknown; suggestedOrder?: unknown };
+    const current = typeof entry.currentStock === "number" && Number.isFinite(entry.currentStock) ? entry.currentStock : null;
+    const min =
+      typeof entry.minDesiredStock === "number" && Number.isFinite(entry.minDesiredStock) ? entry.minDesiredStock : null;
+    const suggested =
+      typeof entry.suggestedOrder === "number" && Number.isFinite(entry.suggestedOrder) ? entry.suggestedOrder : null;
+    if (current == null && min == null && suggested == null) continue;
+    const next: WeightStockEntry = {};
+    if (current != null) next.currentStock = current;
+    if (min != null) next.minDesiredStock = min;
+    if (suggested != null) next.suggestedOrder = suggested;
+    result[key] = next;
+  }
+  return result;
+};
+
+const cloneWeightStockMap = (value: WeightStockMap): WeightStockMap => {
+  const result: WeightStockMap = {};
+  for (const [key, entry] of Object.entries(value)) {
+    result[key] = { ...entry };
+  }
+  return result;
+};
+
+const parseWeightNumberInput = (value: string): number | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.replace(/\s+/g, "").replace(/,/g, ".");
+  if (!normalized) return null;
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isWeightStockEntryEmpty = (entry: WeightStockEntry | undefined) =>
+  !entry || (entry.currentStock == null && entry.minDesiredStock == null && entry.suggestedOrder == null);
+
+const computeSuggestedOrder = (entry: WeightStockEntry | undefined): number | null => {
+  if (!entry) return null;
+  if (entry.suggestedOrder != null && Number.isFinite(entry.suggestedOrder)) return entry.suggestedOrder;
+  if (entry.currentStock == null || entry.minDesiredStock == null) return null;
+  const diff = entry.minDesiredStock - entry.currentStock;
+  return diff > 0 ? diff : 0;
+};
 
 function parseFraction(text: string): number | null {
   const fractionMatch = text.match(/^(\d+)\/(\d+)$/);
@@ -916,6 +1006,10 @@ export default function EstadisticaPage() {
   const [weightSelectedIds, setWeightSelectedIds] = React.useState<string[]>([]);
   const [weightSelectedFilter, setWeightSelectedFilter] = React.useState("");
   const [weightPositionDrafts, setWeightPositionDrafts] = React.useState<Record<string, string>>({});
+  const [weightStockSettings, setWeightStockSettings] = React.useState<WeightStockMap>({});
+  const [weightStockDrafts, setWeightStockDrafts] = React.useState<WeightStockDraftMap>({});
+  const [weightAutoDialogOpen, setWeightAutoDialogOpen] = React.useState(false);
+  const [weightStockUndoSnapshot, setWeightStockUndoSnapshot] = React.useState<WeightStockMap | null>(null);
 
   React.useEffect(() => {
     if (!weightDropdownOpen) return;
@@ -947,6 +1041,7 @@ export default function EstadisticaPage() {
   const [weightTo, setWeightTo] = React.useState(todayIso);
   const [weightHydrated, setWeightHydrated] = React.useState(false);
   const weightPersistRef = React.useRef<string | null>(null);
+  const canUndoWeightStock = weightStockUndoSnapshot != null;
 
   const weightProducts = React.useMemo<WeightProductInfo[]>(() => {
     const entries: WeightProductInfo[] = [];
@@ -994,10 +1089,86 @@ export default function EstadisticaPage() {
   }, [weightSelectedIds]);
 
   React.useEffect(() => {
+    setWeightStockDrafts((prev) => {
+      if (!Object.keys(prev).length) return prev;
+      const allowed = new Set(weightSelectedIds);
+      let changed = false;
+      const next = { ...prev };
+      for (const key of Object.keys(next)) {
+        if (!allowed.has(key)) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [weightSelectedIds]);
+
+  const setWeightStockValue = React.useCallback(
+    (key: string, field: "currentStock" | "minDesiredStock" | "suggestedOrder", value: number | null) => {
+      setWeightStockSettings((prev) => {
+        const prevEntry = prev[key];
+        const prevValue = prevEntry?.[field];
+        if (value == null && prevValue == null) return prev;
+        if (value != null && prevValue === value) return prev;
+
+        const nextEntry: WeightStockEntry = { ...(prevEntry ?? {}) };
+        if (value == null) {
+          delete nextEntry[field];
+        } else {
+          nextEntry[field] = value;
+        }
+
+        if (isWeightStockEntryEmpty(nextEntry)) {
+          if (!prevEntry) return prev;
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        }
+
+        return { ...prev, [key]: nextEntry };
+      });
+    },
+    []
+  );
+
+  const handleWeightStockDraftChange = React.useCallback((key: string, field: "current" | "min" | "order", value: string) => {
+    setWeightStockDrafts((prev) => {
+      const prevEntry = prev[key] ?? {};
+      if (prevEntry[field] === value) return prev;
+      return { ...prev, [key]: { ...prevEntry, [field]: value } };
+    });
+  }, []);
+
+  const commitWeightStockInput = React.useCallback(
+    (key: string, field: "current" | "min" | "order", rawValue: string) => {
+      const parsed = parseWeightNumberInput(rawValue);
+      const targetField = field === "current" ? "currentStock" : field === "min" ? "minDesiredStock" : "suggestedOrder";
+      setWeightStockValue(key, targetField, parsed);
+      setWeightStockDrafts((prev) => {
+        const prevEntry = prev[key];
+        if (!prevEntry || prevEntry[field] === undefined) return prev;
+        const nextEntry = { ...prevEntry };
+        delete nextEntry[field];
+        if (nextEntry.current === undefined && nextEntry.min === undefined && nextEntry.order === undefined) {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        }
+        return { ...prev, [key]: nextEntry };
+      });
+    },
+    [setWeightStockValue]
+  );
+
+  React.useEffect(() => {
     if (!tenantId || !branchId || !supabase) {
       setWeightSelectedIds([]);
       setWeightFrom(defaultFromIso);
       setWeightTo(todayIso);
+      setWeightStockSettings({});
+      setWeightStockDrafts({});
+      setWeightStockUndoSnapshot(null);
       setWeightHydrated(false);
       weightPersistRef.current = null;
       return;
@@ -1019,7 +1190,12 @@ export default function EstadisticaPage() {
         if (!alive) return;
         if (error && error.code !== "PGRST116") throw error;
 
-        const raw = (data?.value ?? null) as { selectedIds?: unknown; from?: unknown; to?: unknown } | null;
+        const raw = (data?.value ?? null) as {
+          selectedIds?: unknown;
+          from?: unknown;
+          to?: unknown;
+          stock?: unknown;
+        } | null;
         const nextSelected = Array.isArray(raw?.selectedIds)
           ? raw!.selectedIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
           : [];
@@ -1027,11 +1203,20 @@ export default function EstadisticaPage() {
         const parsedTo = typeof raw?.to === "string" && raw.to ? raw.to : todayIso;
         const normalizedTo = parsedTo;
         const normalizedFrom = parsedFrom > normalizedTo ? normalizedTo : parsedFrom;
+        const parsedStock = sanitizeWeightStockMap(raw?.stock ?? null);
 
         setWeightSelectedIds(nextSelected);
         setWeightFrom(normalizedFrom);
         setWeightTo(normalizedTo);
-        weightPersistRef.current = JSON.stringify({ selectedIds: nextSelected, from: normalizedFrom, to: normalizedTo });
+        setWeightStockSettings(parsedStock);
+        setWeightStockDrafts({});
+        setWeightStockUndoSnapshot(null);
+        weightPersistRef.current = JSON.stringify({
+          selectedIds: nextSelected,
+          from: normalizedFrom,
+          to: normalizedTo,
+          stock: parsedStock,
+        });
         setWeightHydrated(true);
       } catch (err) {
         if (!alive) return;
@@ -1039,6 +1224,9 @@ export default function EstadisticaPage() {
         setWeightSelectedIds([]);
         setWeightFrom(defaultFromIso);
         setWeightTo(todayIso);
+        setWeightStockSettings({});
+        setWeightStockDrafts({});
+        setWeightStockUndoSnapshot(null);
         weightPersistRef.current = null;
         setWeightHydrated(true);
       }
@@ -1185,6 +1373,14 @@ export default function EstadisticaPage() {
     return { start, end };
   }, [weightFrom, weightTo]);
 
+  const weightRangeLabel = React.useMemo(() => {
+    if (!weightFrom || !weightTo) return null;
+    const start = new Date(weightFrom + "T00:00:00Z").getTime();
+    const end = new Date(weightTo + "T00:00:00Z").getTime();
+    if (Number.isNaN(start) || Number.isNaN(end)) return null;
+    return `${dateShort(start)} → ${dateShort(end)}`;
+  }, [weightFrom, weightTo]);
+
   const computeWeightSummary = React.useCallback(
     (item: WeightProductInfo) => {
       if (!weightRange) {
@@ -1263,6 +1459,160 @@ export default function EstadisticaPage() {
     [filteredWeightSummaries]
   );
 
+  const weightAutoPreviewRows = React.useMemo<WeightAutoPreviewRow[]>(() => {
+    if (filteredWeightSummaries.length === 0) return [];
+    return filteredWeightSummaries.map(({ item, summary }) => {
+      const stockEntry = weightStockSettings[item.key];
+      const stockDraft = weightStockDrafts[item.key];
+      const draftCurrentRaw = stockDraft?.current;
+      const draftOrderRaw = stockDraft?.order;
+      const parsedCurrentDraft = typeof draftCurrentRaw === "string" ? parseWeightNumberInput(draftCurrentRaw) : null;
+      const parsedOrderDraft = typeof draftOrderRaw === "string" ? parseWeightNumberInput(draftOrderRaw) : null;
+      const committedCurrent = stockEntry?.currentStock;
+      const committedOrder = stockEntry?.suggestedOrder;
+      const safeCurrent = typeof parsedCurrentDraft === "number" ? parsedCurrentDraft : typeof committedCurrent === "number" ? committedCurrent : 0;
+      const safeIncoming = typeof parsedOrderDraft === "number" ? parsedOrderDraft : typeof committedOrder === "number" ? committedOrder : 0;
+      const currentStock = Number.isFinite(safeCurrent) ? Math.max(0, safeCurrent) : 0;
+      const incoming = Number.isFinite(safeIncoming) ? Math.max(0, safeIncoming) : 0;
+      const salesKg = Number.isFinite(summary.kg) ? Math.max(0, summary.kg) : 0;
+      const rawNext = currentStock + incoming - salesKg;
+      const nextStock = rawNext <= 0 ? 0 : Number.parseFloat(rawNext.toFixed(3));
+      const hasChange =
+        typeof stockEntry?.currentStock === "number"
+          ? Math.abs(stockEntry.currentStock - nextStock) > FRACTION_THRESHOLD
+          : nextStock > 0;
+      const clearCurrentDraft = Boolean(draftCurrentRaw && draftCurrentRaw.trim().length > 0);
+      const clearOrderDraft = Boolean(draftOrderRaw && draftOrderRaw.trim().length > 0);
+      const hadPersistedOrder = typeof committedOrder === "number" && Math.abs(committedOrder) > FRACTION_THRESHOLD;
+      return {
+        key: item.key,
+        name: item.name,
+        currentStock,
+        incoming,
+        salesKg,
+        nextStock,
+        hasChange,
+        clearCurrentDraft,
+        clearOrderDraft,
+        hadPersistedOrder,
+      };
+    });
+  }, [filteredWeightSummaries, weightStockDrafts, weightStockSettings]);
+
+  const weightAutoTotals = React.useMemo(() => {
+    return weightAutoPreviewRows.reduce(
+      (acc, row) => {
+        acc.current += row.currentStock;
+        acc.incoming += row.incoming;
+        acc.sales += row.salesKg;
+        acc.next += row.nextStock;
+        return acc;
+      },
+      { current: 0, incoming: 0, sales: 0, next: 0 }
+    );
+  }, [weightAutoPreviewRows]);
+
+  const weightAutoHasData = React.useMemo(
+    () =>
+      weightAutoPreviewRows.some(
+        (row) =>
+          row.currentStock > 0 ||
+          row.incoming > 0 ||
+          row.salesKg > 0 ||
+          row.clearCurrentDraft ||
+          row.clearOrderDraft ||
+          row.hadPersistedOrder
+      ),
+    [weightAutoPreviewRows]
+  );
+
+  const weightAutoApplyDisabled = weightAutoPreviewRows.length === 0 || !weightAutoHasData;
+
+  const handleApplyWeightAuto = React.useCallback(() => {
+    const rowsToApply = weightAutoPreviewRows.filter(
+      (row) =>
+        row.currentStock > 0 ||
+        row.incoming > 0 ||
+        row.salesKg > 0 ||
+        row.nextStock > 0 ||
+        row.clearCurrentDraft ||
+        row.clearOrderDraft ||
+        row.hadPersistedOrder
+    );
+    if (rowsToApply.length === 0) {
+      setWeightAutoDialogOpen(false);
+      return;
+    }
+    const snapshot = cloneWeightStockMap(weightStockSettings);
+    let mutated = false;
+    setWeightStockSettings((prev) => {
+      let changed = false;
+      const next: WeightStockMap = { ...prev };
+      for (const row of rowsToApply) {
+        const prevEntry = next[row.key];
+        const prevCurrent = prevEntry?.currentStock ?? null;
+        const shouldUpdateCurrent = prevCurrent == null || Math.abs(prevCurrent - row.nextStock) > FRACTION_THRESHOLD;
+        const shouldDropSuggestedOrder = Boolean(
+          prevEntry?.suggestedOrder != null && (row.hadPersistedOrder || row.incoming > FRACTION_THRESHOLD)
+        );
+        if (!shouldUpdateCurrent && !shouldDropSuggestedOrder) continue;
+        const nextEntry: WeightStockEntry = { ...(prevEntry ?? {}) };
+        if (shouldUpdateCurrent) {
+          nextEntry.currentStock = row.nextStock;
+        }
+        if (shouldDropSuggestedOrder) {
+          delete nextEntry.suggestedOrder;
+        }
+        if (isWeightStockEntryEmpty(nextEntry)) {
+          delete next[row.key];
+        } else {
+          next[row.key] = nextEntry;
+        }
+        changed = true;
+      }
+      if (!changed) return prev;
+      mutated = true;
+      return next;
+    });
+    if (mutated) {
+      setWeightStockUndoSnapshot(snapshot);
+    }
+    setWeightStockDrafts((prev) => {
+      let changed = false;
+      const next: WeightStockDraftMap = { ...prev };
+      for (const row of rowsToApply) {
+        const entry = next[row.key];
+        if (!entry) continue;
+        const nextEntry: WeightStockDraft = { ...entry };
+        let entryChanged = false;
+        if (row.clearCurrentDraft && nextEntry.current !== undefined) {
+          delete nextEntry.current;
+          entryChanged = true;
+        }
+        if ((row.clearOrderDraft || row.incoming > FRACTION_THRESHOLD) && nextEntry.order !== undefined) {
+          delete nextEntry.order;
+          entryChanged = true;
+        }
+        if (entryChanged) {
+          changed = true;
+          if (nextEntry.current === undefined && nextEntry.min === undefined && nextEntry.order === undefined) {
+            delete next[row.key];
+          } else {
+            next[row.key] = nextEntry;
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+    setWeightAutoDialogOpen(false);
+  }, [weightAutoPreviewRows, weightStockSettings]);
+
+  const handleWeightStockUndo = React.useCallback(() => {
+    if (!weightStockUndoSnapshot) return;
+    setWeightStockSettings(cloneWeightStockMap(weightStockUndoSnapshot));
+    setWeightStockUndoSnapshot(null);
+  }, [weightStockUndoSnapshot]);
+
   const setWeightQuick = React.useCallback(
     (days: number) => {
       if (!weightTo) return;
@@ -1281,6 +1631,7 @@ export default function EstadisticaPage() {
       selectedIds: weightSelectedIds,
       from: weightFrom,
       to: weightTo,
+      stock: weightStockSettings,
     };
     const serialized = JSON.stringify(payload);
     if (weightPersistRef.current === serialized) return;
@@ -1314,7 +1665,17 @@ export default function EstadisticaPage() {
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [weightHydrated, tenantId, branchId, tenantSlug, weightSettingsKey, weightSelectedIds, weightFrom, weightTo]);
+  }, [
+    weightHydrated,
+    tenantId,
+    branchId,
+    tenantSlug,
+    weightSettingsKey,
+    weightSelectedIds,
+    weightFrom,
+    weightTo,
+    weightStockSettings,
+  ]);
 
   const canShowStats = Boolean(tenantId && currentBranch);
 
@@ -1920,6 +2281,31 @@ export default function EstadisticaPage() {
                         <th className="px-3 py-2 text-left">Última venta</th>
                         <th className="px-3 py-2 text-right">Kg vendidos</th>
                         <th className="px-3 py-2 text-right">Unidades registradas</th>
+                        <th className="px-3 py-2 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <span>Stock actual</span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setWeightAutoDialogOpen(true)}
+                            >
+                              Obtener
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={handleWeightStockUndo}
+                              disabled={!canUndoWeightStock}
+                              title={canUndoWeightStock ? "Deshacer el último Obtener" : "No hay cambios por deshacer"}
+                            >
+                              <Undo2 className="h-4 w-4" /> Deshacer
+                            </Button>
+                          </div>
+                        </th>
+                        <th className="px-3 py-2 text-right">Mínimo stock deseado</th>
+                        <th className="px-3 py-2 text-right">Pedido sugerido</th>
                         <th className="px-3 py-2 text-right">Kg / unidad</th>
                         <th className="px-3 py-2 text-right">Subtotal</th>
                         <th className="px-3 py-2 text-right">Acciones</th>
@@ -1928,7 +2314,7 @@ export default function EstadisticaPage() {
                     <tbody>
                       {filteredWeightSummaries.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="px-3 py-4 text-center text-muted-foreground">
+                          <td colSpan={11} className="px-3 py-4 text-center text-muted-foreground">
                             Sin coincidencias para esta búsqueda.
                           </td>
                         </tr>
@@ -1938,6 +2324,21 @@ export default function EstadisticaPage() {
                           const displayValue = weightPositionDrafts[item.key] ?? String(position + 1);
                           const isFirst = position <= 0;
                           const isLast = position === weightSelectedIds.length - 1;
+                          const stockEntry = weightStockSettings[item.key];
+                          const stockDraft = weightStockDrafts[item.key];
+                          const currentStockValue =
+                            stockDraft?.current ?? (stockEntry?.currentStock != null ? stockEntry.currentStock.toString() : "");
+                          const minStockValue =
+                            stockDraft?.min ??
+                            (stockEntry?.minDesiredStock != null ? stockEntry.minDesiredStock.toString() : "");
+                          const autoSuggested = computeSuggestedOrder(stockEntry);
+                          const orderValue =
+                            stockDraft?.order ??
+                            (stockEntry?.suggestedOrder != null
+                              ? stockEntry.suggestedOrder.toString()
+                              : autoSuggested != null
+                                ? autoSuggested.toString()
+                                : "");
 
                           return (
                             <tr key={`selected-${item.key}`} className="border-b [&>td]:py-2">
@@ -1987,6 +2388,96 @@ export default function EstadisticaPage() {
                               <td className="px-3 text-xs text-muted-foreground">{formatLastSale(item.stats.lastDate)}</td>
                               <td className="px-3 text-right tabular-nums">{formatKg(summary.kg)}</td>
                               <td className="px-3 text-right tabular-nums">{formatQuantity(summary.units)}</td>
+                              <td className="px-3">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Input
+                                    inputMode="decimal"
+                                    value={currentStockValue}
+                                    placeholder="0"
+                                    onChange={(event) => handleWeightStockDraftChange(item.key, "current", event.target.value)}
+                                    onBlur={(event) => commitWeightStockInput(item.key, "current", event.currentTarget.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        commitWeightStockInput(item.key, "current", event.currentTarget.value);
+                                        (event.currentTarget as HTMLInputElement).blur();
+                                      }
+                                    }}
+                                    className="h-8 w-24"
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8"
+                                    aria-label="Guardar stock actual"
+                                    title="Guardar stock actual"
+                                    onClick={() => commitWeightStockInput(item.key, "current", currentStockValue)}
+                                  >
+                                    <Check className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </td>
+                              <td className="px-3">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Input
+                                    inputMode="decimal"
+                                    value={minStockValue}
+                                    placeholder="0"
+                                    onChange={(event) => handleWeightStockDraftChange(item.key, "min", event.target.value)}
+                                    onBlur={(event) => commitWeightStockInput(item.key, "min", event.currentTarget.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        commitWeightStockInput(item.key, "min", event.currentTarget.value);
+                                        (event.currentTarget as HTMLInputElement).blur();
+                                      }
+                                    }}
+                                    className="h-8 w-24"
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8"
+                                    aria-label="Guardar mínimo deseado"
+                                    title="Guardar mínimo deseado"
+                                    onClick={() => commitWeightStockInput(item.key, "min", minStockValue)}
+                                  >
+                                    <Check className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </td>
+                              <td className="px-3">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Input
+                                    inputMode="decimal"
+                                    value={orderValue}
+                                    placeholder={autoSuggested != null ? autoSuggested.toString() : "0"}
+                                    onChange={(event) => handleWeightStockDraftChange(item.key, "order", event.target.value)}
+                                    onBlur={(event) => commitWeightStockInput(item.key, "order", event.currentTarget.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        commitWeightStockInput(item.key, "order", event.currentTarget.value);
+                                        (event.currentTarget as HTMLInputElement).blur();
+                                      }
+                                    }}
+                                    className="h-8 w-24"
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8"
+                                    aria-label="Guardar pedido sugerido"
+                                    title="Guardar pedido sugerido"
+                                    onClick={() => commitWeightStockInput(item.key, "order", orderValue)}
+                                  >
+                                    <Check className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </td>
                               <td className="px-3 text-right tabular-nums">
                                 {item.unitKg != null
                                   ? formatKg(item.unitKg)
@@ -2019,6 +2510,9 @@ export default function EstadisticaPage() {
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">{formatKg(filteredWeightTotals.kg)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{formatQuantity(filteredWeightTotals.units)}</td>
+                          <td className="px-3 py-2 text-right text-muted-foreground">—</td>
+                          <td className="px-3 py-2 text-right text-muted-foreground">—</td>
+                          <td className="px-3 py-2 text-right text-muted-foreground">—</td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {filteredWeightTotalsHaveFractional || filteredWeightTotals.units <= 0
                               ? "—"
@@ -2033,6 +2527,74 @@ export default function EstadisticaPage() {
                 </div>
               </div>
             )}
+
+            <AlertDialog open={weightAutoDialogOpen} onOpenChange={setWeightAutoDialogOpen}>
+              <AlertDialogContent className="max-w-3xl max-h-[calc(100vh-5rem)] overflow-y-auto">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Obtener stock actual</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Sumamos el stock que tenés guardado y lo que ingresó en «Pedido sugerido». Después descontamos las ventas
+                    registradas en el rango actual{weightRangeLabel ? ` (${weightRangeLabel})` : ""} para dejarte el stock al día.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <div className="space-y-4 text-sm">
+                  <p className="text-muted-foreground">
+                    Ejemplo: si el viernes tenías 2 kg de almendras, cargaste que entraron 8 kg y en ese período se vendieron 7 kg,
+                    el nuevo stock quedará en 3 kg (2 + 8 − 7 = 3).
+                  </p>
+                  {weightAutoPreviewRows.length === 0 ? (
+                    <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                      Seleccioná al menos un artículo por peso para mostrar la vista previa antes de aplicar.
+                    </p>
+                  ) : (
+                    <div className="rounded-md border">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          <tr>
+                            <th className="px-3 py-2 text-left">Producto</th>
+                            <th className="px-3 py-2 text-right">Stock actual</th>
+                            <th className="px-3 py-2 text-right">Pedido sugerido</th>
+                            <th className="px-3 py-2 text-right">Ventas a descontar</th>
+                            <th className="px-3 py-2 text-right">Resultado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {weightAutoPreviewRows.map((row) => (
+                            <tr key={`auto-${row.key}`} className="border-t">
+                              <td className="px-3 py-2 font-medium">{row.name}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{formatKg(row.currentStock)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{formatKg(row.incoming)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-amber-600">{formatKg(row.salesKg)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums font-semibold">{formatKg(row.nextStock)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        {weightAutoPreviewRows.length > 1 && (
+                          <tfoot className="border-t bg-muted/30 text-sm font-semibold">
+                            <tr>
+                              <td className="px-3 py-2 text-left">Totales</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{formatKg(weightAutoTotals.current)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{formatKg(weightAutoTotals.incoming)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{formatKg(weightAutoTotals.sales)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{formatKg(weightAutoTotals.next)}</td>
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Tip: una vez aplicado, «Deshacer» vuelve al estado anterior si necesitás corregir algo.
+                  </p>
+                </div>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction disabled={weightAutoApplyDisabled} onClick={handleApplyWeightAuto}>
+                    Obtener stock
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </AccordionContent>
         </AccordionItem>
       </Accordion>

@@ -95,6 +95,35 @@ type WeekSummaryRow = {
   updated_at: string | null;
 };
 
+type ClientOrderStatus = "pendiente" | "guardado" | "entregado" | "cancelado";
+type ClientOrderRow = {
+  id: string;
+  client_id: string;
+  status: ClientOrderStatus;
+  created_at: string;
+};
+type ClientOrderItemRow = {
+  id: string;
+  order_id: string;
+  article: string;
+  done: boolean;
+  provider: string | null;
+  ordered: boolean;
+  ordered_at: string | null;
+  created_at: string;
+};
+type ClientRow = { id: string; name: string | null };
+type PendingClientItem = {
+  id: string;
+  article: string;
+  provider: string;
+  clientName: string;
+  orderStatus: ClientOrderStatus;
+  createdAt: string;
+  ordered: boolean;
+  orderedAt: string | null;
+};
+
 /** Payload genérico para realtime (evitamos imports del SDK para tipos) */
 type PgPayload<T> = {
   eventType: "INSERT" | "UPDATE" | "DELETE";
@@ -198,6 +227,16 @@ const CLEANUP_ORDER_TABLES = ["orders", "provider_orders", "branch_orders"] as c
 const CLEANUP_ITEM_TABLES = ["order_items", "provider_order_items", "branch_order_items"] as const;
 const ORDER_TABLE_CANDIDATES = ["orders", "provider_orders", "branch_orders"] as const;
 const ITEM_TABLE_CANDIDATES = ["order_items", "provider_order_items", "branch_order_items"] as const;
+const CLIENT_ORDER_ACTIVE_STATUSES: readonly ClientOrderStatus[] = ["pendiente", "guardado"];
+
+const comparePendingItems = (a: PendingClientItem, b: PendingClientItem) => {
+  if (a.ordered !== b.ordered) return a.ordered ? 1 : -1;
+  const provDiff = a.provider.localeCompare(b.provider, "es", { sensitivity: "base" });
+  if (provDiff !== 0) return provDiff;
+  return Date.parse(b.createdAt) - Date.parse(a.createdAt);
+};
+
+const sortPendingItems = (list: PendingClientItem[]) => [...list].sort(comparePendingItems);
 
 const BRANCH_SCOPED_TABLES = new Set([
   "providers",
@@ -342,6 +381,19 @@ function formatRange(weekStartYMD: string) {
   const fmt = (dt: Date) => dt.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" });
   return `Semana del ${fmt(s)} al ${fmt(e)}`;
 }
+function formatShortDateTime(iso: string | null | undefined) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleString("es-AR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
 function toMondayYMD(ymd: string) {
   const s = fromYMDLocal(ymd);
   return toYMDLocal(startOfWeekMondayLocal(s));
@@ -384,6 +436,10 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const [selectedWeek, setSelectedWeek] = React.useState<WeekRow | null>(null);
   const [weekProviders, setWeekProviders] = React.useState<Set<string>>(new Set());
   const [lastAddedByProvider, setLastAddedByProvider] = React.useState<Record<string, string | null>>({});
+  const [clientPendingItems, setClientPendingItems] = React.useState<PendingClientItem[]>([]);
+  const [clientItemsLoading, setClientItemsLoading] = React.useState(false);
+  const [clientItemsError, setClientItemsError] = React.useState<string | null>(null);
+  const [clientItemsUpdating, setClientItemsUpdating] = React.useState<Set<string>>(new Set());
 
   const [weekStates, setWeekStates] = React.useState<Record<string, Status>>({});
   const [weekSummaries, setWeekSummaries] =
@@ -762,6 +818,135 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     return () => { cancelled = true; };
   }, [selectedWeek, supabase, tenantId, branchId]);
 
+  /* ===== Pedidos pendientes de clientes ===== */
+  const fetchClientPendingItems = React.useCallback(async () => {
+    if (!tenantId || !branchId) {
+      setClientPendingItems([]);
+      setClientItemsError(null);
+      setClientItemsLoading(false);
+      return;
+    }
+
+    setClientItemsLoading(true);
+    setClientItemsError(null);
+    try {
+      const statuses = [...CLIENT_ORDER_ACTIVE_STATUSES];
+      const { data: ordersData, error: ordersError } = await supabase
+        .from("client_orders")
+        .select("id, client_id, status, created_at")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId)
+        .in("status", statuses)
+        .order("created_at", { ascending: false });
+      if (ordersError) throw ordersError;
+      const orders = (ordersData as ClientOrderRow[] | null) ?? [];
+      if (!orders.length) {
+        setClientPendingItems([]);
+        return;
+      }
+
+      const orderIds = orders.map((o) => o.id);
+      if (!orderIds.length) {
+        setClientPendingItems([]);
+        return;
+      }
+
+      const { data: itemsData, error: itemsError } = await supabase
+        .from("client_order_items")
+        .select("id, order_id, article, done, provider, ordered, ordered_at, created_at")
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId)
+        .eq("done", false)
+        .in("order_id", orderIds)
+        .order("created_at", { ascending: false });
+      if (itemsError) throw itemsError;
+      const items = (itemsData as ClientOrderItemRow[] | null) ?? [];
+      if (!items.length) {
+        setClientPendingItems([]);
+        return;
+      }
+
+      const orderById = new Map(orders.map((o) => [o.id, o] as const));
+      const clientIds = Array.from(new Set(orders.map((o) => o.client_id))).filter(Boolean);
+      const clientNameMap: Record<string, string> = {};
+      if (clientIds.length) {
+        const { data: clientsData, error: clientsError } = await supabase
+          .from("clients")
+          .select("id, name")
+          .in("id", clientIds);
+        if (clientsError) throw clientsError;
+        (clientsData as ClientRow[] | null)?.forEach((c) => {
+          if (!c?.id) return;
+          clientNameMap[c.id] = (c.name ?? "Cliente sin nombre").trim() || "Cliente sin nombre";
+        });
+      }
+
+      const pending = items
+        .map((item) => {
+          const order = orderById.get(item.order_id);
+          if (!order) return null;
+          const providerLabel = item.provider?.trim() || "Sin proveedor";
+          const clientName = clientNameMap[order.client_id] ?? "Cliente sin nombre";
+          return {
+            id: item.id,
+            article: item.article,
+            provider: providerLabel,
+            clientName,
+            orderStatus: order.status,
+            createdAt: item.created_at,
+            ordered: item.ordered ?? false,
+            orderedAt: item.ordered_at ?? null,
+          } satisfies PendingClientItem;
+        })
+        .filter(Boolean) as PendingClientItem[];
+
+      setClientPendingItems(sortPendingItems(pending));
+    } catch (err) {
+      console.error("fetch client pending items error:", err);
+      setClientPendingItems([]);
+      setClientItemsError("No se pudieron consultar los pedidos de clientes.");
+    } finally {
+      setClientItemsLoading(false);
+    }
+  }, [branchId, supabase, tenantId]);
+
+  React.useEffect(() => {
+    void fetchClientPendingItems();
+  }, [fetchClientPendingItems]);
+
+  const setClientItemUpdating = React.useCallback((itemId: string, next: boolean) => {
+    setClientItemsUpdating((prev) => {
+      const copy = new Set(prev);
+      if (next) copy.add(itemId);
+      else copy.delete(itemId);
+      return copy;
+    });
+  }, []);
+
+  const toggleClientItemOrdered = React.useCallback(async (itemId: string, nextOrdered: boolean) => {
+    const orderedAt = nextOrdered ? new Date().toISOString() : null;
+    setClientItemUpdating(itemId, true);
+    try {
+      const { error } = await supabase
+        .from("client_order_items")
+        .update({
+          ordered: nextOrdered,
+          ordered_at: orderedAt,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", itemId);
+      if (error) throw error;
+      setClientPendingItems((prev) => sortPendingItems(
+        prev.map((item) => (item.id === itemId ? { ...item, ordered: nextOrdered, orderedAt } : item))
+      ));
+    } catch (err) {
+      console.error("toggle client item ordered error", err);
+      await showAlert("No pudimos actualizar el estado del ítem. Reintentá más tarde.");
+    } finally {
+      setClientItemUpdating(itemId, false);
+    }
+  }, [setClientItemUpdating, supabase]);
+
   /* ===== Realtime (providers) ===== */
   React.useEffect(() => {
     if (!branchId || !tenantId) return;
@@ -898,7 +1083,22 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     return map;
   }, [filtered]);
 
+  const clientPendingGroups = React.useMemo(() => {
+    if (!clientPendingItems.length) return [];
+    const map = new Map<string, PendingClientItem[]>();
+    clientPendingItems.forEach((item) => {
+      const key = item.provider || "Sin proveedor";
+      const bucket = map.get(key);
+      if (bucket) bucket.push(item);
+      else map.set(key, [item]);
+    });
+    return Array.from(map.entries())
+      .map(([provider, items]) => ({ provider, items: items.sort(comparePendingItems) }))
+      .sort((a, b) => a.provider.localeCompare(b.provider, "es", { sensitivity: "base" }));
+  }, [clientPendingItems]);
+
   const totalProviders = visibleProviders.length;
+  const totalPendingClientItems = clientPendingItems.length;
   const todayIdx = new Date().getDay();
 
   const handleImportClick = React.useCallback(() => {
@@ -2902,6 +3102,94 @@ const buildExportPayload = React.useCallback(async (
           <Badge variant="muted" className="px-3">Total: {totalProviders}</Badge>
         </div>
       </div>
+
+      {/* Pedidos pendientes de clientes */}
+      <section className="space-y-3 rounded-2xl border border-border/60 bg-card/95 px-4 py-4 shadow-[var(--shadow-card)]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-foreground">Pedidos pendientes de clientes</p>
+            <p className="text-xs text-muted-foreground">
+              {clientItemsLoading
+                ? "Consultando pedidos…"
+                : totalPendingClientItems
+                  ? `${totalPendingClientItems} ${totalPendingClientItems === 1 ? "ítem" : "ítems"} pendientes de clientes`
+                  : "No hay pedidos pendientes de clientes."}
+            </p>
+          </div>
+          <Badge variant="muted" className="px-3 text-xs">
+            {clientItemsLoading
+              ? "···"
+              : `${totalPendingClientItems} ${totalPendingClientItems === 1 ? "ítem" : "ítems"}`}
+          </Badge>
+        </div>
+
+        {clientItemsError ? (
+          <p className="text-xs text-destructive">{clientItemsError}</p>
+        ) : clientItemsLoading ? (
+          <p className="text-xs text-muted-foreground">Cargando ítems de clientes…</p>
+        ) : clientPendingGroups.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No hay pedidos pendientes en este momento.</p>
+        ) : (
+          <div className="space-y-3">
+            {clientPendingGroups.map((group) => (
+              <div
+                key={group.provider}
+                className="rounded-xl border border-border/60 bg-[color:var(--surface-overlay-soft)] px-3 py-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold uppercase text-muted-foreground">
+                    {group.provider === "Sin proveedor" ? group.provider : `@${group.provider}`}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {group.items.length} {group.items.length === 1 ? "ítem" : "ítems"}
+                  </span>
+                </div>
+                <ul className="mt-2 space-y-2">
+                  {group.items.map((item) => (
+                    <li
+                      key={item.id}
+                      className="flex flex-col gap-2 rounded-lg border border-border/50 bg-card/80 p-2 sm:flex-row sm:items-center"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-medium text-foreground">{item.article}</p>
+                          <Badge variant="outline" className="h-5 px-2 text-[10px] capitalize">
+                            {item.orderStatus}
+                          </Badge>
+                          {item.ordered && (
+                            <Badge variant="secondary" className="h-5 px-2 text-[10px] uppercase tracking-wide">
+                              Pedido
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground truncate">Cliente: {item.clientName}</p>
+                        {item.ordered && (
+                          <p className="text-[10px] text-muted-foreground">
+                            Pedido el {formatShortDateTime(item.orderedAt)}
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={item.ordered ? "outline" : "default"}
+                        className="h-8 shrink-0 rounded-lg text-[11px]"
+                        disabled={clientItemsUpdating.has(item.id)}
+                        onClick={() => { void toggleClientItemOrdered(item.id, !item.ordered); }}
+                      >
+                        {clientItemsUpdating.has(item.id)
+                          ? "Guardando..."
+                          : item.ordered
+                            ? "Marcar pendiente"
+                            : "Marcar pedido"}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {isOwner && (
         <>

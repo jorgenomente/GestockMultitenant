@@ -914,7 +914,282 @@ export default function ConfiguracionPageClient() {
   const orderQtyColor = sanitizeHexColor(formValues.orderQty, DEFAULT_BRANCH_THEME.orderQty);
   const textPrimaryColor = previewVars["--foreground"] || DEFAULT_BRANCH_THEME.textPrimary;
   const textSecondaryColor = previewVars["--muted-foreground"] || DEFAULT_BRANCH_THEME.textSecondary;
+  const primaryForeground = previewVars["--primary-foreground"] || DEFAULT_BRANCH_THEME.textPrimary;
+  const secondaryForeground = previewVars["--secondary-foreground"] || DEFAULT_BRANCH_THEME.textPrimary;
+  const accentForeground = previewVars["--accent-foreground"] || DEFAULT_BRANCH_THEME.cardForeground;
+  const successForeground = previewVars["--success-foreground"] || DEFAULT_BRANCH_THEME.textPrimary;
+  const destructiveForeground = previewVars["--destructive-foreground"] || DEFAULT_BRANCH_THEME.textPrimary;
+  const navForeground = previewVars["--sidebar-foreground"] || DEFAULT_BRANCH_THEME.textPrimary;
+  const navAccent = previewVars["--sidebar-primary"] || previewVars["--primary"] || DEFAULT_BRANCH_THEME.primary;
+  const navAccentForeground =
+    previewVars["--sidebar-primary-foreground"] || previewVars["--primary-foreground"] || DEFAULT_BRANCH_THEME.textPrimary;
+  const borderColor = previewVars["--border"] || DEFAULT_BRANCH_THEME.surface;
+  const successSoftSurface = previewVars["--surface-success-soft"] || "rgba(143, 189, 165, 0.18)";
+  const successStrongSurface = previewVars["--surface-success-strong"] || DEFAULT_BRANCH_THEME.success;
+  const alertSoftSurface = previewVars["--surface-alert-soft"] || "rgba(193, 100, 59, 0.2)";
+  const alertStrongSurface = previewVars["--surface-alert-strong"] || DEFAULT_BRANCH_THEME.alert;
+  const accentSoftSurface = previewVars["--surface-accent-soft"] || "rgba(115, 148, 176, 0.18)";
+  const accentStrongSurface = previewVars["--surface-accent-strong"] || accentColor;
+  const secondarySoftSurface = previewVars["--surface-secondary-soft"] || "rgba(75, 91, 83, 0.18)";
+  const secondaryStrongSurface = previewVars["--surface-secondary-strong"] || DEFAULT_BRANCH_THEME.secondary;
+  const orderQtyForeground = previewVars["--order-card-qty-foreground"] || cardForeground;
+  const orderQtyBorder = previewVars["--order-card-qty-border"] || borderColor;
+  const navBorder = previewVars["--sidebar-border"] || borderColor;
+  const navSoftSurface = previewVars["--surface-nav-soft"] || "rgba(44, 58, 51, 0.75)";
   const hiddenPresetIdSet = React.useMemo(() => new Set(hiddenPresetIds), [hiddenPresetIds]);
+
+  const renderColorUsageExample = React.useCallback(
+    (field: keyof BranchThemeFormValues, value: string) => {
+      switch (field) {
+        case "primary":
+          return (
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="flex-1 rounded-lg px-3 py-2 text-sm font-semibold shadow-sm"
+                  style={{ background: value, color: primaryForeground }}
+                >
+                  CTA principal
+                </button>
+                <button
+                  type="button"
+                  className="flex-1 rounded-lg border px-3 py-2 text-sm font-semibold"
+                  style={{ borderColor: value, color: value }}
+                >
+                  Hover
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">Botones destacados y estados focus.</p>
+            </div>
+          );
+        case "secondary":
+          return (
+            <div className="space-y-2">
+              <button
+                type="button"
+                className="w-full rounded-lg border px-3 py-2 text-sm font-medium shadow-sm"
+                style={{ background: secondarySoftSurface, borderColor: secondaryStrongSurface, color: secondaryForeground }}
+              >
+                Acción secundaria
+              </button>
+              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                <span
+                  className="rounded-full border px-2 py-1 font-semibold"
+                  style={{ borderColor: secondaryStrongSurface, color: secondaryForeground }}
+                >
+                  Badge
+                </span>
+                <span>Chips y botones suaves.</span>
+              </div>
+            </div>
+          );
+        case "accent":
+          return (
+            <div
+              className="rounded-xl border px-3 py-2 text-xs"
+              style={{ background: accentSoftSurface, borderColor: accentStrongSurface, color: accentForeground }}
+            >
+              <p className="text-[11px] font-semibold uppercase tracking-wide">Métrica destacada</p>
+              <p className="text-lg font-semibold" style={{ color: value }}>
+                +18%
+              </p>
+              <p className="text-[11px]" style={{ color: textSecondaryColor }}>
+                vs mes anterior
+              </p>
+              <div className="mt-2 h-1.5 rounded-full" style={{ background: value }} />
+            </div>
+          );
+        case "success":
+          return (
+            <div
+              className="rounded-xl border px-3 py-2 text-sm font-medium"
+              style={{ background: successSoftSurface, borderColor: successStrongSurface, color: successForeground }}
+            >
+              <div className="flex items-center justify-between">
+                <span>Operación exitosa</span>
+                <span className="text-xs font-semibold uppercase">Pagado</span>
+              </div>
+              <p className="mt-1 text-xs" style={{ opacity: 0.8 }}>
+                Toasts, banners y confirmaciones usan esta base.
+              </p>
+            </div>
+          );
+        case "alert":
+          return (
+            <div
+              className="rounded-xl border px-3 py-2 text-sm font-medium"
+              style={{ background: alertSoftSurface, borderColor: alertStrongSurface, color: destructiveForeground }}
+            >
+              <div className="flex items-center gap-2">
+                <span>Acción crítica</span>
+                <span className="rounded-full border border-current px-2 py-0.5 text-[10px] uppercase tracking-wide">
+                  Confirmar
+                </span>
+              </div>
+              <p className="mt-1 text-xs opacity-80">Alertas, toasts y botones destructivos.</p>
+            </div>
+          );
+        case "orderQty":
+          return (
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  className="h-8 w-8 rounded-full border text-lg font-semibold"
+                  style={{ background: value, borderColor: orderQtyBorder, color: orderQtyForeground }}
+                >
+                  -
+                </button>
+                <div
+                  className="min-w-[3rem] rounded-lg border px-3 py-1 text-center text-sm font-semibold"
+                  style={{ borderColor }}
+                >
+                  12
+                </div>
+                <button
+                  type="button"
+                  className="h-8 w-8 rounded-full border text-lg font-semibold"
+                  style={{ background: value, borderColor: orderQtyBorder, color: orderQtyForeground }}
+                >
+                  +
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] text-muted-foreground">Stepper del pedido y contadores rápidos.</p>
+            </div>
+          );
+        case "background":
+          return (
+            <div className="rounded-2xl border p-3 shadow-inner" style={{ background: value, borderColor }}>
+              <div
+                className="rounded-xl border bg-card/80 px-3 py-2 text-xs shadow-sm"
+                style={{ background: cardBackground, borderColor, color: cardForeground }}
+              >
+                Contenido sobre el lienzo principal.
+              </div>
+            </div>
+          );
+        case "surface":
+          return (
+            <div className="space-y-2">
+              <div className="rounded-xl border bg-background/50 p-2" style={{ borderColor }}>
+                <div className="rounded-lg border px-3 py-2 text-xs shadow-sm" style={{ background: value, borderColor, color: cardForeground }}>
+                  Panel flotante
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground">Modales, popovers y contenedores secundarios.</p>
+            </div>
+          );
+        case "card":
+          return (
+            <div className="rounded-2xl border p-3 shadow-sm" style={{ background: value, borderColor }}>
+              <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: textSecondaryColor }}>
+                Tarjeta
+              </p>
+              <p className="text-sm font-semibold" style={{ color: cardForeground }}>
+                Producto destacado
+              </p>
+              <p className="text-xs" style={{ color: textSecondaryColor }}>
+                Resumenes y listados destacados.
+              </p>
+            </div>
+          );
+        case "cardForeground":
+          return (
+            <div className="rounded-2xl border p-3 shadow-sm" style={{ background: cardBackground, borderColor }}>
+              <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: value }}>
+                Texto dentro de tarjeta
+              </p>
+              <p className="text-sm" style={{ color: value }}>
+                Cifras y descripciones adoptan este tono.
+              </p>
+            </div>
+          );
+        case "inputBackground":
+          return (
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Campo de ejemplo</p>
+              <div
+                className="rounded-lg border px-3 py-2 text-sm"
+                style={{ background: value, borderColor, color: textPrimaryColor }}
+              >
+                Input activo
+              </div>
+            </div>
+          );
+        case "nav":
+          return (
+            <div
+              className="overflow-hidden rounded-2xl border text-xs shadow-sm"
+              style={{ background: value, borderColor: navBorder, color: navForeground }}
+            >
+              <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide">Menú lateral</div>
+              <div className="space-y-2 px-3 pb-3">
+                <div className="rounded-lg px-2 py-1 text-sm font-semibold" style={{ background: navAccent, color: navAccentForeground }}>
+                  Item activo
+                </div>
+                <div className="rounded-lg px-2 py-1 text-sm" style={{ background: navSoftSurface, color: navForeground }}>
+                  Hover / foco
+                </div>
+              </div>
+            </div>
+          );
+        case "textPrimary":
+          return (
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Titulares</p>
+              <p className="text-lg font-semibold" style={{ color: value }}>
+                Texto principal claro y contrastado.
+              </p>
+            </div>
+          );
+        case "textSecondary":
+          return (
+            <div className="space-y-1">
+              <p className="text-sm leading-relaxed" style={{ color: value }}>
+                Etiquetas, ayudas contextuales y leyendas usan este color.
+              </p>
+              <p className="text-sm leading-relaxed" style={{ color: value }}>
+                Asegurá contraste suficiente sobre superficies.
+              </p>
+            </div>
+          );
+        default:
+          return (
+            <div className="h-12 rounded-xl border border-dashed" style={{ background: value, borderColor }}>
+              <span className="sr-only">{value}</span>
+            </div>
+          );
+      }
+    },
+    [
+      accentForeground,
+      accentSoftSurface,
+      accentStrongSurface,
+      borderColor,
+      cardBackground,
+      cardForeground,
+      destructiveForeground,
+      navAccent,
+      navAccentForeground,
+      navBorder,
+      navForeground,
+      navSoftSurface,
+      orderQtyBorder,
+      orderQtyForeground,
+      primaryForeground,
+      secondaryForeground,
+      secondarySoftSurface,
+      secondaryStrongSurface,
+      successForeground,
+      successSoftSurface,
+      successStrongSurface,
+      textPrimaryColor,
+      textSecondaryColor,
+      alertSoftSurface,
+      alertStrongSurface,
+    ]
+  );
 
   const canEdit = role === "owner";
 
@@ -1592,45 +1867,28 @@ export default function ConfiguracionPageClient() {
                               <span className="text-[11px] uppercase tracking-wide text-muted-foreground">{group.description}</span>
                             ) : null}
                           </div>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            {group.items.map((item) => {
-                              const value = resolveColor(item);
-                              return (
-                                <div
-                                  key={item.field}
-                                  className="rounded-2xl border border-border/50 bg-card/60 p-3 text-xs shadow-sm"
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="text-sm font-semibold text-foreground">{item.label}</span>
-                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{item.usage}</span>
-                                  </div>
-                                  <div className="mt-3 flex items-center gap-3">
-                                    <span
-                                      className="h-10 w-10 rounded-lg border border-border/50 shadow-inner"
-                                      style={{ background: value }}
-                                    />
-                                    <span className="font-mono text-[11px] uppercase text-muted-foreground">{value}</span>
-                                  </div>
-                                  {item.type === "text" ? (
-                                    <p
-                                      className="mt-2 rounded-lg border border-dashed border-border/60 px-2 py-1 text-sm font-medium"
-                                      style={{
-                                        color: value,
-                                        background: cardBackground,
-                                      }}
-                                    >
-                                      Texto de ejemplo
-                                    </p>
-                                  ) : item.type === "surface" ? (
-                                    <div
-                                      className="mt-2 h-8 w-full rounded-lg border border-dashed border-border/60"
-                                      style={{ background: value }}
-                                    />
-                                  ) : null}
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {group.items.map((item) => {
+                          const value = resolveColor(item);
+                          return (
+                            <div
+                              key={item.field}
+                              className="rounded-2xl border border-border/50 bg-card/60 p-3 text-xs shadow-sm"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <span className="text-sm font-semibold text-foreground">{item.label}</span>
+                                  <p className="text-[11px] text-muted-foreground">{item.usage}</p>
                                 </div>
-                              );
-                            })}
-                          </div>
+                                <span className="font-mono text-[11px] uppercase text-muted-foreground">{value}</span>
+                              </div>
+                              <div className="mt-3">
+                                {renderColorUsageExample(item.field, value)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                         </div>
                       ))}
                     </div>
