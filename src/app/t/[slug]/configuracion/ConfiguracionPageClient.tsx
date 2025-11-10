@@ -69,6 +69,10 @@ const FIELD_METADATA: Record<keyof BranchThemeFormValues, { label: string; descr
     label: "Texto en tarjetas",
     description: "Color del contenido dentro de tarjetas",
   },
+  inputBackground: {
+    label: "Campos e inputs",
+    description: "Fondo de inputs, selects y textareas",
+  },
   orderQty: {
     label: "Pedido (cantidad)",
     description: "Inputs y botones para sumar/restar en la tarjeta de pedido",
@@ -101,7 +105,7 @@ const FIELD_SECTIONS: FieldSection[] = [
   {
     title: "Superficies",
     description: "Definí el contraste de fondo, tarjetas, navegación y contenedores",
-    fields: ["background", "surface", "card", "cardForeground", "nav"],
+    fields: ["background", "surface", "card", "cardForeground", "inputBackground", "nav"],
   },
   {
     title: "Tipografía",
@@ -144,6 +148,13 @@ const COLOR_PREVIEW_GROUPS: ColorPreviewGroup[] = [
       { field: "surface", label: "Superficie", usage: "Paneles y modales", cssVar: "--muted", type: "surface" },
       { field: "card", label: "Tarjetas", usage: "Resaltados", cssVar: "--card", type: "surface" },
       { field: "cardForeground", label: "Texto en tarjeta", usage: "Contenido destacado", cssVar: "--card-foreground", type: "text" },
+      {
+        field: "inputBackground",
+        label: "Campos",
+        usage: "Inputs y selects",
+        cssVar: "--input-background",
+        type: "surface",
+      },
       { field: "nav", label: "Navegación", usage: "Sidebar y menús", cssVar: "--sidebar", type: "surface" },
     ],
   },
@@ -223,6 +234,7 @@ function generateRandomTheme(): BranchThemeFormValues {
   const surface = hslToHex(surfaceHue, isDark ? 0.24 : 0.18, isDark ? 0.19 : 0.88);
   const card = hslToHex(cardHue, isDark ? 0.22 : 0.14, isDark ? 0.25 : 0.96);
   const nav = hslToHex(navHue, isDark ? 0.3 : 0.2, isDark ? 0.18 : 0.9);
+  const inputBackground = isDark ? "#F4F5F4" : "#FFFFFF";
 
   const textPrimary = isDark ? "#F6F7F5" : "#1F2420";
   const textSecondary = isDark ? "#C3CDC8" : "#55665E";
@@ -237,6 +249,7 @@ function generateRandomTheme(): BranchThemeFormValues {
     surface,
     card,
     cardForeground: textPrimary,
+    inputBackground,
     orderQty: hslToHex(orderQtyHue, isDark ? 0.64 : 0.58, isDark ? 0.54 : 0.46),
     nav,
     textPrimary,
@@ -252,6 +265,43 @@ type PresetWithSource = ThemePreset & {
 const gradientBackground = (from: string, to: string) => `linear-gradient(135deg, ${from}, ${to})`;
 
 const HIDDEN_PRESETS_STORAGE_KEY = "theme-hidden-presets";
+
+const PRESET_LIGHT_INPUT_BACKGROUND = DEFAULT_BRANCH_THEME.inputBackground;
+const PRESET_DARK_INPUT_BACKGROUND = "#F4F5F4";
+
+const srgbChannelToLinear = (value: number) => (value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4));
+
+const isDarkHexColor = (hex: string) => {
+  if (!HEX_FULL_REGEX.test(hex)) return false;
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const luminance = 0.2126 * srgbChannelToLinear(r) + 0.7152 * srgbChannelToLinear(g) + 0.0722 * srgbChannelToLinear(b);
+  return luminance < 0.4;
+};
+
+const withPresetValues = (values: Partial<BranchThemeFormValues>): BranchThemeFormValues => {
+  const background = sanitizeHexColor(values.background ?? DEFAULT_BRANCH_THEME.background, DEFAULT_BRANCH_THEME.background);
+  const inputBackground = values.inputBackground
+    ?? (isDarkHexColor(background) ? PRESET_DARK_INPUT_BACKGROUND : PRESET_LIGHT_INPUT_BACKGROUND);
+
+  return {
+    ...DEFAULT_BRANCH_THEME,
+    ...values,
+    background,
+    inputBackground,
+  };
+};
+
+type BuiltinPresetDefinition = Omit<PresetWithSource, "source" | "values"> & {
+  values: Partial<BranchThemeFormValues>;
+};
+
+const createBuiltinPreset = (preset: BuiltinPresetDefinition): PresetWithSource => ({
+  ...preset,
+  source: "builtin" as const,
+  values: withPresetValues(preset.values),
+});
 
 const BUILTIN_THEME_PRESETS: PresetWithSource[] = [
   {
@@ -534,7 +584,7 @@ const BUILTIN_THEME_PRESETS: PresetWithSource[] = [
       textSecondary: "#C6D5E0",
     },
   },
-].map((preset) => ({ ...preset, source: "builtin" as const }));
+].map((preset) => createBuiltinPreset(preset));
 
 const BUILTIN_GRADIENT_THEME_PRESETS: PresetWithSource[] = [
   {
@@ -717,7 +767,7 @@ const BUILTIN_GRADIENT_THEME_PRESETS: PresetWithSource[] = [
       card: gradientBackground("#1F3344", "#244055"),
     },
   },
-].map((preset) => ({ ...preset, source: "builtin" as const }));
+].map((preset) => createBuiltinPreset(preset));
 
 const BUILTIN_PRESET_COLLECTIONS: Array<{
   id: string;

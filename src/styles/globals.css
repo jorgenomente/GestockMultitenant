@@ -157,7 +157,7 @@
   --destructive-foreground: #F5F5F2;
   --border: #4B5B53;
   --input: transparent;
-  --input-background: #24312E;
+  --input-background: #FFFFFF;
   --switch-background: #4B5B53;
   --ring: #C1643B;
   --sidebar: #2C3A33;
@@ -232,7 +232,7 @@
   --success-foreground: #1F1F1F;
   --border: rgba(255, 255, 255, 0.10);
   --input: rgba(255, 255, 255, 0.10);
-  --input-background: #2A2A2A;
+  --input-background: #FFFFFF;
   --switch-background: rgba(255, 255, 255, 0.10);
   --ring: #A9C9A4;
   --sidebar: #1F3340;

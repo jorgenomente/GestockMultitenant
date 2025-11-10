@@ -324,6 +324,7 @@ model payment_providers {
   branch_id     String     @db.Uuid
   name          String
   alias         String?
+  whatsapp      String?
   payment_terms String?
   payment_day   String?
   contact_info  String?

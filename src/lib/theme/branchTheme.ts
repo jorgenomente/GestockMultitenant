@@ -13,6 +13,7 @@ export type BranchThemeFormValues = {
   surface: string;
   card: string;
   cardForeground: string;
+  inputBackground: string;
   orderQty: string;
   nav: string;
   textPrimary: string;
@@ -42,6 +43,7 @@ export const DEFAULT_BRANCH_THEME: BranchThemeFormValues = {
   surface: "#3C4A44",
   card: "#2F3B37",
   cardForeground: TEXT_PRIMARY_FALLBACK,
+  inputBackground: "#FFFFFF",
   orderQty: "#D6815A",
   nav: "#2C3A33",
   textPrimary: TEXT_PRIMARY_FALLBACK,
@@ -58,6 +60,7 @@ export const BRANCH_THEME_FIELDS: Array<keyof BranchThemeFormValues> = [
   "surface",
   "card",
   "cardForeground",
+  "inputBackground",
   "orderQty",
   "nav",
   "textPrimary",
@@ -141,6 +144,7 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const textSecondary = sanitizeHexColor(theme.textSecondary, DEFAULT_BRANCH_THEME.textSecondary || TEXT_SECONDARY_FALLBACK);
   const card = sanitizeHexColor(theme.card, DEFAULT_BRANCH_THEME.card ?? surface);
   const cardForeground = sanitizeHexColor(theme.cardForeground, textPrimary);
+  const inputBackground = sanitizeHexColor(theme.inputBackground, DEFAULT_BRANCH_THEME.inputBackground);
   const orderQty = sanitizeHexColor(theme.orderQty, DEFAULT_BRANCH_THEME.orderQty);
 
   const primaryHover = adjustLightness(primary, -0.08);
@@ -239,7 +243,7 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
     "--success-foreground": textPrimary,
     "--border": cardBorder,
     "--input": "transparent",
-    "--input-background": surfaceSwitch,
+    "--input-background": inputBackground,
     "--switch-background": surfaceSwitch,
     "--ring": alert,
     "--sidebar": nav,
