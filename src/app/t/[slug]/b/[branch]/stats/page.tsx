@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,7 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowDown, ArrowUp, Check, Loader2, Undo2, Upload } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Download, Loader2, Undo2, Upload } from "lucide-react";
 import { useBranch } from "@/components/branch/BranchProvider";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
@@ -113,6 +114,84 @@ type WeightAutoPreviewRow = {
   clearOrderDraft: boolean;
   hadPersistedOrder: boolean;
 };
+
+type WeightSummaryInfo = {
+  units: number;
+  kg: number;
+  subtotal: number;
+  usedFractional: boolean;
+};
+
+type WeightColumnConfig = {
+  id:
+    | "position"
+    | "product"
+    | "lastSale"
+    | "kgSold"
+    | "unitsRegistered"
+    | "currentStock"
+    | "minStock"
+    | "orderSuggestion"
+    | "kgPerUnit"
+    | "subtotal"
+    | "actions";
+  label: string;
+  align?: "left" | "center" | "right";
+  width?: number;
+  numberFormat?: string;
+};
+
+const WEIGHT_COLUMN_CONFIG: readonly WeightColumnConfig[] = [
+  { id: "position", label: "Posición", align: "center", width: 10 },
+  { id: "product", label: "Producto", align: "left", width: 32 },
+  { id: "lastSale", label: "Última venta", align: "left", width: 26 },
+  { id: "kgSold", label: "Kg vendidos", align: "right", width: 16, numberFormat: "#,##0.000" },
+  { id: "unitsRegistered", label: "Unidades registradas", align: "right", width: 18, numberFormat: "#,##0.00" },
+  { id: "currentStock", label: "Stock actual", align: "right", width: 16, numberFormat: "#,##0.000" },
+  { id: "minStock", label: "Mínimo stock deseado", align: "right", width: 20, numberFormat: "#,##0.000" },
+  { id: "orderSuggestion", label: "Pedido sugerido", align: "right", width: 18, numberFormat: "#,##0.000" },
+  { id: "kgPerUnit", label: "Kg / unidad", align: "right", width: 14, numberFormat: "#,##0.000" },
+  { id: "subtotal", label: "Subtotal", align: "right", width: 16, numberFormat: "#,##0.00" },
+  { id: "actions", label: "Acciones", align: "center", width: 14 },
+] as const;
+
+type WeightColumnId = (typeof WEIGHT_COLUMN_CONFIG)[number]["id"];
+
+type WeightTableRow = {
+  item: WeightProductInfo;
+  summary: WeightSummaryInfo;
+  position: number;
+  displayValue: string;
+  isFirst: boolean;
+  isLast: boolean;
+  currentStockValue: string;
+  minStockValue: string;
+  orderValue: string;
+  autoSuggested: number | null;
+};
+
+type SheetJSCellBorder = {
+  style?: "thin" | "medium" | "thick" | string;
+  color?: { rgb: string };
+};
+
+type SheetJSCellStyle = {
+  font?: { bold?: boolean; color?: { rgb: string } };
+  fill?: { patternType?: string; fgColor?: { rgb: string } };
+  alignment?: {
+    horizontal?: "left" | "center" | "right";
+    vertical?: "top" | "center" | "bottom";
+    wrapText?: boolean;
+  };
+  border?: {
+    top?: SheetJSCellBorder;
+    bottom?: SheetJSCellBorder;
+    left?: SheetJSCellBorder;
+    right?: SheetJSCellBorder;
+  };
+};
+
+const DEFAULT_WEIGHT_COLUMN_IDS: WeightColumnId[] = WEIGHT_COLUMN_CONFIG.map((col) => col.id);
 
 const EMPTY_STATS: Stats = { avg4w: 0, sum2w: 0, sum30d: 0, lastUnitPrice: undefined, lastDate: undefined };
 
@@ -262,6 +341,16 @@ const formatCurrency = (value: number) => {
 const FRACTION_THRESHOLD = 1e-3;
 const isFractionalQuantity = (qty: number) => Math.abs(qty - Math.round(qty)) > FRACTION_THRESHOLD;
 
+const columnIndexToLetter = (index: number) => {
+  let n = index;
+  let label = "";
+  while (n >= 0) {
+    label = String.fromCharCode((n % 26) + 65) + label;
+    n = Math.floor(n / 26) - 1;
+  }
+  return label;
+};
+
 const sanitizeWeightStockMap = (value: unknown): WeightStockMap => {
   if (!value || typeof value !== "object") return {};
   const result: WeightStockMap = {};
@@ -300,6 +389,63 @@ const parseWeightNumberInput = (value: string): number | null => {
   if (!normalized) return null;
   const parsed = Number.parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const sanitizeWeightColumnSelection = (value: unknown): WeightColumnId[] => {
+  if (!Array.isArray(value)) return [...DEFAULT_WEIGHT_COLUMN_IDS];
+  const allowed = new Set<WeightColumnId>(DEFAULT_WEIGHT_COLUMN_IDS);
+  const seen = new Set<WeightColumnId>();
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const candidate = raw as WeightColumnId;
+    if (!allowed.has(candidate)) continue;
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+  }
+  const ordered = WEIGHT_COLUMN_CONFIG.map((col) => col.id).filter((id) => seen.has(id));
+  return ordered.length ? ordered : [...DEFAULT_WEIGHT_COLUMN_IDS];
+};
+
+const getWeightColumnExportValue = (columnId: WeightColumnId, row: WeightTableRow): string | number => {
+  switch (columnId) {
+    case "position": {
+      const parsed = Number.parseInt(row.displayValue, 10);
+      return Number.isFinite(parsed) ? parsed : row.position + 1;
+    }
+    case "product":
+      return row.item.name;
+    case "lastSale":
+      return formatLastSale(row.item.stats.lastDate);
+    case "kgSold":
+      return Number.isFinite(row.summary.kg) ? Number(row.summary.kg.toFixed(3)) : "";
+    case "unitsRegistered":
+      return Number.isFinite(row.summary.units) ? Number(row.summary.units.toFixed(3)) : "";
+    case "currentStock": {
+      const parsed = parseWeightNumberInput(row.currentStockValue);
+      return parsed ?? "";
+    }
+    case "minStock": {
+      const parsed = parseWeightNumberInput(row.minStockValue);
+      return parsed ?? "";
+    }
+    case "orderSuggestion": {
+      const parsed = parseWeightNumberInput(row.orderValue);
+      return parsed ?? "";
+    }
+    case "kgPerUnit": {
+      if (row.item.unitKg != null && Number.isFinite(row.item.unitKg)) {
+        return Number(row.item.unitKg.toFixed(3));
+      }
+      if (row.summary.usedFractional || row.summary.units <= 0) return "";
+      const ratio = row.summary.kg / row.summary.units;
+      return Number.isFinite(ratio) ? Number(ratio.toFixed(3)) : "";
+    }
+    case "subtotal":
+      return Number.isFinite(row.summary.subtotal) ? Number(row.summary.subtotal.toFixed(2)) : "";
+    case "actions":
+    default:
+      return "";
+  }
 };
 
 const isWeightStockEntryEmpty = (entry: WeightStockEntry | undefined) =>
@@ -1010,6 +1156,9 @@ export default function EstadisticaPage() {
   const [weightStockDrafts, setWeightStockDrafts] = React.useState<WeightStockDraftMap>({});
   const [weightAutoDialogOpen, setWeightAutoDialogOpen] = React.useState(false);
   const [weightStockUndoSnapshot, setWeightStockUndoSnapshot] = React.useState<WeightStockMap | null>(null);
+  const [weightVisibleColumns, setWeightVisibleColumns] = React.useState<WeightColumnId[]>(() => [
+    ...DEFAULT_WEIGHT_COLUMN_IDS,
+  ]);
 
   React.useEffect(() => {
     if (!weightDropdownOpen) return;
@@ -1042,6 +1191,17 @@ export default function EstadisticaPage() {
   const [weightHydrated, setWeightHydrated] = React.useState(false);
   const weightPersistRef = React.useRef<string | null>(null);
   const canUndoWeightStock = weightStockUndoSnapshot != null;
+  const weightColumnCount = weightVisibleColumns.length || 1;
+  const firstVisibleWeightColumn = weightVisibleColumns[0];
+  const weightVisibleColumnSet = React.useMemo(() => new Set(weightVisibleColumns), [weightVisibleColumns]);
+  const weightVisibleColumnDefs = React.useMemo(
+    () => WEIGHT_COLUMN_CONFIG.filter((col) => weightVisibleColumnSet.has(col.id)),
+    [weightVisibleColumnSet]
+  );
+  const isWeightColumnVisible = React.useCallback(
+    (columnId: WeightColumnId) => weightVisibleColumnSet.has(columnId),
+    [weightVisibleColumnSet]
+  );
 
   const weightProducts = React.useMemo<WeightProductInfo[]>(() => {
     const entries: WeightProductInfo[] = [];
@@ -1169,6 +1329,7 @@ export default function EstadisticaPage() {
       setWeightStockSettings({});
       setWeightStockDrafts({});
       setWeightStockUndoSnapshot(null);
+      setWeightVisibleColumns([...DEFAULT_WEIGHT_COLUMN_IDS]);
       setWeightHydrated(false);
       weightPersistRef.current = null;
       return;
@@ -1195,6 +1356,7 @@ export default function EstadisticaPage() {
           from?: unknown;
           to?: unknown;
           stock?: unknown;
+          columns?: unknown;
         } | null;
         const nextSelected = Array.isArray(raw?.selectedIds)
           ? raw!.selectedIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
@@ -1204,6 +1366,7 @@ export default function EstadisticaPage() {
         const normalizedTo = parsedTo;
         const normalizedFrom = parsedFrom > normalizedTo ? normalizedTo : parsedFrom;
         const parsedStock = sanitizeWeightStockMap(raw?.stock ?? null);
+        const parsedColumns = sanitizeWeightColumnSelection(raw?.columns ?? null);
 
         setWeightSelectedIds(nextSelected);
         setWeightFrom(normalizedFrom);
@@ -1211,11 +1374,13 @@ export default function EstadisticaPage() {
         setWeightStockSettings(parsedStock);
         setWeightStockDrafts({});
         setWeightStockUndoSnapshot(null);
+        setWeightVisibleColumns(parsedColumns);
         weightPersistRef.current = JSON.stringify({
           selectedIds: nextSelected,
           from: normalizedFrom,
           to: normalizedTo,
           stock: parsedStock,
+          columns: parsedColumns,
         });
         setWeightHydrated(true);
       } catch (err) {
@@ -1227,6 +1392,7 @@ export default function EstadisticaPage() {
         setWeightStockSettings({});
         setWeightStockDrafts({});
         setWeightStockUndoSnapshot(null);
+        setWeightVisibleColumns([...DEFAULT_WEIGHT_COLUMN_IDS]);
         weightPersistRef.current = null;
         setWeightHydrated(true);
       }
@@ -1382,7 +1548,7 @@ export default function EstadisticaPage() {
   }, [weightFrom, weightTo]);
 
   const computeWeightSummary = React.useCallback(
-    (item: WeightProductInfo) => {
+    (item: WeightProductInfo): WeightSummaryInfo => {
       if (!weightRange) {
         return { units: 0, kg: 0, subtotal: 0, usedFractional: false };
       }
@@ -1458,6 +1624,147 @@ export default function EstadisticaPage() {
     () => filteredWeightSummaries.some(({ summary }) => summary.usedFractional),
     [filteredWeightSummaries]
   );
+
+  const weightTableRows = React.useMemo<WeightTableRow[]>(() => {
+    if (filteredWeightSummaries.length === 0) return [];
+    return filteredWeightSummaries.map(({ item, summary }) => {
+      const position = weightSelectedIds.indexOf(item.key);
+      const safePosition = position >= 0 ? position : 0;
+      const displayValue = weightPositionDrafts[item.key] ?? String(safePosition + 1);
+      const isFirst = safePosition <= 0;
+      const isLast = safePosition === weightSelectedIds.length - 1;
+      const stockEntry = weightStockSettings[item.key];
+      const stockDraft = weightStockDrafts[item.key];
+      const currentStockValue =
+        stockDraft?.current ?? (stockEntry?.currentStock != null ? stockEntry.currentStock.toString() : "");
+      const minStockValue =
+        stockDraft?.min ?? (stockEntry?.minDesiredStock != null ? stockEntry.minDesiredStock.toString() : "");
+      const autoSuggested = computeSuggestedOrder(stockEntry);
+      const orderValue =
+        stockDraft?.order ??
+        (stockEntry?.suggestedOrder != null
+          ? stockEntry.suggestedOrder.toString()
+          : autoSuggested != null
+            ? autoSuggested.toString()
+            : "");
+
+      return {
+        item,
+        summary,
+        position: safePosition,
+        displayValue,
+        isFirst,
+        isLast,
+        currentStockValue,
+        minStockValue,
+        orderValue,
+        autoSuggested,
+      };
+    });
+  }, [filteredWeightSummaries, weightSelectedIds, weightPositionDrafts, weightStockSettings, weightStockDrafts]);
+
+  const handleToggleWeightColumn = React.useCallback((columnId: WeightColumnId) => {
+    setWeightVisibleColumns((prev) => {
+      const hasColumn = prev.includes(columnId);
+      if (hasColumn && prev.length === 1) return prev;
+      if (hasColumn) {
+        const next = prev.filter((id) => id !== columnId);
+        return next.length ? next : prev;
+      }
+      const nextSet = new Set(prev);
+      nextSet.add(columnId);
+      return WEIGHT_COLUMN_CONFIG.map((col) => col.id).filter((id) => nextSet.has(id));
+    });
+  }, []);
+
+  const handleResetWeightColumns = React.useCallback(() => {
+    setWeightVisibleColumns([...DEFAULT_WEIGHT_COLUMN_IDS]);
+  }, []);
+
+  const handleDownloadWeightXlsx = React.useCallback(() => {
+    if (!weightTableRows.length || !weightVisibleColumnDefs.length) return;
+    const periodLabel = weightRangeLabel ??
+      (weightFrom && weightTo ? `${weightFrom} → ${weightTo}` : "Sin rango definido");
+    const tableHeader = weightVisibleColumnDefs.map((column) => column.label);
+    const tableData = weightTableRows.map((row) =>
+      weightVisibleColumnDefs.map((column) => getWeightColumnExportValue(column.id, row))
+    );
+    const metadataRows: (string | number)[][] = [["Período", periodLabel], []];
+    const headerRowExcelIndex = metadataRows.length + 1;
+    const dataStartRowExcelIndex = headerRowExcelIndex + 1;
+    const worksheet = XLSX.utils.aoa_to_sheet([...metadataRows, tableHeader, ...tableData]);
+    worksheet["!cols"] = weightVisibleColumnDefs.map((column) => ({
+      wch: column.width ?? Math.max(column.label.length + 2, 14),
+    }));
+    (worksheet as XLSX.WorkSheet & { "!freeze"?: { rows: number; cols?: number } })["!freeze"] = {
+      rows: headerRowExcelIndex,
+    };
+    const border = {
+      top: { style: "thin", color: { rgb: "FFE5E7EB" } },
+      bottom: { style: "thin", color: { rgb: "FFE5E7EB" } },
+      left: { style: "thin", color: { rgb: "FFE5E7EB" } },
+      right: { style: "thin", color: { rgb: "FFE5E7EB" } },
+    } as const;
+    const headerStyle = {
+      font: { bold: true, color: { rgb: "FFFFFFFF" } },
+      fill: { patternType: "solid", fgColor: { rgb: "FF111827" } },
+      alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      border,
+    } satisfies SheetJSCellStyle;
+    const metadataLabelStyle: SheetJSCellStyle = {
+      font: { bold: true, color: { rgb: "FF111827" } },
+      alignment: { horizontal: "left", vertical: "center" },
+    };
+    const metadataValueStyle: SheetJSCellStyle = {
+      font: { color: { rgb: "FF111827" } },
+      alignment: { horizontal: "left", vertical: "center" },
+    };
+    if (worksheet.A1) worksheet.A1.s = metadataLabelStyle;
+    if (worksheet.B1) worksheet.B1.s = metadataValueStyle;
+    worksheet.A2 = worksheet.A2 ?? { t: "s", v: "" };
+    const dataStyles: Record<"left" | "center" | "right", SheetJSCellStyle> = {
+      left: {
+        font: { color: { rgb: "FF111827" } },
+        alignment: { horizontal: "left", vertical: "center" },
+        border,
+      },
+      center: {
+        font: { color: { rgb: "FF111827" } },
+        alignment: { horizontal: "center", vertical: "center" },
+        border,
+      },
+      right: {
+        font: { color: { rgb: "FF111827" } },
+        alignment: { horizontal: "right", vertical: "center" },
+        border,
+      },
+    };
+    weightVisibleColumnDefs.forEach((column, colIndex) => {
+      const columnLetter = columnIndexToLetter(colIndex);
+      const headerAddress = `${columnLetter}${headerRowExcelIndex}`;
+      const headerCell = worksheet[headerAddress];
+      if (headerCell) {
+        headerCell.s = headerStyle;
+      }
+      weightTableRows.forEach((_, rowIndex) => {
+        const cellAddress = `${columnLetter}${dataStartRowExcelIndex + rowIndex}`;
+        const cell = worksheet[cellAddress];
+        if (!cell) return;
+        const align = column.align ?? "left";
+        cell.s = dataStyles[align];
+        if (column.numberFormat && typeof cell.v === "number") {
+          cell.z = column.numberFormat;
+        }
+      });
+    });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Articulos");
+    const filenameParts = ["articulos-peso"];
+    if (weightFrom && weightTo) {
+      filenameParts.push(`${weightFrom}-${weightTo}`);
+    }
+    XLSX.writeFile(workbook, `${filenameParts.join("-")}.xlsx`);
+  }, [weightTableRows, weightVisibleColumnDefs, weightFrom, weightTo, weightRangeLabel]);
 
   const weightAutoPreviewRows = React.useMemo<WeightAutoPreviewRow[]>(() => {
     if (filteredWeightSummaries.length === 0) return [];
@@ -1632,6 +1939,7 @@ export default function EstadisticaPage() {
       from: weightFrom,
       to: weightTo,
       stock: weightStockSettings,
+      columns: weightVisibleColumns,
     };
     const serialized = JSON.stringify(payload);
     if (weightPersistRef.current === serialized) return;
@@ -1675,6 +1983,7 @@ export default function EstadisticaPage() {
     weightFrom,
     weightTo,
     weightStockSettings,
+    weightVisibleColumns,
   ]);
 
   const canShowStats = Boolean(tenantId && currentBranch);
@@ -2119,12 +2428,18 @@ export default function EstadisticaPage() {
           </CardContent>
         </Card>
 
-        <Accordion type="single" collapsible className="rounded-xl border bg-card text-card-foreground">
-          <AccordionItem value="peso">
+        <div className="relative rounded-2xl border-2 border-emerald-200/70 bg-card/20 p-0.5">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute z-10 h-2 w-2 rounded-full bg-emerald-500 shadow-md"
+            style={{ animation: "weightBorderRunner 6s linear infinite" }}
+          />
+          <Accordion type="single" collapsible className="rounded-xl border bg-card text-card-foreground">
+            <AccordionItem value="peso">
             <AccordionTrigger className="px-4 py-3 text-left hover:no-underline">
             <div className="flex w-full items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-semibold">Artículos por peso</p>
+                <p className="text-sm font-semibold">Artículos por peso (Ankas del Sur)</p>
                 <p className="text-xs text-muted-foreground">
                   {weightProducts.length === 0
                     ? "Sin artículos identificados en la fuente actual"
@@ -2263,8 +2578,59 @@ export default function EstadisticaPage() {
             {weightSummaries.length > 0 && (
               <div className="rounded-md border">
                 <div className="space-y-2 border-b px-3 py-2">
-                  <div className="text-sm font-semibold">
-                    Artículos seleccionados ({filteredWeightSummaries.length}/{weightSummaries.length})
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-sm font-semibold">
+                      Artículos seleccionados ({filteredWeightSummaries.length}/{weightSummaries.length})
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button type="button" size="sm" variant="outline">
+                            Columnas ({weightColumnCount})
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-64 space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold">Columnas visibles</p>
+                            <Button type="button" size="sm" variant="ghost" onClick={handleResetWeightColumns}>
+                              Restaurar
+                            </Button>
+                          </div>
+                          <div className="max-h-64 space-y-2 overflow-auto">
+                            {WEIGHT_COLUMN_CONFIG.map((column) => {
+                              const checkboxId = `weight-column-${column.id}`;
+                              const checked = weightVisibleColumnSet.has(column.id);
+                              const disableToggle = checked && weightColumnCount <= 1;
+                              return (
+                                <label
+                                  key={column.id}
+                                  htmlFor={checkboxId}
+                                  className="flex items-center gap-2 text-sm"
+                                >
+                                  <Checkbox
+                                    id={checkboxId}
+                                    checked={checked}
+                                    disabled={disableToggle}
+                                    onCheckedChange={() => handleToggleWeightColumn(column.id)}
+                                  />
+                                  <span className="select-none">{column.label}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <p className="text-xs text-muted-foreground">Al menos una columna debe permanecer visible.</p>
+                        </PopoverContent>
+                      </Popover>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleDownloadWeightXlsx}
+                        disabled={!weightTableRows.length}
+                      >
+                        <Download className="mr-1.5 h-4 w-4" /> Descargar XLSX
+                      </Button>
+                    </div>
                   </div>
                   <Input
                     placeholder="Filtrar artículos seleccionados…"
@@ -2276,227 +2642,236 @@ export default function EstadisticaPage() {
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-background">
                       <tr className="border-b text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        <th className="px-3 py-2 text-left">Posición</th>
-                        <th className="px-3 py-2 text-left">Producto</th>
-                        <th className="px-3 py-2 text-left">Última venta</th>
-                        <th className="px-3 py-2 text-right">Kg vendidos</th>
-                        <th className="px-3 py-2 text-right">Unidades registradas</th>
-                        <th className="px-3 py-2 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <span>Stock actual</span>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setWeightAutoDialogOpen(true)}
-                            >
-                              Obtener
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              onClick={handleWeightStockUndo}
-                              disabled={!canUndoWeightStock}
-                              title={canUndoWeightStock ? "Deshacer el último Obtener" : "No hay cambios por deshacer"}
-                            >
-                              <Undo2 className="h-4 w-4" /> Deshacer
-                            </Button>
-                          </div>
-                        </th>
-                        <th className="px-3 py-2 text-right">Mínimo stock deseado</th>
-                        <th className="px-3 py-2 text-right">Pedido sugerido</th>
-                        <th className="px-3 py-2 text-right">Kg / unidad</th>
-                        <th className="px-3 py-2 text-right">Subtotal</th>
-                        <th className="px-3 py-2 text-right">Acciones</th>
+                        {isWeightColumnVisible("position") && <th className="px-3 py-2 text-left">Posición</th>}
+                        {isWeightColumnVisible("product") && <th className="px-3 py-2 text-left">Producto</th>}
+                        {isWeightColumnVisible("lastSale") && <th className="px-3 py-2 text-left">Última venta</th>}
+                        {isWeightColumnVisible("kgSold") && <th className="px-3 py-2 text-right">Kg vendidos</th>}
+                        {isWeightColumnVisible("unitsRegistered") && (
+                          <th className="px-3 py-2 text-right">Unidades registradas</th>
+                        )}
+                        {isWeightColumnVisible("currentStock") && (
+                          <th className="px-3 py-2 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <span>Stock actual</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setWeightAutoDialogOpen(true)}
+                              >
+                                Obtener
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={handleWeightStockUndo}
+                                disabled={!canUndoWeightStock}
+                                title={canUndoWeightStock ? "Deshacer el último Obtener" : "No hay cambios por deshacer"}
+                              >
+                                <Undo2 className="h-4 w-4" /> Deshacer
+                              </Button>
+                            </div>
+                          </th>
+                        )}
+                        {isWeightColumnVisible("minStock") && (
+                          <th className="px-3 py-2 text-right">Mínimo stock deseado</th>
+                        )}
+                        {isWeightColumnVisible("orderSuggestion") && (
+                          <th className="px-3 py-2 text-right">Pedido sugerido</th>
+                        )}
+                        {isWeightColumnVisible("kgPerUnit") && <th className="px-3 py-2 text-right">Kg / unidad</th>}
+                        {isWeightColumnVisible("subtotal") && <th className="px-3 py-2 text-right">Subtotal</th>}
+                        {isWeightColumnVisible("actions") && <th className="px-3 py-2 text-right">Acciones</th>}
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredWeightSummaries.length === 0 ? (
+                      {weightTableRows.length === 0 ? (
                         <tr>
-                          <td colSpan={11} className="px-3 py-4 text-center text-muted-foreground">
+                          <td colSpan={weightColumnCount} className="px-3 py-4 text-center text-muted-foreground">
                             Sin coincidencias para esta búsqueda.
                           </td>
                         </tr>
                       ) : (
-                        filteredWeightSummaries.map(({ item, summary }) => {
-                          const position = weightSelectedIds.indexOf(item.key);
-                          const displayValue = weightPositionDrafts[item.key] ?? String(position + 1);
-                          const isFirst = position <= 0;
-                          const isLast = position === weightSelectedIds.length - 1;
-                          const stockEntry = weightStockSettings[item.key];
-                          const stockDraft = weightStockDrafts[item.key];
-                          const currentStockValue =
-                            stockDraft?.current ?? (stockEntry?.currentStock != null ? stockEntry.currentStock.toString() : "");
-                          const minStockValue =
-                            stockDraft?.min ??
-                            (stockEntry?.minDesiredStock != null ? stockEntry.minDesiredStock.toString() : "");
-                          const autoSuggested = computeSuggestedOrder(stockEntry);
-                          const orderValue =
-                            stockDraft?.order ??
-                            (stockEntry?.suggestedOrder != null
-                              ? stockEntry.suggestedOrder.toString()
-                              : autoSuggested != null
-                                ? autoSuggested.toString()
-                                : "");
-
+                        weightTableRows.map((row) => {
+                          const { item, summary, displayValue, isFirst, isLast, currentStockValue, minStockValue, orderValue, autoSuggested } = row;
                           return (
                             <tr key={`selected-${item.key}`} className="border-b [&>td]:py-2">
-                              <td className="px-3 align-top">
-                                <div className="flex items-center gap-2">
-                                  <Input
-                                    type="number"
-                                    min={1}
-                                    max={weightSelectedIds.length}
-                                    value={displayValue}
-                                    onChange={(event) => handleWeightPositionInputChange(item.key, event.target.value)}
-                                    onBlur={(event) => commitWeightPositionInput(item.key, event.target.value)}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Enter") {
-                                        event.preventDefault();
-                                        commitWeightPositionInput(item.key, event.currentTarget.value);
-                                        (event.currentTarget as HTMLInputElement).blur();
-                                      }
-                                    }}
-                                    className="h-8 w-16"
-                                  />
-                                  <div className="flex flex-col gap-1">
+                              {isWeightColumnVisible("position") && (
+                                <td className="px-3 align-top">
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      max={weightSelectedIds.length}
+                                      value={displayValue}
+                                      onChange={(event) => handleWeightPositionInputChange(item.key, event.target.value)}
+                                      onBlur={(event) => commitWeightPositionInput(item.key, event.target.value)}
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          commitWeightPositionInput(item.key, event.currentTarget.value);
+                                          (event.currentTarget as HTMLInputElement).blur();
+                                        }
+                                      }}
+                                      className="h-8 w-16"
+                                    />
+                                    <div className="flex flex-col gap-1">
+                                      <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-7 w-7"
+                                        onClick={() => moveWeightSelection(item.key, -1)}
+                                        disabled={isFirst}
+                                      >
+                                        <ArrowUp className="h-4 w-4" />
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-7 w-7"
+                                        onClick={() => moveWeightSelection(item.key, 1)}
+                                        disabled={isLast}
+                                      >
+                                        <ArrowDown className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </td>
+                              )}
+                              {isWeightColumnVisible("product") && <td className="px-3 font-medium">{item.name}</td>}
+                              {isWeightColumnVisible("lastSale") && (
+                                <td className="px-3 text-xs text-muted-foreground">{formatLastSale(item.stats.lastDate)}</td>
+                              )}
+                              {isWeightColumnVisible("kgSold") && (
+                                <td className="px-3 text-right tabular-nums">{formatKg(summary.kg)}</td>
+                              )}
+                              {isWeightColumnVisible("unitsRegistered") && (
+                                <td className="px-3 text-right tabular-nums">{formatQuantity(summary.units)}</td>
+                              )}
+                              {isWeightColumnVisible("currentStock") && (
+                                <td className="px-3">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Input
+                                      inputMode="decimal"
+                                      value={currentStockValue}
+                                      placeholder="0"
+                                      onChange={(event) => handleWeightStockDraftChange(item.key, "current", event.target.value)}
+                                      onBlur={(event) => commitWeightStockInput(item.key, "current", event.currentTarget.value)}
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          commitWeightStockInput(item.key, "current", event.currentTarget.value);
+                                          (event.currentTarget as HTMLInputElement).blur();
+                                        }
+                                      }}
+                                      className="h-8 w-24"
+                                    />
                                     <Button
                                       type="button"
                                       size="icon"
                                       variant="ghost"
-                                      className="h-7 w-7"
-                                      onClick={() => moveWeightSelection(item.key, -1)}
-                                      disabled={isFirst}
+                                      className="h-8 w-8"
+                                      aria-label="Guardar stock actual"
+                                      title="Guardar stock actual"
+                                      onClick={() => commitWeightStockInput(item.key, "current", currentStockValue)}
                                     >
-                                      <ArrowUp className="h-4 w-4" />
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      size="icon"
-                                      variant="ghost"
-                                      className="h-7 w-7"
-                                      onClick={() => moveWeightSelection(item.key, 1)}
-                                      disabled={isLast}
-                                    >
-                                      <ArrowDown className="h-4 w-4" />
+                                      <Check className="h-4 w-4" />
                                     </Button>
                                   </div>
-                                </div>
-                              </td>
-                              <td className="px-3 font-medium">{item.name}</td>
-                              <td className="px-3 text-xs text-muted-foreground">{formatLastSale(item.stats.lastDate)}</td>
-                              <td className="px-3 text-right tabular-nums">{formatKg(summary.kg)}</td>
-                              <td className="px-3 text-right tabular-nums">{formatQuantity(summary.units)}</td>
-                              <td className="px-3">
-                                <div className="flex items-center justify-end gap-1">
-                                  <Input
-                                    inputMode="decimal"
-                                    value={currentStockValue}
-                                    placeholder="0"
-                                    onChange={(event) => handleWeightStockDraftChange(item.key, "current", event.target.value)}
-                                    onBlur={(event) => commitWeightStockInput(item.key, "current", event.currentTarget.value)}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Enter") {
-                                        event.preventDefault();
-                                        commitWeightStockInput(item.key, "current", event.currentTarget.value);
-                                        (event.currentTarget as HTMLInputElement).blur();
-                                      }
-                                    }}
-                                    className="h-8 w-24"
-                                  />
+                                </td>
+                              )}
+                              {isWeightColumnVisible("minStock") && (
+                                <td className="px-3">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Input
+                                      inputMode="decimal"
+                                      value={minStockValue}
+                                      placeholder="0"
+                                      onChange={(event) => handleWeightStockDraftChange(item.key, "min", event.target.value)}
+                                      onBlur={(event) => commitWeightStockInput(item.key, "min", event.currentTarget.value)}
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          commitWeightStockInput(item.key, "min", event.currentTarget.value);
+                                          (event.currentTarget as HTMLInputElement).blur();
+                                        }
+                                      }}
+                                      className="h-8 w-24"
+                                    />
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-8 w-8"
+                                      aria-label="Guardar mínimo deseado"
+                                      title="Guardar mínimo deseado"
+                                      onClick={() => commitWeightStockInput(item.key, "min", minStockValue)}
+                                    >
+                                      <Check className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
+                              )}
+                              {isWeightColumnVisible("orderSuggestion") && (
+                                <td className="px-3">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Input
+                                      inputMode="decimal"
+                                      value={orderValue}
+                                      placeholder={autoSuggested != null ? autoSuggested.toString() : "0"}
+                                      onChange={(event) => handleWeightStockDraftChange(item.key, "order", event.target.value)}
+                                      onBlur={(event) => commitWeightStockInput(item.key, "order", event.currentTarget.value)}
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          commitWeightStockInput(item.key, "order", event.currentTarget.value);
+                                          (event.currentTarget as HTMLInputElement).blur();
+                                        }
+                                      }}
+                                      className="h-8 w-24"
+                                    />
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-8 w-8"
+                                      aria-label="Guardar pedido sugerido"
+                                      title="Guardar pedido sugerido"
+                                      onClick={() => commitWeightStockInput(item.key, "order", orderValue)}
+                                    >
+                                      <Check className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
+                              )}
+                              {isWeightColumnVisible("kgPerUnit") && (
+                                <td className="px-3 text-right tabular-nums">
+                                  {item.unitKg != null
+                                    ? formatKg(item.unitKg)
+                                    : summary.usedFractional || summary.units <= 0
+                                      ? "—"
+                                      : formatKg(summary.kg / summary.units)}
+                                </td>
+                              )}
+                              {isWeightColumnVisible("subtotal") && (
+                                <td className="px-3 text-right tabular-nums">{formatCurrency(summary.subtotal)}</td>
+                              )}
+                              {isWeightColumnVisible("actions") && (
+                                <td className="px-3 text-right">
                                   <Button
                                     type="button"
-                                    size="icon"
+                                    size="sm"
                                     variant="ghost"
-                                    className="h-8 w-8"
-                                    aria-label="Guardar stock actual"
-                                    title="Guardar stock actual"
-                                    onClick={() => commitWeightStockInput(item.key, "current", currentStockValue)}
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() => toggleWeightSelection(item.key, false)}
                                   >
-                                    <Check className="h-4 w-4" />
+                                    Quitar
                                   </Button>
-                                </div>
-                              </td>
-                              <td className="px-3">
-                                <div className="flex items-center justify-end gap-1">
-                                  <Input
-                                    inputMode="decimal"
-                                    value={minStockValue}
-                                    placeholder="0"
-                                    onChange={(event) => handleWeightStockDraftChange(item.key, "min", event.target.value)}
-                                    onBlur={(event) => commitWeightStockInput(item.key, "min", event.currentTarget.value)}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Enter") {
-                                        event.preventDefault();
-                                        commitWeightStockInput(item.key, "min", event.currentTarget.value);
-                                        (event.currentTarget as HTMLInputElement).blur();
-                                      }
-                                    }}
-                                    className="h-8 w-24"
-                                  />
-                                  <Button
-                                    type="button"
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-8 w-8"
-                                    aria-label="Guardar mínimo deseado"
-                                    title="Guardar mínimo deseado"
-                                    onClick={() => commitWeightStockInput(item.key, "min", minStockValue)}
-                                  >
-                                    <Check className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              </td>
-                              <td className="px-3">
-                                <div className="flex items-center justify-end gap-1">
-                                  <Input
-                                    inputMode="decimal"
-                                    value={orderValue}
-                                    placeholder={autoSuggested != null ? autoSuggested.toString() : "0"}
-                                    onChange={(event) => handleWeightStockDraftChange(item.key, "order", event.target.value)}
-                                    onBlur={(event) => commitWeightStockInput(item.key, "order", event.currentTarget.value)}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Enter") {
-                                        event.preventDefault();
-                                        commitWeightStockInput(item.key, "order", event.currentTarget.value);
-                                        (event.currentTarget as HTMLInputElement).blur();
-                                      }
-                                    }}
-                                    className="h-8 w-24"
-                                  />
-                                  <Button
-                                    type="button"
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-8 w-8"
-                                    aria-label="Guardar pedido sugerido"
-                                    title="Guardar pedido sugerido"
-                                    onClick={() => commitWeightStockInput(item.key, "order", orderValue)}
-                                  >
-                                    <Check className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              </td>
-                              <td className="px-3 text-right tabular-nums">
-                                {item.unitKg != null
-                                  ? formatKg(item.unitKg)
-                                  : summary.usedFractional || summary.units <= 0
-                                    ? "—"
-                                    : formatKg(summary.kg / summary.units)}
-                              </td>
-                              <td className="px-3 text-right tabular-nums">{formatCurrency(summary.subtotal)}</td>
-                              <td className="px-3 text-right">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-7 px-2 text-xs"
-                                  onClick={() => toggleWeightSelection(item.key, false)}
-                                >
-                                  Quitar
-                                </Button>
-                              </td>
+                                </td>
+                              )}
                             </tr>
                           );
                         })
@@ -2505,21 +2880,53 @@ export default function EstadisticaPage() {
                     {filteredWeightSummaries.length > 0 && (
                       <tfoot>
                         <tr className="font-semibold">
-                          <td className="px-3 py-2 text-left" colSpan={3}>
-                            Totales
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">{formatKg(filteredWeightTotals.kg)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{formatQuantity(filteredWeightTotals.units)}</td>
-                          <td className="px-3 py-2 text-right text-muted-foreground">—</td>
-                          <td className="px-3 py-2 text-right text-muted-foreground">—</td>
-                          <td className="px-3 py-2 text-right text-muted-foreground">—</td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {filteredWeightTotalsHaveFractional || filteredWeightTotals.units <= 0
-                              ? "—"
-                              : formatKg(filteredWeightTotals.kg / filteredWeightTotals.units)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(filteredWeightTotals.subtotal)}</td>
-                          <td></td>
+                          {weightVisibleColumns.map((columnId) => {
+                            if (columnId === "position" || columnId === "product" || columnId === "lastSale") {
+                              return (
+                                <td key={`weight-footer-${columnId}`} className="px-3 py-2 text-left">
+                                  {columnId === firstVisibleWeightColumn ? "Totales" : ""}
+                                </td>
+                              );
+                            }
+                            if (columnId === "kgSold") {
+                              return (
+                                <td key="weight-footer-kg" className="px-3 py-2 text-right tabular-nums">
+                                  {formatKg(filteredWeightTotals.kg)}
+                                </td>
+                              );
+                            }
+                            if (columnId === "unitsRegistered") {
+                              return (
+                                <td key="weight-footer-units" className="px-3 py-2 text-right tabular-nums">
+                                  {formatQuantity(filteredWeightTotals.units)}
+                                </td>
+                              );
+                            }
+                            if (columnId === "kgPerUnit") {
+                              return (
+                                <td key="weight-footer-kgunit" className="px-3 py-2 text-right tabular-nums">
+                                  {filteredWeightTotalsHaveFractional || filteredWeightTotals.units <= 0
+                                    ? "—"
+                                    : formatKg(filteredWeightTotals.kg / filteredWeightTotals.units)}
+                                </td>
+                              );
+                            }
+                            if (columnId === "subtotal") {
+                              return (
+                                <td key="weight-footer-subtotal" className="px-3 py-2 text-right tabular-nums">
+                                  {formatCurrency(filteredWeightTotals.subtotal)}
+                                </td>
+                              );
+                            }
+                            if (columnId === "actions") {
+                              return <td key="weight-footer-actions"></td>;
+                            }
+                            return (
+                              <td key={`weight-footer-${columnId}`} className="px-3 py-2 text-right text-muted-foreground">
+                                —
+                              </td>
+                            );
+                          })}
                         </tr>
                       </tfoot>
                     )}
@@ -2596,10 +3003,35 @@ export default function EstadisticaPage() {
               </AlertDialogContent>
             </AlertDialog>
           </AccordionContent>
-        </AccordionItem>
-      </Accordion>
+            </AccordionItem>
+          </Accordion>
+        </div>
         </>
       )}
+      <style jsx>{`
+        @keyframes weightBorderRunner {
+          0% {
+            top: -4px;
+            left: -4px;
+          }
+          25% {
+            top: -4px;
+            left: calc(100% - 4px);
+          }
+          50% {
+            top: calc(100% - 4px);
+            left: calc(100% - 4px);
+          }
+          75% {
+            top: calc(100% - 4px);
+            left: -4px;
+          }
+          100% {
+            top: -4px;
+            left: -4px;
+          }
+        }
+      `}</style>
     </main>
   );
 }
