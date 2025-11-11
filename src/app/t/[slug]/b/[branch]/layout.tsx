@@ -1,5 +1,4 @@
 // src/app/t/[slug]/b/[branch]/layout.tsx
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/authz";
 import { paths } from "@/lib/paths";
@@ -52,8 +51,6 @@ export default async function TenantLayout({ children, params }: LayoutProps) {
   if (membershipError) throw membershipError;
 
   let list: BranchRow[] = [];
-  const role = membershipRow?.role ?? null;
-
   const branchIds = membershipRow?.branch_ids;
 
   if (branchIds === null) {
@@ -88,24 +85,5 @@ export default async function TenantLayout({ children, params }: LayoutProps) {
     redirect(paths.dashboard(slug, fallback.slug));
   }
 
-  return (
-    <div className="min-h-dvh">
-      <nav className="flex gap-3 border-b p-3 overflow-x-auto">
-        {list.map((b) => (
-          <Link key={b.id} href={paths.stock(slug, b.slug)} className="underline text-sm">
-            {b.name}
-          </Link>
-        ))}
-
-        {role === "owner" && (
-          <div className="ml-auto">
-            <Link href={paths.admin(slug)} className="text-sm">
-              Admin
-            </Link>
-          </div>
-        )}
-      </nav>
-      {children}
-    </div>
-  );
+  return <div className="min-h-dvh">{children}</div>;
 }

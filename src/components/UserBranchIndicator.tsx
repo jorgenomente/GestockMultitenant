@@ -1,8 +1,12 @@
 "use client";
 
 import React from "react";
-import { usePathname } from "next/navigation";
-import { Bell } from "lucide-react";
+import Link from "next/link";
+import { useParams, usePathname } from "next/navigation";
+import { Bell, Shield } from "lucide-react";
+import BranchSelector from "@/components/branch/BranchSelector";
+import { useBranch } from "@/components/branch/BranchProvider";
+import { paths } from "@/lib/paths";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 
@@ -11,6 +15,11 @@ export default function UserBranchIndicator() {
   const isDemo = pathname?.startsWith("/demo") ?? false;
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
   const [email, setEmail] = React.useState<string>("");
+  const { slug: slugParam } = useParams<{ slug?: string }>();
+  const tenantSlug = (slugParam ?? "").toString();
+  const { role } = useBranch();
+  const canViewAdmin = role === "owner" && Boolean(tenantSlug);
+  const adminHref = canViewAdmin ? paths.admin(tenantSlug) : null;
 
   React.useEffect(() => {
     if (isDemo) {
@@ -75,20 +84,20 @@ export default function UserBranchIndicator() {
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-4 text-xs sm:text-sm">
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <span className="text-foreground">Sucursal</span>
-            <span className="text-muted-foreground">·</span>
-            <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[0.7rem] font-medium uppercase tracking-wide text-accent-foreground">
-              {isDemo ? "demo virtual" : branchSlug || "—"}
-            </span>
-            {isDemo && (
-              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide text-primary">
-                Demo
-              </span>
+        <div className="flex flex-1 flex-col gap-4 text-xs sm:flex-row sm:items-center sm:justify-end sm:text-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <BranchSelector className="w-full sm:w-64" hideLabel />
+            {canViewAdmin && adminHref && (
+              <Link
+                href={adminHref}
+                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-border/70 bg-card px-4 text-sm font-semibold text-foreground shadow-sm transition hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card sm:w-auto"
+              >
+                <Shield className="h-4 w-4" aria-hidden="true" />
+                <span>Admin</span>
+              </Link>
             )}
-          </span>
-          <div className="flex items-center gap-3 text-foreground">
+          </div>
+          <div className="flex flex-1 flex-wrap items-center justify-end gap-3 text-foreground sm:flex-none">
             <button
               type="button"
               aria-label="Notificaciones"
@@ -100,10 +109,20 @@ export default function UserBranchIndicator() {
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-sm font-semibold uppercase tracking-wide text-primary">
               {initials || "—"}
             </div>
-            <div className="flex flex-col leading-tight">
+            <div className="flex flex-col items-end leading-tight text-right">
               <span className="text-xs text-muted-foreground">Usuario</span>
               <span className="text-sm font-medium text-foreground/90">{displayName}</span>
             </div>
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[0.7rem] font-medium uppercase tracking-wide text-accent-foreground">
+                {isDemo ? "demo virtual" : branchSlug || "—"}
+              </span>
+              {isDemo && (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide text-primary">
+                  Demo
+                </span>
+              )}
+            </span>
           </div>
         </div>
       </div>

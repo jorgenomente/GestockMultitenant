@@ -484,6 +484,8 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const [restoringBackup, setRestoringBackup] = React.useState(false);
   const [loadingBackupMeta, setLoadingBackupMeta] = React.useState(false);
   const [backupMeta, setBackupMeta] = React.useState<{ updatedAt: string | null } | null>(null);
+  const [clientOrdersOpen, setClientOrdersOpen] = React.useState(false);
+  const [ownerActionsOpen, setOwnerActionsOpen] = React.useState(false);
   const isOwner = role === "owner";
 
   const loadBackupInfo = React.useCallback(async () => {
@@ -1100,6 +1102,15 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const totalProviders = visibleProviders.length;
   const totalPendingClientItems = clientPendingItems.length;
   const todayIdx = new Date().getDay();
+  const ownerActionsBusy = importingData || importingOrders || copyingData || downloadingOrders || downloadingExcel || downloadingJson || savingBackup || restoringBackup;
+
+  React.useEffect(() => {
+    if (totalPendingClientItems > 0) setClientOrdersOpen(true);
+  }, [totalPendingClientItems]);
+
+  React.useEffect(() => {
+    if (ownerActionsBusy) setOwnerActionsOpen(true);
+  }, [ownerActionsBusy]);
 
   const handleImportClick = React.useCallback(() => {
     importInputRef.current?.click();
@@ -3104,190 +3115,232 @@ const buildExportPayload = React.useCallback(async (
       </div>
 
       {/* Pedidos pendientes de clientes */}
-      <section className="space-y-3 rounded-2xl border border-border/60 bg-card/95 px-4 py-4 shadow-[var(--shadow-card)]">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-foreground">Pedidos pendientes de clientes</p>
-            <p className="text-xs text-muted-foreground">
-              {clientItemsLoading
-                ? "Consultando pedidos…"
-                : totalPendingClientItems
-                  ? `${totalPendingClientItems} ${totalPendingClientItems === 1 ? "ítem" : "ítems"} pendientes de clientes`
-                  : "No hay pedidos pendientes de clientes."}
-            </p>
-          </div>
-          <Badge variant="muted" className="px-3 text-xs">
-            {clientItemsLoading
-              ? "···"
-              : `${totalPendingClientItems} ${totalPendingClientItems === 1 ? "ítem" : "ítems"}`}
-          </Badge>
-        </div>
-
-        {clientItemsError ? (
-          <p className="text-xs text-destructive">{clientItemsError}</p>
-        ) : clientItemsLoading ? (
-          <p className="text-xs text-muted-foreground">Cargando ítems de clientes…</p>
-        ) : clientPendingGroups.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No hay pedidos pendientes en este momento.</p>
-        ) : (
-          <div className="space-y-3">
-            {clientPendingGroups.map((group) => (
-              <div
-                key={group.provider}
-                className="rounded-xl border border-border/60 bg-[color:var(--surface-overlay-soft)] px-3 py-2"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold uppercase text-muted-foreground">
-                    {group.provider === "Sin proveedor" ? group.provider : `@${group.provider}`}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {group.items.length} {group.items.length === 1 ? "ítem" : "ítems"}
-                  </span>
-                </div>
-                <ul className="mt-2 space-y-2">
-                  {group.items.map((item) => (
-                    <li
-                      key={item.id}
-                      className="flex flex-col gap-2 rounded-lg border border-border/50 bg-card/80 p-2 sm:flex-row sm:items-center"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="truncate text-sm font-medium text-foreground">{item.article}</p>
-                          <Badge variant="outline" className="h-5 px-2 text-[10px] capitalize">
-                            {item.orderStatus}
-                          </Badge>
-                          {item.ordered && (
-                            <Badge variant="secondary" className="h-5 px-2 text-[10px] uppercase tracking-wide">
-                              Pedido
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-muted-foreground truncate">Cliente: {item.clientName}</p>
-                        {item.ordered && (
-                          <p className="text-[10px] text-muted-foreground">
-                            Pedido el {formatShortDateTime(item.orderedAt)}
-                          </p>
-                        )}
-                      </div>
-                      <Button
-                        size="sm"
-                        variant={item.ordered ? "outline" : "default"}
-                        className="h-8 shrink-0 rounded-lg text-[11px]"
-                        disabled={clientItemsUpdating.has(item.id)}
-                        onClick={() => { void toggleClientItemOrdered(item.id, !item.ordered); }}
-                      >
-                        {clientItemsUpdating.has(item.id)
-                          ? "Guardando..."
-                          : item.ordered
-                            ? "Marcar pendiente"
-                            : "Marcar pedido"}
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
+      <Accordion
+        type="single"
+        collapsible
+        value={clientOrdersOpen ? "client-orders" : undefined}
+        onValueChange={(value) => setClientOrdersOpen(value === "client-orders")}
+      >
+        <AccordionItem
+          value="client-orders"
+          className="client-orders-attention rounded-2xl border border-border/60 bg-card/95 shadow-[var(--shadow-card)]"
+        >
+          <AccordionTrigger className="px-4 py-4 hover:no-underline">
+            <div className="flex w-full items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Pedidos pendientes de clientes</p>
+                <p className="text-xs text-muted-foreground">
+                  {clientItemsLoading
+                    ? "Consultando pedidos…"
+                    : totalPendingClientItems
+                      ? `${totalPendingClientItems} ${totalPendingClientItems === 1 ? "ítem" : "ítems"} pendientes de clientes`
+                      : "No hay pedidos pendientes de clientes."}
+                </p>
               </div>
-            ))}
-          </div>
-        )}
-      </section>
+              <Badge variant="muted" className="px-3 text-xs">
+                {clientItemsLoading
+                  ? "···"
+                  : `${totalPendingClientItems} ${totalPendingClientItems === 1 ? "ítem" : "ítems"}`}
+              </Badge>
+            </div>
+          </AccordionTrigger>
+
+          <AccordionContent className="space-y-3 px-4 pb-4 pt-0">
+            {clientItemsError ? (
+              <p className="text-xs text-destructive">{clientItemsError}</p>
+            ) : clientItemsLoading ? (
+              <p className="text-xs text-muted-foreground">Cargando ítems de clientes…</p>
+            ) : clientPendingGroups.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No hay pedidos pendientes en este momento.</p>
+            ) : (
+              <div className="space-y-3">
+                {clientPendingGroups.map((group) => (
+                  <div
+                    key={group.provider}
+                    className="rounded-xl border border-border/60 bg-[color:var(--surface-overlay-soft)] px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold uppercase text-muted-foreground">
+                        {group.provider === "Sin proveedor" ? group.provider : `@${group.provider}`}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {group.items.length} {group.items.length === 1 ? "ítem" : "ítems"}
+                      </span>
+                    </div>
+                    <ul className="mt-2 space-y-2">
+                      {group.items.map((item) => (
+                        <li
+                          key={item.id}
+                          className="flex flex-col gap-2 rounded-lg border border-border/50 bg-card/80 p-2 sm:flex-row sm:items-center"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="truncate text-sm font-medium text-foreground">{item.article}</p>
+                              <Badge variant="outline" className="h-5 px-2 text-[10px] capitalize">
+                                {item.orderStatus}
+                              </Badge>
+                              {item.ordered && (
+                                <Badge variant="secondary" className="h-5 px-2 text-[10px] uppercase tracking-wide">
+                                  Pedido
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="truncate text-[11px] text-muted-foreground">Cliente: {item.clientName}</p>
+                            {item.ordered && (
+                              <p className="text-[10px] text-muted-foreground">
+                                Pedido el {formatShortDateTime(item.orderedAt)}
+                              </p>
+                            )}
+                          </div>
+                          <Button
+                            size="sm"
+                            variant={item.ordered ? "outline" : "default"}
+                            className="h-8 shrink-0 rounded-lg text-[11px]"
+                            disabled={clientItemsUpdating.has(item.id)}
+                            onClick={() => { void toggleClientItemOrdered(item.id, !item.ordered); }}
+                          >
+                            {clientItemsUpdating.has(item.id)
+                              ? "Guardando..."
+                              : item.ordered
+                                ? "Marcar pendiente"
+                                : "Marcar pedido"}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
 
       {isOwner && (
-        <>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={onImportFileChange}
-            />
-            <input
-              ref={ordersImportInputRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={onImportOrdersFileChange}
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              onClick={handleImportClick}
-              disabled={importingData}
-            >
-              {importingData ? "Importando…" : "Importar datos"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              onClick={() => { void openExportDialog(); }}
-              disabled={copyingData}
-            >
-              {copyingData ? "Copiando…" : "Copiar datos"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              onClick={handleOrdersImportClick}
-              disabled={importingOrders || copyingData}
-            >
-              {importingOrders ? "Importando pedidos…" : "Importar pedidos"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              onClick={() => { void handleDownloadOrders(); }}
-              disabled={downloadingOrders || importingOrders || importingData || copyingData}
-            >
-              {downloadingOrders ? "Descargando pedidos…" : "Descargar pedidos"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              onClick={() => { void handleDownloadExcel(); }}
-              disabled={downloadingExcel || copyingData || importingData || importingOrders || downloadingOrders}
-            >
-              {downloadingExcel ? "Descargando Excel…" : "Descargar Excel"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              onClick={() => { void handleDownloadJson(); }}
-              disabled={downloadingJson || copyingData || importingData || importingOrders}
-            >
-              {downloadingJson ? "Descargando…" : "Descargar JSON"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              onClick={() => { void handleSaveSnapshot(); }}
-              disabled={savingBackup || copyingData || importingData}
-            >
-              {savingBackup ? "Guardando…" : "Guardar copia"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              onClick={() => { void handleRestoreSnapshot(); }}
-              disabled={restoringBackup || copyingData}
-            >
-              {restoringBackup ? "Restaurando…" : "Restaurar copia"}
-            </Button>
-          </div>
+        <Accordion
+          type="single"
+          collapsible
+          value={ownerActionsOpen ? "owner-actions" : undefined}
+          onValueChange={(value) => setOwnerActionsOpen(value === "owner-actions")}
+        >
+          <AccordionItem
+            value="owner-actions"
+            className="rounded-2xl border border-border/60 bg-card/95 shadow-[var(--shadow-card)]"
+          >
+            <AccordionTrigger className="px-4 py-4 hover:no-underline">
+              <div className="flex w-full items-center justify-between gap-3">
+                <div className="text-left">
+                  <p className="text-sm font-semibold text-foreground">Acciones</p>
+                  <p className="text-xs text-muted-foreground">
+                    {ownerActionsBusy
+                      ? "Hay procesos en curso."
+                      : "Importá, copiá y exportá datos de proveedores."}
+                  </p>
+                </div>
+                <Badge variant="muted" className="px-3 text-xs">
+                  {ownerActionsBusy ? "Procesando" : "Listo"}
+                </Badge>
+              </div>
+            </AccordionTrigger>
 
-          <div className="mb-4 text-right text-xs text-muted-foreground">
-            {loadingBackupMeta
-              ? "Consultando últimas copias…"
-              : `Última copia: ${formatBackupTimestamp(backupMeta?.updatedAt ?? null)}`}
-          </div>
-        </>
+            <AccordionContent className="space-y-3 px-4 pb-4 pt-0">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={onImportFileChange}
+                />
+                <input
+                  ref={ordersImportInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={onImportOrdersFileChange}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  onClick={handleImportClick}
+                  disabled={importingData}
+                >
+                  {importingData ? "Importando…" : "Importar datos"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  onClick={() => { void openExportDialog(); }}
+                  disabled={copyingData}
+                >
+                  {copyingData ? "Copiando…" : "Copiar datos"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  onClick={handleOrdersImportClick}
+                  disabled={importingOrders || copyingData}
+                >
+                  {importingOrders ? "Importando pedidos…" : "Importar pedidos"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  onClick={() => { void handleDownloadOrders(); }}
+                  disabled={downloadingOrders || importingOrders || importingData || copyingData}
+                >
+                  {downloadingOrders ? "Descargando pedidos…" : "Descargar pedidos"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  onClick={() => { void handleDownloadExcel(); }}
+                  disabled={downloadingExcel || copyingData || importingData || importingOrders || downloadingOrders}
+                >
+                  {downloadingExcel ? "Descargando Excel…" : "Descargar Excel"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  onClick={() => { void handleDownloadJson(); }}
+                  disabled={downloadingJson || copyingData || importingData || importingOrders}
+                >
+                  {downloadingJson ? "Descargando…" : "Descargar JSON"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  onClick={() => { void handleSaveSnapshot(); }}
+                  disabled={savingBackup || copyingData || importingData}
+                >
+                  {savingBackup ? "Guardando…" : "Guardar copia"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  onClick={() => { void handleRestoreSnapshot(); }}
+                  disabled={restoringBackup || copyingData}
+                >
+                  {restoringBackup ? "Restaurando…" : "Restaurar copia"}
+                </Button>
+              </div>
+
+              <div className="text-right text-xs text-muted-foreground">
+                {loadingBackupMeta
+                  ? "Consultando últimas copias…"
+                  : `Última copia: ${formatBackupTimestamp(backupMeta?.updatedAt ?? null)}`}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       )}
 
       {/* Tabs */}

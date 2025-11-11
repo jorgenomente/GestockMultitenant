@@ -67,3 +67,110 @@
     @apply bg-background text-foreground font-sans;
   }
 }
+
+@property --client-orders-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@property --sales-import-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@layer components {
+  .client-orders-attention {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .client-orders-attention::before {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: inherit;
+    padding: 3px;
+    pointer-events: none;
+    z-index: -1;
+    background: conic-gradient(
+      from var(--client-orders-angle),
+      transparent 0deg 352deg,
+      rgba(250, 204, 21, 0.95) 352deg 360deg
+    );
+    animation: client-orders-trace 6s linear infinite;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+
+  .sales-import-highlight {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .sales-import-highlight::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    padding: 2px;
+    pointer-events: none;
+    z-index: -1;
+    background: conic-gradient(
+      from var(--sales-import-angle),
+      transparent 0deg 340deg,
+      rgba(59, 130, 246, 0.95) 340deg 360deg
+    );
+    animation: sales-import-trace 4s linear infinite;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+
+  .sales-import-highlight:disabled::before,
+  .sales-import-highlight[data-disabled="true"]::before {
+    opacity: 0.25;
+  }
+}
+
+@keyframes client-orders-trace {
+  from {
+    --client-orders-angle: 0deg;
+  }
+  to {
+    --client-orders-angle: 360deg;
+  }
+}
+
+@keyframes sales-import-trace {
+  from {
+    --sales-import-angle: 0deg;
+  }
+  to {
+    --sales-import-angle: 360deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .client-orders-attention::before {
+    animation: none;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg 350deg,
+      rgba(250, 204, 21, 0.8) 350deg 360deg
+    );
+  }
+
+  .sales-import-highlight::before {
+    animation: none;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg 340deg,
+      rgba(59, 130, 246, 0.8) 340deg 360deg
+    );
+  }
+}

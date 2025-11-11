@@ -509,6 +509,9 @@ type GroupSectionProps = {
   onBulkAddItems?: BulkItemsHandler;
   onBulkRemoveByNames?: BulkItemsHandler;
   sortMode: SortMode;
+  manualOrder: string[];
+  manualSortActive: boolean;
+  onMoveItem: (itemId: string, dir: "up" | "down", visibleOrder: string[]) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
   checkedMap: Record<string, boolean>;
@@ -520,12 +523,13 @@ type GroupSectionProps = {
   floatingActionBottomOffset: string;
 };
 
-type SortMode = "alpha_asc" | "alpha_desc" | "avg_desc" | "avg_asc";
-const SORT_MODES: SortMode[] = ["alpha_asc", "alpha_desc", "avg_desc", "avg_asc"];
+type SortMode = "manual" | "alpha_asc" | "alpha_desc" | "avg_desc" | "avg_asc";
+const SORT_MODES: SortMode[] = ["manual", "alpha_asc", "alpha_desc", "avg_desc", "avg_asc"];
+const EMPTY_ITEM_ORDER: string[] = [];
 const isSortMode = (value: unknown): value is SortMode =>
   typeof value === "string" && SORT_MODES.includes(value as SortMode);
 
-const UI_STATE_STORAGE_VERSION = 2;
+const UI_STATE_STORAGE_VERSION = 3;
 
 type StoredUiStatePayload = {
   version: number;
@@ -533,6 +537,7 @@ type StoredUiStatePayload = {
   sortMode?: SortMode;
   openGroup?: string | null;
   statsOpen?: string[];
+  itemOrder?: Record<string, string[]>;
 };
 
 type ParsedUiState = {
@@ -540,6 +545,7 @@ type ParsedUiState = {
   sortMode?: SortMode;
   openGroup?: string | null;
   statsOpenIds: string[];
+  itemOrderMap: Record<string, string[]>;
 };
 
 type SnapshotItem = {
@@ -610,6 +616,7 @@ type OrderExportJsonPayload = {
     sortMode?: SortMode;
     openGroup?: string | null;
     statsOpenIds?: string[];
+    itemOrder?: Record<string, string[]>;
   };
 };
 
@@ -627,8 +634,60 @@ const mapStatsOpenIds = (map: Record<string, boolean>): string[] =>
     .filter(([, value]) => Boolean(value))
     .map(([key]) => key);
 
+const normalizeGroupKey = (value: string | null | undefined): string => {
+  const trimmed = (value ?? "").trim();
+  return trimmed.length > 0 ? trimmed : "Sin grupo";
+};
+
+const cloneItemOrderMap = (map: Record<string, string[]>): Record<string, string[]> =>
+  Object.fromEntries(Object.entries(map).map(([key, ids]) => [key, [...ids]]));
+
+const sanitizeItemOrderMap = (raw: unknown): Record<string, string[]> => {
+  if (!isRecord(raw)) return {};
+  const result: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!Array.isArray(value)) continue;
+    const normKey = normalizeGroupKey(key);
+    const ids = value
+      .map((id) => (typeof id === "string" ? id.trim() : ""))
+      .filter((id): id is string => id.length > 0);
+    if (!ids.length) continue;
+    const unique: string[] = [];
+    ids.forEach((id) => {
+      if (!unique.includes(id)) unique.push(id);
+    });
+    if (unique.length) result[normKey] = unique;
+  }
+  return result;
+};
+
+const applyManualOrder = (arr: ItemRow[], orderIds?: string[]): ItemRow[] => {
+  if (!orderIds || orderIds.length === 0) return arr;
+  const map = new Map(arr.map((item) => [item.id, item]));
+  if (!map.size) return arr;
+  const seen = new Set<string>();
+  const ordered: ItemRow[] = [];
+  orderIds.forEach((id) => {
+    const item = map.get(id);
+    if (item) {
+      ordered.push(item);
+      seen.add(id);
+    }
+  });
+  arr.forEach((item) => {
+    if (!seen.has(item.id)) ordered.push(item);
+  });
+  return ordered;
+};
+
 const parseStoredUiState = (raw: unknown): ParsedUiState => {
-  const base: ParsedUiState = { checked: {}, sortMode: undefined, openGroup: undefined, statsOpenIds: [] };
+  const base: ParsedUiState = {
+    checked: {},
+    sortMode: undefined,
+    openGroup: undefined,
+    statsOpenIds: [],
+    itemOrderMap: {},
+  };
   if (!isRecord(raw)) return base;
 
   const looksStructured =
@@ -637,14 +696,21 @@ const parseStoredUiState = (raw: unknown): ParsedUiState => {
     typeof raw.sortMode === "string" ||
     Array.isArray(raw.statsOpen) ||
     raw.openGroup === null ||
-    typeof raw.openGroup === "string";
+    typeof raw.openGroup === "string" ||
+    isRecord(raw.itemOrder);
 
   if (!looksStructured) {
     const legacyChecked = Object.entries(raw).reduce<Record<string, boolean>>((acc, [key, value]) => {
       if (typeof value === "boolean") acc[key] = value;
       return acc;
     }, {});
-    return { checked: legacyChecked, sortMode: undefined, openGroup: undefined, statsOpenIds: [] };
+    return {
+      checked: legacyChecked,
+      sortMode: undefined,
+      openGroup: undefined,
+      statsOpenIds: [],
+      itemOrderMap: {},
+    };
   }
 
   const checkedRaw = isRecord(raw.checked) ? raw.checked : undefined;
@@ -663,8 +729,9 @@ const parseStoredUiState = (raw: unknown): ParsedUiState => {
   const statsOpenIds = Array.isArray(raw.statsOpen)
     ? (raw.statsOpen as unknown[]).filter((id): id is string => typeof id === "string" && id.length > 0)
     : [];
+  const itemOrderMap = sanitizeItemOrderMap(raw.itemOrder);
 
-  return { checked, sortMode, openGroup, statsOpenIds };
+  return { checked, sortMode, openGroup, statsOpenIds, itemOrderMap };
 };
 
 const buildStoredUiStatePayload = (args: {
@@ -672,12 +739,14 @@ const buildStoredUiStatePayload = (args: {
   sortMode: SortMode;
   openGroup: string | null;
   statsOpenIds: string[];
+  itemOrderMap: Record<string, string[]>;
 }): StoredUiStatePayload => ({
   version: UI_STATE_STORAGE_VERSION,
   checked: { ...args.checked },
   sortMode: args.sortMode,
   openGroup: args.openGroup,
   statsOpen: [...args.statsOpenIds],
+  itemOrder: cloneItemOrderMap(args.itemOrderMap),
 });
 
 const shallowEqualRecord = (a: Record<string, boolean>, b: Record<string, boolean>): boolean => {
@@ -686,6 +755,14 @@ const shallowEqualRecord = (a: Record<string, boolean>, b: Record<string, boolea
   if (aKeys.length !== bKeys.length) return false;
   for (const key of aKeys) {
     if (a[key] !== b[key]) return false;
+  }
+  return true;
+};
+
+const areStringArraysEqual = (a: string[], b: string[]): boolean => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
   }
   return true;
 };
@@ -1125,6 +1202,7 @@ export default function ProviderOrderPage() {
   const [isFilterOpen, setIsFilterOpen] = React.useState(false);
   const [sortMode, setSortMode] = React.useState<SortMode>("alpha_asc");
   const [groupOrder, setGroupOrder] = React.useState<string[]>([]);
+  const [itemOrderMap, setItemOrderMap] = React.useState<Record<string, string[]>>({});
   const [stockModalOpen, setStockModalOpen] = React.useState(false);
   const [stockProcessing, setStockProcessing] = React.useState(false);
   const [stockAdjustments, setStockAdjustments] = React.useState<Record<string, string>>({});
@@ -1270,8 +1348,10 @@ export default function ProviderOrderPage() {
 
     const ordered: ItemRow[] = [];
     for (const name of sortedGroupNames) {
-      const arr = [...(grouped.get(name) ?? [])];
-      if (sortMode === "alpha_asc") arr.sort(byNameAsc);
+      let arr = [...(grouped.get(name) ?? [])];
+      if (sortMode === "manual") {
+        arr = applyManualOrder(arr, itemOrderMap[name]);
+      } else if (sortMode === "alpha_asc") arr.sort(byNameAsc);
       else if (sortMode === "alpha_desc") arr.sort(byNameDesc);
       else if (sortMode === "avg_desc") {
         arr.sort((a, b) => (avg(b.product_name) - avg(a.product_name)) || byNameAsc(a, b));
@@ -1282,7 +1362,7 @@ export default function ProviderOrderPage() {
     }
 
     return ordered;
-  }, [actionableItems, groupOrder, sortMode, statsByProduct]);
+  }, [actionableItems, groupOrder, sortMode, statsByProduct, itemOrderMap]);
 
   const computeSalesSinceStock = React.useCallback(
     (productName: string, fromTs: number | null) => {
@@ -1741,6 +1821,7 @@ export default function ProviderOrderPage() {
       if (parsedUI.sortMode) setSortMode(parsedUI.sortMode);
       if (parsedUI.openGroup !== undefined) setOpenGroup(parsedUI.openGroup ?? "");
       setStatsOpenMap(statsOpenIdsToMap(parsedUI.statsOpenIds));
+      setItemOrderMap(parsedUI.itemOrderMap);
     } catch (err) {
       console.error("loadUIState exception", err);
     }
@@ -2289,6 +2370,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       sortMode?: SortMode;
       openGroup?: string | null | undefined;
       statsOpenMap?: Record<string, boolean>;
+      itemOrderMap?: Record<string, string[]>;
     }) => {
       if (!order?.id) return;
 
@@ -2296,22 +2378,25 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       const hasSortOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "sortMode") : false;
       const hasOpenOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "openGroup") : false;
       const hasStatsOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "statsOpenMap") : false;
+      const hasItemOrderOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "itemOrderMap") : false;
 
       const nextChecked = hasCheckedOverride ? overrides!.checked ?? {} : checkedMap;
       const nextSortMode = hasSortOverride ? overrides!.sortMode ?? sortMode : sortMode;
       const nextOpenGroup = hasOpenOverride ? overrides!.openGroup ?? null : openGroup || null;
       const nextStatsMap = hasStatsOverride ? overrides!.statsOpenMap ?? {} : statsOpenMap;
+      const nextItemOrderMap = hasItemOrderOverride ? overrides!.itemOrderMap ?? {} : itemOrderMap;
 
       const payload = buildStoredUiStatePayload({
         checked: nextChecked,
         sortMode: nextSortMode,
         openGroup: nextOpenGroup,
         statsOpenIds: mapStatsOpenIds(nextStatsMap),
+        itemOrderMap: nextItemOrderMap,
       });
 
       void saveUIState(order.id, { checked_map: payload });
     },
-    [order?.id, checkedMap, sortMode, openGroup, statsOpenMap, saveUIState]
+    [order?.id, checkedMap, sortMode, openGroup, statsOpenMap, itemOrderMap, saveUIState]
   );
 
   // Mantener coherencia: si el grupo abierto ya no existe (renombre/eliminación), cerramos
@@ -2346,12 +2431,55 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
     persistUiState({ checked: sanitizedChecked, statsOpenMap: sanitizedStats });
   }, [items, checkedMap, statsOpenMap, persistUiState]);
 
+  React.useEffect(() => {
+    let nextState: Record<string, string[]> | null = null;
+    setItemOrderMap((prev) => {
+      const groupsMap = new Map<string, string[]>();
+      items.forEach((it) => {
+        if (it.product_name === GROUP_PLACEHOLDER) return;
+        const key = normalizeGroupKey(it.group_name);
+        if (!groupsMap.has(key)) groupsMap.set(key, []);
+        groupsMap.get(key)!.push(it.id);
+      });
+
+      const next: Record<string, string[]> = {};
+      let mutated = false;
+      groupsMap.forEach((ids, key) => {
+        const prevOrder = prev[key] ?? [];
+        const filteredPrev = prevOrder.filter((id) => ids.includes(id));
+        const missing = ids.filter((id) => !filteredPrev.includes(id));
+        const combined = [...filteredPrev, ...missing];
+        next[key] = combined;
+        if (!mutated && !areStringArraysEqual(combined, prevOrder)) mutated = true;
+      });
+
+      const prevKeys = Object.keys(prev);
+      if (!mutated) {
+        if (prevKeys.length !== groupsMap.size) mutated = true;
+        else {
+          for (const key of prevKeys) {
+            if (!groupsMap.has(key)) {
+              mutated = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!mutated) return prev;
+      nextState = next;
+      return next;
+    });
+    if (nextState) persistUiState({ itemOrderMap: nextState });
+  }, [items, persistUiState]);
+
   function applyImportedUIState(opts: {
     groupOrder?: string[];
     checkedMap?: Record<string, boolean>;
     sortMode?: SortMode;
     openGroup?: string | null;
     statsOpenIds?: string[];
+    itemOrderMap?: Record<string, string[]>;
   }) {
     const patch: UiStatePatch = {};
     if (opts.groupOrder !== undefined) {
@@ -2363,24 +2491,28 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       opts.checkedMap !== undefined ||
       opts.sortMode !== undefined ||
       opts.openGroup !== undefined ||
-      opts.statsOpenIds !== undefined;
+      opts.statsOpenIds !== undefined ||
+      opts.itemOrderMap !== undefined;
 
     if (hasUiOverrides) {
       const resolvedChecked = opts.checkedMap ?? checkedMap;
       const resolvedSortMode = opts.sortMode ?? sortMode;
       const resolvedOpenGroup = opts.openGroup !== undefined ? opts.openGroup : openGroup || null;
       const resolvedStatsMap = opts.statsOpenIds !== undefined ? statsOpenIdsToMap(opts.statsOpenIds) : statsOpenMap;
+      const resolvedItemOrder = opts.itemOrderMap ?? itemOrderMap;
 
       if (opts.checkedMap !== undefined) setCheckedMap(resolvedChecked);
       if (opts.sortMode !== undefined) setSortMode(resolvedSortMode);
       if (opts.openGroup !== undefined) setOpenGroup(resolvedOpenGroup ?? "");
       if (opts.statsOpenIds !== undefined) setStatsOpenMap(resolvedStatsMap);
+      if (opts.itemOrderMap !== undefined) setItemOrderMap(resolvedItemOrder);
 
       const payload = buildStoredUiStatePayload({
         checked: resolvedChecked,
         sortMode: resolvedSortMode,
         openGroup: resolvedOpenGroup,
         statsOpenIds: mapStatsOpenIds(resolvedStatsMap),
+        itemOrderMap: resolvedItemOrder,
       });
       patch.checked_map = payload;
     }
@@ -2438,6 +2570,50 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
   [base[idx], base[swapWith]] = [base[swapWith], base[idx]];
   persistGroupOrder(base);
 }
+
+  function moveItemWithinGroup(
+    groupName: string,
+    itemId: string,
+    dir: "up" | "down",
+    visibleOrder?: string[],
+  ) {
+    const key = normalizeGroupKey(groupName);
+    const groupItems = items.filter(
+      (it) => it.product_name !== GROUP_PLACEHOLDER && normalizeGroupKey(it.group_name) === key,
+    );
+    if (groupItems.length < 2) return;
+
+    const fallbackOrder = groupItems.map((it) => it.id);
+    const visibleBase = visibleOrder ? visibleOrder.filter((id) => fallbackOrder.includes(id)) : [];
+    const savedOrder = (itemOrderMap[key] ?? []).filter((id) => fallbackOrder.includes(id));
+    let workingOrderBase = visibleBase.length ? visibleBase : savedOrder;
+    if (!workingOrderBase.length) workingOrderBase = fallbackOrder;
+    const workingOrder = [...workingOrderBase];
+    fallbackOrder.forEach((id) => {
+      if (!workingOrder.includes(id)) workingOrder.push(id);
+    });
+
+    const fromIdx = workingOrder.indexOf(itemId);
+    if (fromIdx === -1) return;
+    const toIdx = dir === "up"
+      ? Math.max(0, fromIdx - 1)
+      : Math.min(workingOrder.length - 1, fromIdx + 1);
+    if (fromIdx === toIdx) return;
+
+    const nextGroupOrder = [...workingOrder];
+    const [moved] = nextGroupOrder.splice(fromIdx, 1);
+    nextGroupOrder.splice(toIdx, 0, moved);
+
+    const nextMap = { ...itemOrderMap, [key]: nextGroupOrder };
+    setItemOrderMap(nextMap);
+
+    const overrides: { itemOrderMap: Record<string, string[]>; sortMode?: SortMode } = { itemOrderMap: nextMap };
+    if (sortMode !== "manual") {
+      setSortMode("manual");
+      overrides.sortMode = "manual";
+    }
+    persistUiState(overrides);
+  }
 
 
   // Setear check de ítem y guardar
@@ -2957,6 +3133,20 @@ async function updatePackSize(id: string, pack: number | null) {
     if (order?.id) void saveUIState(order.id, { group_order: arr });
     return arr;
   });
+
+  let renamedOrder: Record<string, string[]> | null = null;
+  setItemOrderMap((prev) => {
+    const fromKey = normalizeGroupKey(oldName);
+    const toKey = normalizeGroupKey(newName);
+    if (fromKey === toKey || !prev[fromKey]) return prev;
+    const next = { ...prev };
+    const snapshot = next[fromKey];
+    delete next[fromKey];
+    next[toKey] = snapshot;
+    renamedOrder = next;
+    return next;
+  });
+  if (renamedOrder) persistUiState({ itemOrderMap: renamedOrder });
 }
 
 
@@ -2972,6 +3162,16 @@ async function updatePackSize(id: string, pack: number | null) {
       .eq("group_name", gKey);
     if (error) { console.error(error); alert("No se pudo eliminar el grupo."); return; }
     setItems((prev) => prev.filter((r) => !groupIds.includes(r.id)));
+    let prunedOrder: Record<string, string[]> | null = null;
+    setItemOrderMap((prev) => {
+      const key = normalizeGroupKey(name);
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      prunedOrder = next;
+      return next;
+    });
+    if (prunedOrder) persistUiState({ itemOrderMap: prunedOrder });
     recomputeOrderTotal();
   }
 
@@ -2980,7 +3180,7 @@ async function updatePackSize(id: string, pack: number | null) {
 async function handleCopySimpleList() {
   try {
     // Helper: ordenar ítems dentro del grupo igual que en la UI
-    const sortItemsForCopy = (arr: ItemRow[]) => {
+    const sortItemsForCopy = (groupName: string, arr: ItemRow[]) => {
       const byNameAsc = (a: ItemRow, b: ItemRow) =>
         (a.display_name || a.product_name)
           .localeCompare(b.display_name || b.product_name, "es", { sensitivity: "base" });
@@ -2989,8 +3189,9 @@ async function handleCopySimpleList() {
       const avg4w = (name: string) =>
         computeStats(sales, name, latestDateForProduct(sales, name)).avg4w || 0;
 
-      const list = [...arr];
-      if (sortMode === "alpha_asc") list.sort(byNameAsc);
+      let list = [...arr];
+      if (sortMode === "manual") list = applyManualOrder(list, itemOrderMap[groupName]);
+      else if (sortMode === "alpha_asc") list.sort(byNameAsc);
       else if (sortMode === "alpha_desc") list.sort(byNameDesc);
       else if (sortMode === "avg_desc")
         list.sort((a, b) => (avg4w(b.product_name) - avg4w(a.product_name)) || byNameAsc(a, b));
@@ -3002,7 +3203,8 @@ async function handleCopySimpleList() {
 
     // Recorremos los GRUPOS en el mismo orden que se renderizan (memo `groups`)
     const lines: string[] = [];
-    for (const [, arr] of groups) {
+    for (const [rawName, arr] of groups) {
+      const visibleGroupName = rawName || "Sin grupo";
       // Ítems reales del grupo, con cantidad > 0
       const visibles = arr
         .filter(it => it.product_name !== GROUP_PLACEHOLDER && (it.qty || 0) > 0);
@@ -3010,7 +3212,7 @@ async function handleCopySimpleList() {
       if (!visibles.length) continue;
 
       // Orden interno igual que la UI
-      const ordered = sortItemsForCopy(visibles);
+      const ordered = sortItemsForCopy(visibleGroupName, visibles);
 
       // (Opcional) si querés incluir el título del grupo, descomentá:
       // lines.push(`[${groupName || "Sin grupo"}]`);
@@ -3246,6 +3448,11 @@ async function exportOrderAsXlsx() {
     );
     const statsOpenIds = mapStatsOpenIds(statsOpenMap).filter((id) => validIds.has(id));
     const currentOpenGroup = openGroup || null;
+    const exportedItemOrder = Object.entries(itemOrderMap).reduce<Record<string, string[]>>((acc, [group, ids]) => {
+      const filtered = ids.filter((id) => validIds.has(id));
+      if (filtered.length) acc[group] = filtered;
+      return acc;
+    }, {});
 
     return {
       kind: ORDER_EXPORT_KIND,
@@ -3284,6 +3491,7 @@ async function exportOrderAsXlsx() {
         sortMode,
         openGroup: currentOpenGroup,
         statsOpenIds,
+        itemOrder: exportedItemOrder,
       },
     };
   }
@@ -3513,6 +3721,14 @@ async function exportOrderAsXlsx() {
           (id): id is string => typeof id === "string" && validIds.has(id),
         )
       : undefined;
+    const importedItemOrderRaw = uiStateRaw?.itemOrder ? sanitizeItemOrderMap(uiStateRaw.itemOrder) : undefined;
+    const importedItemOrder = importedItemOrderRaw
+      ? Object.entries(importedItemOrderRaw).reduce<Record<string, string[]>>((acc, [group, ids]) => {
+          const filtered = ids.filter((id) => validIds.has(id));
+          if (filtered.length) acc[group] = filtered;
+          return acc;
+        }, {})
+      : undefined;
 
     const uiPatch: {
       groupOrder?: string[];
@@ -3520,6 +3736,7 @@ async function exportOrderAsXlsx() {
       sortMode?: SortMode;
       openGroup?: string | null;
       statsOpenIds?: string[];
+      itemOrderMap?: Record<string, string[]>;
     } = {
       checkedMap: legacyChecked,
     };
@@ -3527,6 +3744,9 @@ async function exportOrderAsXlsx() {
     if (importedSortMode) uiPatch.sortMode = importedSortMode;
     if (importedOpenGroup !== undefined) uiPatch.openGroup = importedOpenGroup;
     if (importedStatsOpenIds !== undefined) uiPatch.statsOpenIds = importedStatsOpenIds;
+    if (importedItemOrder !== undefined && Object.keys(importedItemOrder).length) {
+      uiPatch.itemOrderMap = importedItemOrder;
+    }
     applyImportedUIState(uiPatch);
 
     alert("Pedido importado correctamente ✅");
@@ -4217,7 +4437,7 @@ async function exportOrderAsXlsx() {
                 onClick={() => salesUploadRef.current?.click()}
                 disabled={importingSales}
                 title="Importar ventas actualizadas"
-                className="h-10 w-10 rounded-2xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
+                className="sales-import-highlight h-10 w-10 rounded-2xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
               >
                 <Upload className="h-4 w-4" />
               </Button>
@@ -4414,6 +4634,7 @@ async function exportOrderAsXlsx() {
                   <SelectValue placeholder="Ordenar por..." />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="manual">Orden manual</SelectItem>
                   <SelectItem value="alpha_asc">Alfabético A→Z</SelectItem>
                   <SelectItem value="alpha_desc">Alfabético Z→A</SelectItem>
                   <SelectItem value="avg_desc">Prom/sem ↓</SelectItem>
@@ -4677,6 +4898,9 @@ async function exportOrderAsXlsx() {
                 onDeleteGroup={deleteGroup}
                 onUpdatePackSize={updatePackSize}
                 sortMode={sortMode}
+                manualOrder={itemOrderMap[groupName] ?? EMPTY_ITEM_ORDER}
+                manualSortActive={sortMode === "manual"}
+                onMoveItem={(itemId, dir, visibleOrder) => moveItemWithinGroup(groupName, itemId, dir, visibleOrder)}
                 onMoveUp={() => moveGroup(groupName, "up")}
                 onMoveDown={() => moveGroup(groupName, "down")}
                 checkedMap={checkedMap}
@@ -5174,6 +5398,7 @@ function GroupSection(props: GroupSectionProps) {
     groupName, items, productNames, sales, margin, tokenMatch, placeholder,
     onAddItem, onRemoveItem, onUpdateQty, onUpdateUnitPrice, onRenameGroup, onDeleteGroup,
     onBulkAddItems, onBulkRemoveByNames, sortMode,
+    manualOrder, manualSortActive, onMoveItem,
     onMoveUp, onMoveDown, checkedMap, setItemChecked,
     containerProps, onUpdatePackSize, onUpdateStock,
     onRenameItemLabel, computeSalesSinceStock,
@@ -5379,18 +5604,32 @@ const confirmedCount = React.useMemo(
     !showFullscreenSearch && open && rect && portalTarget && inlineSuggestions.length > 0;
 
   const sortedVisible = React.useMemo(() => {
-    const arr = [...arrVisible];
+    let arr = [...arrVisible];
     const byNameAsc = (a: ItemRow, b: ItemRow) =>
       a.product_name.localeCompare(b.product_name, "es", { sensitivity: "base" });
     const byNameDesc = (a: ItemRow, b: ItemRow) => -byNameAsc(a, b);
     const avg = (name: string) =>
       computeStats(sales, name, latestDateForProduct(sales, name)).avg4w || 0;
-    if (sortMode === "alpha_asc") arr.sort(byNameAsc);
+    if (sortMode === "manual") arr = applyManualOrder(arr, manualOrder);
+    else if (sortMode === "alpha_asc") arr.sort(byNameAsc);
     else if (sortMode === "alpha_desc") arr.sort(byNameDesc);
     else if (sortMode === "avg_desc") arr.sort((a, b) => (avg(b.product_name) - avg(a.product_name)) || byNameAsc(a, b));
     else if (sortMode === "avg_asc") arr.sort((a, b) => (avg(a.product_name) - avg(b.product_name)) || byNameAsc(a, b));
     return arr;
-  }, [arrVisible, sortMode, sales]);
+  }, [arrVisible, sortMode, sales, manualOrder]);
+
+  const visibleOrderIds = React.useMemo(
+    () => sortedVisible.map((item) => item.id),
+    [sortedVisible],
+  );
+
+  const manualSequence = React.useMemo(() => {
+    if (sortMode === "manual") {
+      if (manualOrder.length) return manualOrder;
+      return arrVisible.map((item) => item.id);
+    }
+    return visibleOrderIds;
+  }, [sortMode, manualOrder, arrVisible, visibleOrderIds]);
 
   async function commitRename() {
     const nv = (editValue || "").trim() || "Sin grupo";
@@ -5787,6 +6026,9 @@ const dragHandleProps = React.useMemo<DragHandleProps>(() => {
             const isChecked = !!checkedMap[it.id];
             const metricChipClass = "inline-flex min-w-[140px] items-center justify-between gap-2 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 py-1 text-[11px] text-[color:var(--order-card-accent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]";
             const statsOpen = !!statsOpenMap[it.id];
+            const orderIndex = manualSequence.indexOf(it.id);
+            const canMoveUp = manualSequence.length > 1 && orderIndex > 0;
+            const canMoveDown = manualSequence.length > 1 && orderIndex !== -1 && orderIndex < manualSequence.length - 1;
 
             return (
               <Card
@@ -5908,15 +6150,45 @@ const dragHandleProps = React.useMemo<DragHandleProps>(() => {
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 rounded-full border border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-highlight)] text-[color:var(--destructive-foreground)] transition-opacity hover:opacity-85"
-                        onClick={() => void onRemoveItem(it.id)}
-                        aria-label="Quitar producto"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 rounded-full border border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-highlight)] text-[color:var(--destructive-foreground)] transition-opacity hover:opacity-85"
+                          onClick={() => void onRemoveItem(it.id)}
+                          aria-label="Quitar producto"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                        <div
+                          className={clsx(
+                            "flex items-center gap-1 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] p-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.4)]",
+                            !manualSortActive && "opacity-90",
+                          )}
+                          title={manualSortActive ? "Reordenar este producto" : "Al mover se activa el orden manual"}
+                        >
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 rounded-full border border-transparent text-[color:var(--order-card-accent)] hover:border-[color:var(--order-card-accent)]"
+                            onClick={() => onMoveItem(it.id, "up", visibleOrderIds)}
+                            aria-label={`Mover ${productLabel} hacia arriba`}
+                            disabled={!canMoveUp}
+                          >
+                            <ChevronUp className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 rounded-full border border-transparent text-[color:var(--order-card-accent)] hover:border-[color:var(--order-card-accent)]"
+                            onClick={() => onMoveItem(it.id, "down", visibleOrderIds)}
+                            aria-label={`Mover ${productLabel} hacia abajo`}
+                            disabled={!canMoveDown}
+                          >
+                            <ChevronDown className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
                       <div className="flex items-baseline gap-2">
                         <span className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--order-card-accent)] opacity-70">Subtotal</span>
                         <span className="text-lg font-semibold text-[color:var(--order-card-accent)] tabular-nums">{fmtMoney(subtotal)}</span>
