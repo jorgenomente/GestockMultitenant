@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
-import { Bell, Shield } from "lucide-react";
+import { Shield } from "lucide-react";
 import BranchSelector from "@/components/branch/BranchSelector";
 import { useBranch } from "@/components/branch/BranchProvider";
 import { paths } from "@/lib/paths";
@@ -49,18 +49,6 @@ export default function UserBranchIndicator() {
     };
   }, [supabase, isDemo]);
 
-  const branchSlug = React.useMemo(() => {
-    if (isDemo) return "demo-sandbox";
-    if (!pathname) return "";
-    const match = pathname.match(/^\/t\/[^/]+\/b\/([^/]+)/);
-    if (!match || match.length < 2) return "";
-    try {
-      return decodeURIComponent(match[1]);
-    } catch {
-      return match[1];
-    }
-  }, [pathname, isDemo]);
-
   const displayName = React.useMemo(
     () => (isDemo ? "Invitado Demo" : formatDisplayName(email)),
     [email, isDemo]
@@ -85,12 +73,12 @@ export default function UserBranchIndicator() {
           </div>
         </div>
         <div className="flex flex-1 flex-col gap-4 text-xs sm:flex-row sm:items-center sm:justify-end sm:text-sm">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <BranchSelector className="w-full sm:w-64" hideLabel />
+          <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end sm:gap-3">
+            <BranchSelector className="flex-1 min-w-[10rem] max-w-[13rem] sm:flex-none sm:w-64 sm:max-w-none" hideLabel />
             {canViewAdmin && adminHref && (
               <Link
                 href={adminHref}
-                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-border/70 bg-card px-4 text-sm font-semibold text-foreground shadow-sm transition hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card sm:w-auto"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border/70 bg-card px-3 text-xs font-semibold text-foreground shadow-sm transition hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card sm:h-10 sm:px-4 sm:text-sm"
               >
                 <Shield className="h-4 w-4" aria-hidden="true" />
                 <span>Admin</span>
@@ -98,14 +86,6 @@ export default function UserBranchIndicator() {
             )}
           </div>
           <div className="flex flex-1 flex-wrap items-center justify-end gap-3 text-foreground sm:flex-none">
-            <button
-              type="button"
-              aria-label="Notificaciones"
-              className="relative flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
-            >
-              <Bell className="h-4 w-4" aria-hidden="true" />
-              <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive" aria-hidden="true" />
-            </button>
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-sm font-semibold uppercase tracking-wide text-primary">
               {initials || "—"}
             </div>
@@ -113,16 +93,6 @@ export default function UserBranchIndicator() {
               <span className="text-xs text-muted-foreground">Usuario</span>
               <span className="text-sm font-medium text-foreground/90">{displayName}</span>
             </div>
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[0.7rem] font-medium uppercase tracking-wide text-accent-foreground">
-                {isDemo ? "demo virtual" : branchSlug || "—"}
-              </span>
-              {isDemo && (
-                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide text-primary">
-                  Demo
-                </span>
-              )}
-            </span>
           </div>
         </div>
       </div>

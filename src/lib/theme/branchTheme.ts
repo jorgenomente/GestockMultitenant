@@ -15,6 +15,8 @@ export type BranchThemeFormValues = {
   cardForeground: string;
   inputBackground: string;
   orderQty: string;
+  clientOrderPending: string;
+  clientOrderSaved: string;
   nav: string;
   textPrimary: string;
   textSecondary: string;
@@ -45,6 +47,8 @@ export const DEFAULT_BRANCH_THEME: BranchThemeFormValues = {
   cardForeground: TEXT_PRIMARY_FALLBACK,
   inputBackground: "#FFFFFF",
   orderQty: "#D6815A",
+  clientOrderPending: "#1F6FEB",
+  clientOrderSaved: "#22C55E",
   nav: "#2C3A33",
   textPrimary: TEXT_PRIMARY_FALLBACK,
   textSecondary: TEXT_SECONDARY_FALLBACK,
@@ -62,6 +66,8 @@ export const BRANCH_THEME_FIELDS: Array<keyof BranchThemeFormValues> = [
   "cardForeground",
   "inputBackground",
   "orderQty",
+  "clientOrderPending",
+  "clientOrderSaved",
   "nav",
   "textPrimary",
   "textSecondary",
@@ -146,6 +152,14 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const cardForeground = sanitizeHexColor(theme.cardForeground, textPrimary);
   const inputBackground = sanitizeHexColor(theme.inputBackground, DEFAULT_BRANCH_THEME.inputBackground);
   const orderQty = sanitizeHexColor(theme.orderQty, DEFAULT_BRANCH_THEME.orderQty);
+  const clientOrderPending = sanitizeHexColor(
+    theme.clientOrderPending,
+    DEFAULT_BRANCH_THEME.clientOrderPending,
+  );
+  const clientOrderSaved = sanitizeHexColor(
+    theme.clientOrderSaved,
+    DEFAULT_BRANCH_THEME.clientOrderSaved,
+  );
 
   const primaryHover = adjustLightness(primary, -0.08);
   const primaryLight = adjustLightness(primary, 0.12);
@@ -200,6 +214,8 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const navSoftSurface = withAlpha(nav, 0.75);
   const navHoverSurface = withAlpha(nav, 0.88);
   const navStrongSurface = withAlpha(nav, 0.95);
+  const clientOrderPendingSurface = withAlpha(clientOrderPending, 0.18);
+  const clientOrderSavedSurface = withAlpha(clientOrderSaved, 0.18);
 
   const chartPrimary = accent;
   const chartTwo = accentTertiary;
@@ -241,6 +257,12 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
     "--destructive-foreground": textPrimary,
     "--success": success,
     "--success-foreground": textPrimary,
+    "--client-order-pending": clientOrderPending,
+    "--client-order-pending-surface": clientOrderPendingSurface,
+    "--client-order-pending-foreground": "#FFFFFF",
+    "--client-order-saved": clientOrderSaved,
+    "--client-order-saved-surface": clientOrderSavedSurface,
+    "--client-order-saved-foreground": "#FFFFFF",
     "--border": cardBorder,
     "--input": "transparent",
     "--input-background": inputBackground,

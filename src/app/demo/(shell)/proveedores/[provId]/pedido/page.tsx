@@ -2,14 +2,12 @@ import type { Metadata } from "next";
 import ProviderOrderDemoView from "../../../../views/ProviderOrderDemoView";
 import { DEMO_PROVIDER_ORDERS, DEMO_PROVIDERS } from "../../../../data/demoData";
 
-type PageParams = {
-  params: {
-    provId: string;
-  };
+type ProviderPageProps = {
+  params: Promise<{ provId: string }>;
 };
 
-export function generateMetadata({ params }: PageParams): Metadata {
-  const { provId } = params;
+export async function generateMetadata({ params }: ProviderPageProps): Promise<Metadata> {
+  const { provId } = await params;
   const existing = DEMO_PROVIDER_ORDERS[provId];
   const provider = existing
     ? existing.providerName
@@ -26,7 +24,7 @@ export function generateMetadata({ params }: PageParams): Metadata {
   };
 }
 
-export default function DemoProviderOrderPage({ params }: PageParams) {
-  return <ProviderOrderDemoView providerId={params.provId} />;
+export default async function DemoProviderOrderPage({ params }: ProviderPageProps) {
+  const { provId } = await params;
+  return <ProviderOrderDemoView providerId={provId} />;
 }
-

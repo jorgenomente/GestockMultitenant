@@ -135,6 +135,46 @@
   .sales-import-highlight[data-disabled="true"]::before {
     opacity: 0.25;
   }
+
+  .status-toggle-icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .status-toggle-icon svg {
+    position: absolute;
+    inset: 0;
+  }
+
+  .status-toggle-circle,
+  .status-toggle-check {
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease-out;
+  }
+
+  .status-toggle-circle {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .status-toggle-circle--hidden {
+    opacity: 0;
+    transform: scale(0.65);
+  }
+
+  .status-toggle-check {
+    opacity: 0;
+    transform: scale(0.6) rotate(-8deg);
+  }
+
+  .status-toggle-check--visible {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+    animation: status-toggle-pop 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
 }
 
 @keyframes client-orders-trace {
@@ -155,6 +195,18 @@
   }
 }
 
+@keyframes status-toggle-pop {
+  0% {
+    transform: scale(0.55) rotate(-10deg);
+  }
+  60% {
+    transform: scale(1.15) rotate(3deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .client-orders-attention::before {
     animation: none;
@@ -172,5 +224,38 @@
       transparent 0deg 340deg,
       rgba(59, 130, 246, 0.8) 340deg 360deg
     );
+  }
+
+  .week-select-gradient {
+    animation: none;
+    background: linear-gradient(120deg, #eef9f4, #ffffff, #e0f4ed);
+    background-position: 50% 50%;
+  }
+
+  .status-toggle-circle,
+  .status-toggle-check {
+    transition: none;
+  }
+
+  .status-toggle-check--visible {
+    animation: none;
+  }
+}
+
+.week-select-gradient {
+  background: linear-gradient(120deg, #dff5ed, #ffffff 45%, #e8faf3);
+  background-size: 200% 200%;
+  animation: week-select-gradient-move 6s ease-in-out infinite;
+}
+
+@keyframes week-select-gradient-move {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
   }
 }

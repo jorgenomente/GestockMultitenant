@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { X, Edit2, Save, Trash2, Search, MessageCircle } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 
 /* ========= Schema ========= */
 const ClientSchema = z
@@ -296,6 +297,9 @@ function OrderStatusBadge({ status }: { status: ClientOrder["status"] }) {
 export default function ClientsPage() {
   const sb = React.useMemo<SupabaseClient>(() => getSupabaseBrowserClient(), []);
   const { currentBranch, tenantId, loading: branchLoading, error: branchError } = useBranch();
+  const searchParams = useSearchParams();
+  const urlClientId = searchParams?.get("client") ?? null;
+  const autoFilterClientRef = React.useRef<string | null>(null);
 
   const branchId = currentBranch?.id ?? null;
 
@@ -575,6 +579,20 @@ export default function ClientsPage() {
     const card = document.getElementById(`client-card-${selectedOpenClientId}`);
     card?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [selectedOpenClientId]);
+
+  React.useEffect(() => {
+    if (!urlClientId) {
+      autoFilterClientRef.current = null;
+      return;
+    }
+    setSelectedOpenClientId((prev) => (prev === urlClientId ? prev : urlClientId));
+    if (autoFilterClientRef.current === urlClientId) return;
+    const target = clients.find((c) => c.id === urlClientId);
+    if (!target) return;
+    setQ((prev) => (prev === target.name ? prev : target.name));
+    setSearchSource("search");
+    autoFilterClientRef.current = urlClientId;
+  }, [urlClientId, clients]);
 
   /* 🗑️ Borrar cliente */
   async function deleteClient(clientId: string) {

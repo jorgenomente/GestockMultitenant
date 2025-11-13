@@ -28,7 +28,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Loader2, X } from "lucide-react";
+import { CheckCircle2, Loader2, X } from "lucide-react";
 
 type StatusState = "idle" | "saving" | "success" | "error";
 
@@ -77,6 +77,14 @@ const FIELD_METADATA: Record<keyof BranchThemeFormValues, { label: string; descr
     label: "Pedido (cantidad)",
     description: "Inputs y botones para sumar/restar en la tarjeta de pedido",
   },
+  clientOrderPending: {
+    label: "Check pedido",
+    description: "Botón azul de “Pedido” en la vista de proveedores",
+  },
+  clientOrderSaved: {
+    label: "Check guardado",
+    description: "Botón verde de “Guardado” en la vista de proveedores",
+  },
   nav: {
     label: "Navegación",
     description: "Sidebar, BottomNav y menús principales",
@@ -100,7 +108,7 @@ type FieldSection = {
 const FIELD_SECTIONS: FieldSection[] = [
   {
     title: "Acciones y estados",
-    fields: ["primary", "secondary", "accent", "success", "alert", "orderQty"],
+    fields: ["primary", "secondary", "accent", "success", "alert", "orderQty", "clientOrderPending", "clientOrderSaved"],
   },
   {
     title: "Superficies",
@@ -138,6 +146,8 @@ const COLOR_PREVIEW_GROUPS: ColorPreviewGroup[] = [
       { field: "success", label: "Éxito", usage: "Mensajes positivos", cssVar: "--success" },
       { field: "alert", label: "Alerta", usage: "Advertencias", cssVar: "--destructive" },
       { field: "orderQty", label: "Cantidad pedido", usage: "Stepers de pedido", type: "surface" },
+      { field: "clientOrderPending", label: "Check pedido", usage: "Botón azul en Proveedores", cssVar: "--client-order-pending" },
+      { field: "clientOrderSaved", label: "Check guardado", usage: "Botón verde en Proveedores", cssVar: "--client-order-saved" },
     ],
   },
   {
@@ -229,6 +239,8 @@ function generateRandomTheme(): BranchThemeFormValues {
   const cardHue = baseHue + (isDark ? 212 : 190);
   const navHue = baseHue + (isDark ? 188 : 210);
   const orderQtyHue = alertHue - 18;
+  const clientOrderPendingHue = accentHue + 20;
+  const clientOrderSavedHue = successHue;
 
   const background = hslToHex(backgroundHue, isDark ? 0.22 : 0.16, isDark ? 0.13 : 0.93);
   const surface = hslToHex(surfaceHue, isDark ? 0.24 : 0.18, isDark ? 0.19 : 0.88);
@@ -251,6 +263,8 @@ function generateRandomTheme(): BranchThemeFormValues {
     cardForeground: textPrimary,
     inputBackground,
     orderQty: hslToHex(orderQtyHue, isDark ? 0.64 : 0.58, isDark ? 0.54 : 0.46),
+    clientOrderPending: hslToHex(clientOrderPendingHue, 0.65, isDark ? 0.5 : 0.45),
+    clientOrderSaved: hslToHex(clientOrderSavedHue, 0.6, isDark ? 0.48 : 0.44),
     nav,
     textPrimary,
     textSecondary,
@@ -1056,6 +1070,34 @@ export default function ConfiguracionPageClient() {
                 </button>
               </div>
               <p className="mt-2 text-[11px] text-muted-foreground">Stepper del pedido y contadores rápidos.</p>
+            </div>
+          );
+        case "clientOrderPending":
+          return (
+            <div className="space-y-2">
+              <button
+                type="button"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold shadow-sm"
+                style={{ background: value, borderColor: value, color: "#FFFFFF" }}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                Pedido
+              </button>
+              <p className="text-[11px] text-muted-foreground">Check azul del estado “Pedido” en Proveedores.</p>
+            </div>
+          );
+        case "clientOrderSaved":
+          return (
+            <div className="space-y-2">
+              <button
+                type="button"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold shadow-sm"
+                style={{ background: value, borderColor: value, color: "#FFFFFF" }}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                Guardado
+              </button>
+              <p className="text-[11px] text-muted-foreground">Check verde para los ítems guardados.</p>
             </div>
           );
         case "background":

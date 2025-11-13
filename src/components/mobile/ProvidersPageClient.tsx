@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { useBranch } from "@/components/branch/BranchProvider";
 import type { PostgrestError } from "@supabase/supabase-js";
+import { cn } from "@/lib/utils";
 
 /* UI */
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -23,13 +24,14 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 /* Icons */
 import {
   Plus, Trash2, Pencil, CalendarDays, Truck, UserRound, CheckCircle2, Clock3,
-  Banknote, Landmark, History as HistoryIcon
+  Banknote, Landmark, Search, ChevronDown, Circle,
 } from "lucide-react";
 
 /* =================== Props =================== */
@@ -115,6 +117,8 @@ type ClientOrderItemRow = {
 type ClientRow = { id: string; name: string | null };
 type PendingClientItem = {
   id: string;
+  orderId: string;
+  clientId: string;
   article: string;
   provider: string;
   clientName: string;
@@ -122,6 +126,7 @@ type PendingClientItem = {
   createdAt: string;
   ordered: boolean;
   orderedAt: string | null;
+  done: boolean;
 };
 
 /** Payload genérico para realtime (evitamos imports del SDK para tipos) */
@@ -229,7 +234,19 @@ const ORDER_TABLE_CANDIDATES = ["orders", "provider_orders", "branch_orders"] as
 const ITEM_TABLE_CANDIDATES = ["order_items", "provider_order_items", "branch_order_items"] as const;
 const CLIENT_ORDER_ACTIVE_STATUSES: readonly ClientOrderStatus[] = ["pendiente", "guardado"];
 
+const describeUnknownError = (error: unknown) => {
+  if (!error) return "Error desconocido.";
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
 const comparePendingItems = (a: PendingClientItem, b: PendingClientItem) => {
+  if (a.done !== b.done) return a.done ? 1 : -1;
   if (a.ordered !== b.ordered) return a.ordered ? 1 : -1;
   const provDiff = a.provider.localeCompare(b.provider, "es", { sensitivity: "base" });
   if (provDiff !== 0) return provDiff;
@@ -237,6 +254,20 @@ const comparePendingItems = (a: PendingClientItem, b: PendingClientItem) => {
 };
 
 const sortPendingItems = (list: PendingClientItem[]) => [...list].sort(comparePendingItems);
+
+const groupClientItemsByProvider = (items: PendingClientItem[]) => {
+  if (!items.length) return [];
+  const map = new Map<string, PendingClientItem[]>();
+  items.forEach((item) => {
+    const key = item.provider || "Sin proveedor";
+    const bucket = map.get(key);
+    if (bucket) bucket.push(item);
+    else map.set(key, [item]);
+  });
+  return Array.from(map.entries())
+    .map(([provider, groupItems]) => ({ provider, items: groupItems.sort(comparePendingItems) }))
+    .sort((a, b) => a.provider.localeCompare(b.provider, "es", { sensitivity: "base" }));
+};
 
 const BRANCH_SCOPED_TABLES = new Set([
   "providers",
@@ -295,7 +326,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null && !Array.isArray(value);
 }
 
+type AlertHandler = (message: string, copyToClipboard: boolean) => Promise<void>;
+let alertHandler: AlertHandler | null = null;
+
 async function showAlert(message: string, copyToClipboard = false) {
+  if (alertHandler) {
+    await alertHandler(message, copyToClipboard);
+    return;
+  }
   if (copyToClipboard && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(message);
@@ -425,10 +463,14 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const [loading, setLoading] = React.useState(true);
   const [query, setQuery] = React.useState("");
   const [tab, setTab] = React.useState<ViewTab>("TODOS");
+  const [responsibleFilter, setResponsibleFilter] = React.useState<string | null>(null);
+  const [responsibleFilterOpen, setResponsibleFilterOpen] = React.useState(false);
   const [massAddSearch, setMassAddSearch] = React.useState<Record<"QUINCENAL" | "MENSUAL", string>>({
     QUINCENAL: "",
     MENSUAL: "",
   });
+  const [addProvidersOpen, setAddProvidersOpen] = React.useState(false);
+  const [addProvidersTab, setAddProvidersTab] = React.useState<"QUINCENAL" | "MENSUAL">("QUINCENAL");
 
   const [, setSummaries] = React.useState<Record<string, OrderSummary>>({});
 
@@ -440,6 +482,9 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const [clientItemsLoading, setClientItemsLoading] = React.useState(false);
   const [clientItemsError, setClientItemsError] = React.useState<string | null>(null);
   const [clientItemsUpdating, setClientItemsUpdating] = React.useState<Set<string>>(new Set());
+  const [clientOrdersOpen, setClientOrdersOpen] = React.useState(false);
+  const [clientCompletedOpen, setClientCompletedOpen] = React.useState(false);
+  const [ownerToolsOpen, setOwnerToolsOpen] = React.useState(false);
 
   const [weekStates, setWeekStates] = React.useState<Record<string, Status>>({});
   const [weekSummaries, setWeekSummaries] =
@@ -484,9 +529,14 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const [restoringBackup, setRestoringBackup] = React.useState(false);
   const [loadingBackupMeta, setLoadingBackupMeta] = React.useState(false);
   const [backupMeta, setBackupMeta] = React.useState<{ updatedAt: string | null } | null>(null);
-  const [clientOrdersOpen, setClientOrdersOpen] = React.useState(false);
   const [ownerActionsOpen, setOwnerActionsOpen] = React.useState(false);
   const isOwner = role === "owner";
+  const [alertDialog, setAlertDialog] = React.useState<{ open: boolean; message: string; copy: boolean }>({
+    open: false,
+    message: "",
+    copy: false,
+  });
+  const alertResolverRef = React.useRef<(() => void) | null>(null);
 
   const loadBackupInfo = React.useCallback(async () => {
     if (!tenantId || !branchId) {
@@ -525,25 +575,44 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
       return false;
     }
     const key = backupKeyForScope(tenantId, branchId);
+    let payloadSize: number | null = null;
     try {
-      const { data, error } = await supabase
+      payloadSize = (() => {
+        try {
+          return JSON.stringify(payload).length;
+        } catch {
+          return null;
+        }
+      })();
+      const updateQuery = supabase
         .from("app_settings")
-        .upsert({
-          key,
-          tenant_id: tenantId,
-          branch_id: branchId,
-          value: JSON.stringify(payload),
-        }, { onConflict: "key" })
-        .select("updated_at")
-        .maybeSingle();
-      if (error) throw error;
-      const row = (data ?? null) as { updated_at: string | null } | null;
-      const updatedAt = row?.updated_at ?? null;
+        .update({ value: payload })
+        .eq("tenant_id", tenantId)
+        .eq("branch_id", branchId)
+        .eq("key", key)
+        .select("updated_at");
+      const { data: updateRows, error: updateError } = await updateQuery;
+      if (updateError) throw updateError;
+      let updatedAt: string | null = updateRows?.[0]?.updated_at ?? null;
+      if (!updateRows?.length) {
+        const insertQuery = supabase
+          .from("app_settings")
+          .insert({
+            key,
+            tenant_id: tenantId,
+            branch_id: branchId,
+            value: payload,
+          })
+          .select("updated_at");
+        const { data: insertRows, error: insertError } = await insertQuery;
+        if (insertError) throw insertError;
+        updatedAt = insertRows?.[0]?.updated_at ?? null;
+      }
       setBackupMeta({ updatedAt });
       return true;
     } catch (err) {
-      console.error("save backup error", err);
-      const message = err instanceof Error ? err.message : String(err);
+      console.error("save backup error", { err, tenantId, branchId, key, payloadSize });
+      const message = describeUnknownError(err);
       await showAlert(`No se pudo guardar la copia de seguridad.\n${message}`);
       return false;
     }
@@ -591,6 +660,43 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
       return null;
     }
   }, [branchId, supabase, tenantId]);
+
+  const upsertAppSettingsChunk = React.useCallback(async (rows: Record<string, unknown>[]) => {
+    for (const row of rows) {
+      const key = typeof row.key === "string" ? row.key : "";
+      if (!key) {
+        return {
+          name: "PostgrestError",
+          code: "400",
+          details: "",
+          hint: "",
+          message: "Fila app_settings sin clave",
+        } satisfies PostgrestError;
+      }
+      const tenantValue = typeof row.tenant_id === "string" && row.tenant_id ? row.tenant_id : null;
+      const branchValue = typeof row.branch_id === "string" && row.branch_id ? row.branch_id : null;
+      const payloadValue = (row.value ?? null) as unknown;
+      let updateQuery = supabase
+        .from("app_settings")
+        .update({ value: payloadValue })
+        .eq("key", key);
+      updateQuery = tenantValue ? updateQuery.eq("tenant_id", tenantValue) : updateQuery.is("tenant_id", null);
+      updateQuery = branchValue ? updateQuery.eq("branch_id", branchValue) : updateQuery.is("branch_id", null);
+      const { data: updateRows, error: updateError } = await updateQuery.select("id");
+      if (updateError) return updateError;
+      if (updateRows?.length) continue;
+      const insertPayload: Record<string, unknown> = {
+        key,
+        tenant_id: tenantValue,
+        branch_id: branchValue,
+        value: payloadValue,
+      };
+      if (typeof row.id === "string" && row.id) insertPayload.id = row.id;
+      const { error: insertError } = await supabase.from("app_settings").insert(insertPayload);
+      if (insertError) return insertError;
+    }
+    return null;
+  }, [supabase]);
 
   React.useEffect(() => {
     void loadBackupInfo();
@@ -858,7 +964,6 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
         .select("id, order_id, article, done, provider, ordered, ordered_at, created_at")
         .eq("tenant_id", tenantId)
         .eq("branch_id", branchId)
-        .eq("done", false)
         .in("order_id", orderIds)
         .order("created_at", { ascending: false });
       if (itemsError) throw itemsError;
@@ -891,6 +996,8 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
           const clientName = clientNameMap[order.client_id] ?? "Cliente sin nombre";
           return {
             id: item.id,
+            orderId: item.order_id,
+            clientId: order.client_id,
             article: item.article,
             provider: providerLabel,
             clientName,
@@ -898,6 +1005,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
             createdAt: item.created_at,
             ordered: item.ordered ?? false,
             orderedAt: item.ordered_at ?? null,
+            done: item.done ?? false,
           } satisfies PendingClientItem;
         })
         .filter(Boolean) as PendingClientItem[];
@@ -916,11 +1024,15 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     void fetchClientPendingItems();
   }, [fetchClientPendingItems]);
 
-  const setClientItemUpdating = React.useCallback((itemId: string, next: boolean) => {
+  const setClientItemUpdating = React.useCallback((ids: string | string[], next: boolean) => {
+    const targetIds = Array.isArray(ids) ? ids : [ids];
+    if (!targetIds.length) return;
     setClientItemsUpdating((prev) => {
       const copy = new Set(prev);
-      if (next) copy.add(itemId);
-      else copy.delete(itemId);
+      targetIds.forEach((id) => {
+        if (next) copy.add(id);
+        else copy.delete(id);
+      });
       return copy;
     });
   }, []);
@@ -944,6 +1056,30 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     } catch (err) {
       console.error("toggle client item ordered error", err);
       await showAlert("No pudimos actualizar el estado del ítem. Reintentá más tarde.");
+    } finally {
+      setClientItemUpdating(itemId, false);
+    }
+  }, [setClientItemUpdating, supabase]);
+
+  const toggleClientItemSaved = React.useCallback(async (itemId: string, nextDone: boolean) => {
+    setClientItemUpdating(itemId, true);
+    try {
+      const { error } = await supabase
+        .from("client_order_items")
+        .update({
+          done: nextDone,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", itemId);
+      if (error) throw error;
+      setClientPendingItems((prev) =>
+        sortPendingItems(
+          prev.map((item) => (item.id === itemId ? { ...item, done: nextDone } : item))
+        )
+      );
+    } catch (err) {
+      console.error("toggle client item done error", err);
+      await showAlert("No pudimos actualizar este ítem. Reintentá más tarde.");
     } finally {
       setClientItemUpdating(itemId, false);
     }
@@ -1054,6 +1190,12 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     return providers.filter(p => (p.freq === "SEMANAL") || weekProviders.has(p.id));
   }, [providers, weekProviders]);
 
+  React.useEffect(() => {
+    if (responsibleFilter && !responsibleOptions.includes(responsibleFilter)) {
+      setResponsibleFilter(null);
+    }
+  }, [responsibleFilter, responsibleOptions]);
+
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     let base = visibleProviders;
@@ -1062,6 +1204,9 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     } else if (tab === "SEMANAL" || tab === "QUINCENAL" || tab === "MENSUAL") {
       base = base.filter((p) => p.freq === tab);
     }
+    if (responsibleFilter) {
+      base = base.filter((p) => (p.responsible ?? "").trim() === responsibleFilter);
+    }
     const byQ = q
       ? base.filter((p) =>
           p.name.toLowerCase().includes(q) ||
@@ -1069,7 +1214,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
         )
       : base;
     return byQ.sort(byName);
-  }, [visibleProviders, tab, query, statusFor]);
+  }, [visibleProviders, tab, query, statusFor, responsibleFilter]);
 
   const groupedByDay = React.useMemo(() => {
     const map = new Map<number, Provider[]>();
@@ -1085,32 +1230,121 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     return map;
   }, [filtered]);
 
-  const clientPendingGroups = React.useMemo(() => {
-    if (!clientPendingItems.length) return [];
-    const map = new Map<string, PendingClientItem[]>();
-    clientPendingItems.forEach((item) => {
-      const key = item.provider || "Sin proveedor";
-      const bucket = map.get(key);
-      if (bucket) bucket.push(item);
-      else map.set(key, [item]);
-    });
-    return Array.from(map.entries())
-      .map(([provider, items]) => ({ provider, items: items.sort(comparePendingItems) }))
-      .sort((a, b) => a.provider.localeCompare(b.provider, "es", { sensitivity: "base" }));
-  }, [clientPendingItems]);
+  const activeClientItems = React.useMemo(
+    () => clientPendingItems.filter((item) => !(item.ordered && item.done)),
+    [clientPendingItems]
+  );
+  const completedClientItems = React.useMemo(
+    () => clientPendingItems.filter((item) => item.ordered && item.done),
+    [clientPendingItems]
+  );
+  const clientPendingGroups = React.useMemo(
+    () => groupClientItemsByProvider(activeClientItems),
+    [activeClientItems]
+  );
+  const clientCompletedGroups = React.useMemo(
+    () => groupClientItemsByProvider(completedClientItems),
+    [completedClientItems]
+  );
 
   const totalProviders = visibleProviders.length;
-  const totalPendingClientItems = clientPendingItems.length;
+  const totalPendingClientItems = activeClientItems.length;
+  const totalCompletedClientItems = completedClientItems.length;
   const todayIdx = new Date().getDay();
   const ownerActionsBusy = importingData || importingOrders || copyingData || downloadingOrders || downloadingExcel || downloadingJson || savingBackup || restoringBackup;
 
   React.useEffect(() => {
-    if (totalPendingClientItems > 0) setClientOrdersOpen(true);
-  }, [totalPendingClientItems]);
+    const handler: AlertHandler = (message, copyToClipboard) => new Promise<void>((resolve) => {
+      alertResolverRef.current = resolve;
+      setAlertDialog({ open: true, message, copy: copyToClipboard });
+    });
+    alertHandler = handler;
+    return () => {
+      if (alertHandler === handler) alertHandler = null;
+    };
+  }, []);
 
   React.useEffect(() => {
-    if (ownerActionsBusy) setOwnerActionsOpen(true);
+    if (totalPendingClientItems > 0 || totalCompletedClientItems > 0) setClientOrdersOpen(true);
+  }, [totalPendingClientItems, totalCompletedClientItems]);
+
+  React.useEffect(() => {
+    if (totalCompletedClientItems === 0) setClientCompletedOpen(false);
+  }, [totalCompletedClientItems]);
+
+  React.useEffect(() => {
+    if (ownerActionsBusy) {
+      setOwnerActionsOpen(true);
+      setOwnerToolsOpen(true);
+    }
   }, [ownerActionsBusy]);
+
+  const summaryCounts = React.useMemo(() => {
+    let pending = 0;
+    let fulfilled = 0;
+    for (const provider of visibleProviders) {
+      if (statusFor(provider.id) === "REALIZADO") fulfilled += 1;
+      else pending += 1;
+    }
+    const totals = Object.values(weekSummaries).reduce(
+      (acc, summary) => {
+        acc.amount += summary?.total ?? 0;
+        acc.items += summary?.items ?? 0;
+        return acc;
+      },
+      { amount: 0, items: 0 }
+    );
+    return {
+      pending,
+      fulfilled,
+      amount: totals.amount,
+      items: totals.items,
+    };
+  }, [visibleProviders, statusFor, weekSummaries]);
+
+  const filterOptions: Array<{ value: ViewTab; label: string }> = React.useMemo(
+    () => [
+      { value: "TODOS", label: "Todos" },
+      { value: "PENDIENTES", label: "Pendientes" },
+    ],
+    []
+  );
+
+  const responsibleOptions = React.useMemo(() => {
+    const seen = new Set<string>();
+    visibleProviders.forEach((provider) => {
+      const label = (provider.responsible ?? "").trim();
+      if (label) seen.add(label);
+    });
+    return Array.from(seen).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+  }, [visibleProviders]);
+
+  const frequencyLists = React.useMemo(() => {
+    const build = (freq: "QUINCENAL" | "MENSUAL") => {
+      const allCandidates = providers.filter((p) => p.freq === freq).sort(byName);
+      const totalCandidates = allCandidates.length;
+      const addedCount = allCandidates.filter((p) => weekProviders.has(p.id)).length;
+      const searchRaw = massAddSearch[freq] ?? "";
+      const search = searchRaw.trim().toLowerCase();
+      const filteredCandidates = search
+        ? allCandidates.filter((p) =>
+            p.name.toLowerCase().includes(search) ||
+            (p.responsible ?? "").toLowerCase().includes(search)
+          )
+        : allCandidates;
+      return {
+        freq,
+        totalCandidates,
+        addedCount,
+        searchRaw,
+        filteredCandidates,
+      };
+    };
+    return {
+      QUINCENAL: build("QUINCENAL"),
+      MENSUAL: build("MENSUAL"),
+    };
+  }, [providers, weekProviders, massAddSearch]);
 
   const handleImportClick = React.useCallback(() => {
     importInputRef.current?.click();
@@ -1119,6 +1353,26 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const handleOrdersImportClick = React.useCallback(() => {
     ordersImportInputRef.current?.click();
   }, []);
+
+  const handleCloseAlert = React.useCallback(() => {
+    setAlertDialog((prev) => ({ ...prev, open: false }));
+    if (alertResolverRef.current) {
+      alertResolverRef.current();
+      alertResolverRef.current = null;
+    }
+  }, []);
+
+  const handleCopyAlert = React.useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      console.warn("API de portapapeles no disponible");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(alertDialog.message);
+    } catch (error) {
+      console.warn("No se pudo copiar el mensaje", error);
+    }
+  }, [alertDialog.message]);
 
   const clearGestockCaches = React.useCallback((tenant?: string | null, branch?: string | null) => {
   if (typeof window === "undefined") return;
@@ -1621,7 +1875,9 @@ const applyProvidersPayload = React.useCallback(async (
     for (let offset = 0; offset < rows.length; offset += IMPORT_CHUNK_SIZE) {
       const chunk = rows.slice(offset, offset + IMPORT_CHUNK_SIZE);
       let error: PostgrestError | null = null;
-      if (cfg.conflict) {
+      if (cfg.key === "app_settings") {
+        error = await upsertAppSettingsChunk(chunk);
+      } else if (cfg.conflict) {
         ({ error } = await supabase.from(cfg.table).upsert(chunk, { onConflict: cfg.conflict }));
       } else {
         ({ error } = await supabase.from(cfg.table).upsert(chunk));
@@ -1646,7 +1902,7 @@ const applyProvidersPayload = React.useCallback(async (
   }
 
   return errors.length === 0;
-}, [branchId, clearGestockCaches, router, supabase, tenantId]);
+  }, [branchId, clearGestockCaches, router, supabase, tenantId, upsertAppSettingsChunk]);
 
 const applyOrdersPayload = React.useCallback(async (
   payload: OrdersExportPayload,
@@ -2824,7 +3080,7 @@ const buildExportPayload = React.useCallback(async (
         }
         console.error("Link provider to week error:", linkError);
         alert(
-          'El proveedor se creó pero no se pudo sumar a la semana actual. Podés agregarlo manualmente desde "Agregar".\n' +
+          'El proveedor se creó pero no se pudo sumar a la semana actual. Podés agregarlo manualmente desde "Agregar proveedor".\n' +
             (linkError.message ?? ""),
         );
         setWeekProviders((prev) => {
@@ -3025,8 +3281,204 @@ const buildExportPayload = React.useCallback(async (
     setWeekProviders(next);
   }
 
+  const renderClientItemRow = (item: PendingClientItem) => {
+    const isUpdating = clientItemsUpdating.has(item.id);
+    const isGuardado = item.done;
+    const clientHref = branch
+      ? `/t/${slug}/b/${branch}/clients?client=${item.clientId}`
+      : `/t/${slug}/clients?client=${item.clientId}`;
+    const pendingButtonStyle: React.CSSProperties = item.ordered
+      ? {
+          background: "var(--client-order-pending)",
+          borderColor: "var(--client-order-pending)",
+          color: "var(--client-order-pending-foreground, #FFFFFF)",
+        }
+      : {
+          background: "#FFFFFF",
+          borderColor: "var(--client-order-pending)",
+          color: "var(--client-order-pending)",
+        };
+    const savedButtonStyle: React.CSSProperties = isGuardado
+      ? {
+          background: "var(--client-order-saved)",
+          borderColor: "var(--client-order-saved)",
+          color: "var(--client-order-saved-foreground, #FFFFFF)",
+        }
+      : {
+          background: "#FFFFFF",
+          borderColor: "var(--client-order-saved)",
+          color: "var(--client-order-saved)",
+        };
+    const pendingChipStyle: React.CSSProperties = {
+      background: "var(--client-order-pending-surface)",
+      borderColor: "var(--client-order-pending)",
+      color: "var(--client-order-pending)",
+    };
+    const savedChipStyle: React.CSSProperties = {
+      background: "var(--client-order-saved-surface)",
+      borderColor: "var(--client-order-saved)",
+      color: "var(--client-order-saved)",
+    };
+    const renderStatusIcon = (active: boolean) => (
+      <span className="status-toggle-icon" aria-hidden>
+        <Circle className={cn("status-toggle-circle", active && "status-toggle-circle--hidden")} />
+        <CheckCircle2 className={cn("status-toggle-check", active && "status-toggle-check--visible")} />
+      </span>
+    );
+    return (
+      <li
+        key={item.id}
+        className="flex flex-col gap-2 rounded-xl border border-white/60 bg-white p-3 shadow-sm sm:flex-row sm:items-center"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p
+              className={`truncate text-sm font-medium ${isGuardado ? "text-muted-foreground line-through" : "text-[#0E2E2B]"}`}
+            >
+              {item.article}
+            </p>
+            <Badge variant="outline" className="h-5 px-2 text-[10px] capitalize">
+              {item.orderStatus}
+            </Badge>
+            {item.ordered && (
+              <Badge variant="outline" className="h-5 border px-2 text-[10px] uppercase" style={pendingChipStyle}>
+                Pedido
+              </Badge>
+            )}
+            {isGuardado && (
+              <Badge variant="outline" className="h-5 border px-2 text-[10px] uppercase" style={savedChipStyle}>
+                Guardado
+              </Badge>
+            )}
+          </div>
+          <p className="truncate text-[11px] text-muted-foreground">
+            Cliente:{" "}
+            <button
+              type="button"
+              className="font-semibold text-[#1F7F62] underline decoration-dotted hover:text-[#2FB6A0]"
+              onClick={() => { void router.push(clientHref); }}
+            >
+              {item.clientName}
+            </button>
+          </p>
+          {item.ordered && (
+            <p className="text-[10px] text-muted-foreground">
+              Pedido el {formatShortDateTime(item.orderedAt)}
+            </p>
+          )}
+        </div>
+        <div className="flex w-full flex-col gap-2 sm:w-[260px]">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              aria-pressed={item.ordered}
+              className="flex-1 h-8 rounded-full border px-3 text-[11px] font-semibold transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-ring disabled:opacity-70"
+              style={pendingButtonStyle}
+              disabled={isUpdating}
+              onClick={() => { void toggleClientItemOrdered(item.id, !item.ordered); }}
+            >
+              <div className="flex items-center justify-center gap-1">
+                {renderStatusIcon(item.ordered)}
+                <span>Pedido</span>
+              </div>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              aria-pressed={isGuardado}
+              className="flex-1 h-8 rounded-full border px-3 text-[11px] font-semibold transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-ring disabled:opacity-70"
+              style={savedButtonStyle}
+              disabled={isUpdating}
+              onClick={() => { void toggleClientItemSaved(item.id, !isGuardado); }}
+            >
+              <div className="flex items-center justify-center gap-1">
+                {renderStatusIcon(isGuardado)}
+                <span>Guardado</span>
+              </div>
+            </Button>
+          </div>
+        </div>
+      </li>
+    );
+  };
+
   /* =================== Render =================== */
   const headerRange = selectedWeek ? formatRange(selectedWeek.week_start) : "Semana";
+
+  const renderFrequencyList = (freq: "QUINCENAL" | "MENSUAL") => {
+    const panel = frequencyLists[freq];
+    if (!panel) return null;
+    const freqLabel = freq === "QUINCENAL" ? "quincenales" : "mensuales";
+    const emptyMessage = panel.totalCandidates === 0
+      ? `No hay proveedores ${freqLabel} registrados.`
+      : `Sin resultados para "${panel.searchRaw.trim()}".`;
+    return (
+      <>
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <Badge variant="secondary" className="rounded-full px-3 text-[11px]">
+            {panel.addedCount}/{panel.totalCandidates}
+          </Badge>
+          <span>Agregados a {headerRange}</span>
+        </div>
+        <Input
+          placeholder="Buscar proveedor"
+          value={panel.searchRaw}
+          onChange={(e) =>
+            setMassAddSearch((prev) => ({ ...prev, [freq]: e.target.value }))
+          }
+          className="mt-4 h-11 rounded-2xl border-[#E0E8E3] bg-[#F6F7F4] text-sm"
+        />
+        {panel.filteredCandidates.length > 0 ? (
+          <div className="mt-4 grid gap-3">
+            {panel.filteredCandidates.map((p) => {
+              const included = weekProviders.has(p.id);
+              const lastISO = lastAddedByProvider[p.id];
+              const last = lastISO ? new Date(lastISO) : null;
+              return (
+                <div
+                  key={p.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E0E8E3] bg-[#FBFCFA] px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-[#0E2E2B]">{p.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Última vez agregado: {last ? last.toLocaleDateString("es-AR") : "—"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {included ? (
+                      <>
+                        <Badge variant="secondary" className="rounded-full px-3 text-[11px]">Agregado</Badge>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-full px-4"
+                          onClick={() => removeProviderFromCurrentWeek(p.id)}
+                        >
+                          Quitar
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        size="sm"
+                        className="rounded-full bg-[#0E2E2B] px-4 text-white hover:bg-[#132f2c]"
+                        onClick={() => addProviderToCurrentWeek(p.id)}
+                      >
+                        Agregar
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="mt-4 text-center text-xs text-muted-foreground">{emptyMessage}</p>
+        )}
+      </>
+    );
+  };
 
   return (
     <>
@@ -3074,47 +3526,138 @@ const buildExportPayload = React.useCallback(async (
         </DialogContent>
       </Dialog>
 
-      <main className="mx-auto w-full max-w-xl space-y-4 px-4 pb-36 pt-6 sm:max-w-2xl">
-      {/* Header con semana */}
-      <div className="sticky top-0 z-20 space-y-3 rounded-2xl border border-border/60 bg-card/95 px-4 py-3 shadow-[var(--shadow-card)] backdrop-blur supports-[backdrop-filter]:bg-card/80">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-foreground">Proveedores</h1>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <HistoryIcon className="h-3.5 w-3.5" />
-              <span>{headerRange}</span>
+      <AlertDialog open={alertDialog.open} onOpenChange={(open) => { if (!open) handleCloseAlert(); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Notificación</AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-wrap text-sm text-muted-foreground">
+              {alertDialog.message}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            {alertDialog.copy && (
+              <Button variant="outline" onClick={handleCopyAlert}>
+                Copiar
+              </Button>
+            )}
+            <AlertDialogAction onClick={handleCloseAlert}>Aceptar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <main className="min-h-screen bg-[#F5F6F2] pb-20">
+        <div className="mx-auto w-full max-w-5xl space-y-5 px-4 pt-6 lg:px-0">
+          {isOwner && (
+            <>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={onImportFileChange}
+              />
+              <input
+                ref={ordersImportInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={onImportOrdersFileChange}
+              />
+            </>
+          )}
+
+      {/* Encabezado principal */}
+      <section className="rounded-[32px] border border-[#E0E8E3] bg-white p-5 shadow-[0_15px_60px_rgba(8,24,21,0.08)]">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-3 pr-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0E2E2B] text-lg font-semibold text-white">
+              GS
             </div>
           </div>
-
-          {/* Selector de semana */}
-          <Select
-            value={selectedWeek?.id ?? ""}
-            onValueChange={(id) => {
-              const wk = weeks.find(w => w.id === id) || null;
-              setSelectedWeek(wk);
-              if (wk) saveSelectedWeek(weekCacheKey, wk.id);
-            }}
-          >
-            <SelectTrigger className="h-9 w-[200px] rounded-xl text-xs">
-              <SelectValue placeholder="Elegir semana" />
-            </SelectTrigger>
-            <SelectContent>
-              {weeks.map(w => (
-                <SelectItem key={w.id} value={w.id}>
-                  {formatRange(w.week_start)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              <div className="flex flex-1 justify-center">
+                <Select
+                  value={selectedWeek?.id ?? ""}
+                  onValueChange={(id) => {
+                    const wk = weeks.find((w) => w.id === id) || null;
+                    setSelectedWeek(wk);
+                    if (wk) saveSelectedWeek(weekCacheKey, wk.id);
+                  }}
+                >
+                  <SelectTrigger className="week-select-gradient h-11 w-full max-w-xs rounded-2xl border-[#E0E8E3] text-sm font-semibold text-[#0E2E2B] shadow-sm">
+                    <SelectValue placeholder="Elegir semana" />
+                  </SelectTrigger>
+                  <SelectContent align="center">
+                    {weeks.map((w) => (
+                      <SelectItem key={w.id} value={w.id}>
+                        {formatRange(w.week_start)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  className="rounded-full bg-[#2FB6A0] px-4 font-semibold text-white hover:bg-[#2AA58F]"
+                  onClick={() => setConfirmNewWeek(true)}
+                >
+                  + Nueva semana
+                </Button>
+                {isOwner && (
+                  <Popover open={ownerActionsOpen} onOpenChange={setOwnerActionsOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className="flex items-center gap-2 rounded-full border-[#D3DAD5] px-4 text-sm font-semibold text-[#0E2E2B]"
+                      >
+                        Acciones
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className="w-48 space-y-2 rounded-2xl border border-[#D3DAD5] bg-white p-3 shadow-lg"
+                    >
+                      <Button
+                        variant="ghost"
+                        className="w-full justify-between rounded-xl px-3 py-2 text-sm font-semibold text-[#0E2E2B]"
+                        onClick={() => {
+                          setOwnerActionsOpen(false);
+                          handleImportClick();
+                        }}
+                        disabled={importingData}
+                      >
+                        {importingData ? "Importando…" : "Importar"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="w-full justify-between rounded-xl px-3 py-2 text-sm font-semibold text-[#0E2E2B]"
+                        onClick={() => {
+                          setOwnerActionsOpen(false);
+                          void handleSaveSnapshot();
+                        }}
+                        disabled={savingBackup}
+                      >
+                        {savingBackup ? "Guardando…" : "Guardar copia"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="w-full justify-between rounded-xl px-3 py-2 text-sm font-semibold text-[#0E2E2B]"
+                        onClick={() => {
+                          setOwnerActionsOpen(false);
+                          void handleRestoreSnapshot();
+                        }}
+                        disabled={restoringBackup}
+                      >
+                        {restoringBackup ? "Restaurando…" : "Restaurar"}
+                      </Button>
+                    </PopoverContent>
+                  </Popover>
+                )}
+          </div>
         </div>
+      </section>
 
-        {/* Total visible */}
-        <div className="flex items-center justify-between">
-          <Badge variant="muted" className="px-3">Total: {totalProviders}</Badge>
-        </div>
-      </div>
-
-      {/* Pedidos pendientes de clientes */}
+      {/* Pedidos de clientes */}
       <Accordion
         type="single"
         collapsible
@@ -3123,541 +3666,430 @@ const buildExportPayload = React.useCallback(async (
       >
         <AccordionItem
           value="client-orders"
-          className="client-orders-attention rounded-2xl border border-border/60 bg-card/95 shadow-[var(--shadow-card)]"
+          className="overflow-hidden rounded-[32px] border border-[#FFE1C0] bg-white shadow-[0_10px_40px_rgba(255,174,102,0.25)]"
         >
-          <AccordionTrigger className="px-4 py-4 hover:no-underline">
-            <div className="flex w-full items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-foreground">Pedidos pendientes de clientes</p>
-                <p className="text-xs text-muted-foreground">
-                  {clientItemsLoading
-                    ? "Consultando pedidos…"
-                    : totalPendingClientItems
-                      ? `${totalPendingClientItems} ${totalPendingClientItems === 1 ? "ítem" : "ítems"} pendientes de clientes`
-                      : "No hay pedidos pendientes de clientes."}
-                </p>
-              </div>
-              <Badge variant="muted" className="px-3 text-xs">
+          <AccordionTrigger className="px-5 py-5 hover:no-underline">
+                <div className="flex w-full flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-[#0E2E2B]">Pedidos pendientes de clientes</p>
+                    <p className="text-xs text-muted-foreground">
+                      {clientItemsLoading
+                        ? "Consultando pedidos…"
+                        : totalPendingClientItems
+                          ? `${totalPendingClientItems} ${totalPendingClientItems === 1 ? "ítem" : "ítems"} pendientes`
+                          : clientPendingItems.length
+                            ? "Todos los ítems están guardados."
+                            : "No hay pedidos pendientes."}
+                    </p>
+                  </div>
+              <Badge variant="outline" className="rounded-full border-none bg-[#FFEEDC] px-4 text-xs text-[#B56724]">
                 {clientItemsLoading
                   ? "···"
-                  : `${totalPendingClientItems} ${totalPendingClientItems === 1 ? "ítem" : "ítems"}`}
+                  : totalCompletedClientItems
+                    ? `${totalPendingClientItems} pend · ${totalCompletedClientItems} listos`
+                    : `${totalPendingClientItems} ${totalPendingClientItems === 1 ? "ítem" : "ítems"}`}
               </Badge>
-            </div>
+                </div>
           </AccordionTrigger>
-
-          <AccordionContent className="space-y-3 px-4 pb-4 pt-0">
+          <AccordionContent className="space-y-3 px-5 pb-5 pt-0">
             {clientItemsError ? (
               <p className="text-xs text-destructive">{clientItemsError}</p>
             ) : clientItemsLoading ? (
               <p className="text-xs text-muted-foreground">Cargando ítems de clientes…</p>
-            ) : clientPendingGroups.length === 0 ? (
+            ) : clientPendingItems.length === 0 ? (
               <p className="text-xs text-muted-foreground">No hay pedidos pendientes en este momento.</p>
             ) : (
               <div className="space-y-3">
-                {clientPendingGroups.map((group) => (
-                  <div
-                    key={group.provider}
-                    className="rounded-xl border border-border/60 bg-[color:var(--surface-overlay-soft)] px-3 py-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold uppercase text-muted-foreground">
-                        {group.provider === "Sin proveedor" ? group.provider : `@${group.provider}`}
-                      </span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {group.items.length} {group.items.length === 1 ? "ítem" : "ítems"}
-                      </span>
+                {clientPendingGroups.length === 0 ? (
+                  <p className="text-xs text-[#B56724]">
+                    Todos los ítems fueron marcados como guardados. Abrí el desplegable inferior para revisarlos.
+                  </p>
+                ) : (
+                  clientPendingGroups.map((group) => (
+                    <div
+                      key={group.provider}
+                      className="rounded-2xl border border-[#F2DAC2] bg-[#FFF6ED] px-3 py-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold uppercase text-[#B56724]">
+                          {group.provider}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {group.items.length} {group.items.length === 1 ? "ítem" : "ítems"}
+                        </span>
+                      </div>
+                      <ul className="mt-3 space-y-2">
+                        {group.items.map(renderClientItemRow)}
+                      </ul>
                     </div>
-                    <ul className="mt-2 space-y-2">
-                      {group.items.map((item) => (
-                        <li
-                          key={item.id}
-                          className="flex flex-col gap-2 rounded-lg border border-border/50 bg-card/80 p-2 sm:flex-row sm:items-center"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <p className="truncate text-sm font-medium text-foreground">{item.article}</p>
-                              <Badge variant="outline" className="h-5 px-2 text-[10px] capitalize">
-                                {item.orderStatus}
-                              </Badge>
-                              {item.ordered && (
-                                <Badge variant="secondary" className="h-5 px-2 text-[10px] uppercase tracking-wide">
-                                  Pedido
-                                </Badge>
-                              )}
-                            </div>
-                            <p className="truncate text-[11px] text-muted-foreground">Cliente: {item.clientName}</p>
-                            {item.ordered && (
-                              <p className="text-[10px] text-muted-foreground">
-                                Pedido el {formatShortDateTime(item.orderedAt)}
-                              </p>
-                            )}
-                          </div>
-                          <Button
-                            size="sm"
-                            variant={item.ordered ? "outline" : "default"}
-                            className="h-8 shrink-0 rounded-lg text-[11px]"
-                            disabled={clientItemsUpdating.has(item.id)}
-                            onClick={() => { void toggleClientItemOrdered(item.id, !item.ordered); }}
+                  ))
+                )}
+                {clientCompletedGroups.length > 0 && (
+                  <div className="rounded-2xl border border-dashed border-[#F2DAC2] bg-[#FFF8F1] px-3 py-3">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 rounded-2xl px-2 py-1 text-left"
+                      onClick={() => setClientCompletedOpen((prev) => !prev)}
+                      aria-expanded={clientCompletedOpen}
+                    >
+                      <div>
+                        <p className="text-sm font-semibold text-[#B56724]">Ítems listos</p>
+                        <p className="text-xs text-muted-foreground">
+                          {totalCompletedClientItems} {totalCompletedClientItems === 1 ? "ítem" : "ítems"}
+                        </p>
+                      </div>
+                      <ChevronDown
+                        className={`h-4 w-4 text-[#B56724] transition-transform ${clientCompletedOpen ? "rotate-180" : ""}`}
+                        aria-hidden
+                      />
+                    </button>
+                    {clientCompletedOpen && (
+                      <div className="mt-3 space-y-3">
+                        {clientCompletedGroups.map((group) => (
+                          <div
+                            key={`completed-${group.provider}`}
+                            className="rounded-2xl border border-[#EACFB2] bg-white px-3 py-3"
                           >
-                            {clientItemsUpdating.has(item.id)
-                              ? "Guardando..."
-                              : item.ordered
-                                ? "Marcar pendiente"
-                                : "Marcar pedido"}
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold uppercase text-[#B56724]">
+                                {group.provider}
+                              </span>
+                              <span className="text-[11px] text-muted-foreground">
+                                {group.items.length} {group.items.length === 1 ? "ítem" : "ítems"}
+                              </span>
+                            </div>
+                            <ul className="mt-3 space-y-2">
+                              {group.items.map(renderClientItemRow)}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
+                )}
               </div>
             )}
           </AccordionContent>
         </AccordionItem>
       </Accordion>
 
-      {isOwner && (
-        <Accordion
-          type="single"
-          collapsible
-          value={ownerActionsOpen ? "owner-actions" : undefined}
-          onValueChange={(value) => setOwnerActionsOpen(value === "owner-actions")}
-        >
-          <AccordionItem
-            value="owner-actions"
-            className="rounded-2xl border border-border/60 bg-card/95 shadow-[var(--shadow-card)]"
-          >
-            <AccordionTrigger className="px-4 py-4 hover:no-underline">
-              <div className="flex w-full items-center justify-between gap-3">
-                <div className="text-left">
-                  <p className="text-sm font-semibold text-foreground">Acciones</p>
-                  <p className="text-xs text-muted-foreground">
-                    {ownerActionsBusy
-                      ? "Hay procesos en curso."
-                      : "Importá, copiá y exportá datos de proveedores."}
-                  </p>
+      {/* Buscador y filtros */}
+      <section className="rounded-[32px] border border-[#E0E8E3] bg-white px-5 py-4 shadow-sm">
+        <div className="flex flex-col gap-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input
+              placeholder={loading ? "Cargando..." : "Buscar proveedor o responsable"}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="h-12 rounded-2xl border-[#E0E8E3] bg-[#F6F7F4] pl-10 text-sm text-[#0E2E2B]"
+              aria-label="Buscar proveedor"
+              disabled={loading}
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {filterOptions.map((option) => {
+              const isActive = tab === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setTab(option.value)}
+                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                    isActive ? "bg-[#0E2E2B] text-white shadow" : "border border-[#D3DAD5] text-[#0E2E2B]"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+            <Popover open={responsibleFilterOpen} onOpenChange={setResponsibleFilterOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                    responsibleFilter ? "bg-[#0E2E2B] text-white shadow" : "border border-[#D3DAD5] text-[#0E2E2B]"
+                  }`}
+                >
+                  <span className="max-w-[8rem] truncate text-left">
+                    {responsibleFilter ? `Responsable: ${responsibleFilter}` : "Responsable"}
+                  </span>
+                  <ChevronDown
+                    className={`h-4 w-4 transition ${responsibleFilterOpen ? "rotate-180" : ""}`}
+                    aria-hidden
+                  />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="w-64 rounded-2xl border border-[#E0E8E3] bg-white p-2 shadow-lg"
+              >
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    className="rounded-xl px-3 py-2 text-left text-sm font-semibold text-[#0E2E2B] hover:bg-[#F6F7F4]"
+                    onClick={() => {
+                      setResponsibleFilter(null);
+                      setResponsibleFilterOpen(false);
+                    }}
+                  >
+                    Todos los responsables
+                  </button>
+                  {responsibleOptions.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No hay responsables registrados.</p>
+                  ) : (
+                    responsibleOptions.map((name) => {
+                      const isSelected = responsibleFilter === name;
+                      return (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => {
+                            setResponsibleFilter(name);
+                            setResponsibleFilterOpen(false);
+                          }}
+                          className={`rounded-xl px-3 py-2 text-left text-sm transition ${
+                            isSelected ? "bg-[#0E2E2B] text-white" : "text-[#0E2E2B] hover:bg-[#F6F7F4]"
+                          }`}
+                        >
+                          {name}
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
-                <Badge variant="muted" className="px-3 text-xs">
-                  {ownerActionsBusy ? "Procesando" : "Listo"}
-                </Badge>
-              </div>
-            </AccordionTrigger>
-
-            <AccordionContent className="space-y-3 px-4 pb-4 pt-0">
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept="application/json,.json"
-                  className="hidden"
-                  onChange={onImportFileChange}
-                />
-                <input
-                  ref={ordersImportInputRef}
-                  type="file"
-                  accept="application/json,.json"
-                  className="hidden"
-                  onChange={onImportOrdersFileChange}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg"
-                  onClick={handleImportClick}
-                  disabled={importingData}
-                >
-                  {importingData ? "Importando…" : "Importar datos"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg"
-                  onClick={() => { void openExportDialog(); }}
-                  disabled={copyingData}
-                >
-                  {copyingData ? "Copiando…" : "Copiar datos"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg"
-                  onClick={handleOrdersImportClick}
-                  disabled={importingOrders || copyingData}
-                >
-                  {importingOrders ? "Importando pedidos…" : "Importar pedidos"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg"
-                  onClick={() => { void handleDownloadOrders(); }}
-                  disabled={downloadingOrders || importingOrders || importingData || copyingData}
-                >
-                  {downloadingOrders ? "Descargando pedidos…" : "Descargar pedidos"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg"
-                  onClick={() => { void handleDownloadExcel(); }}
-                  disabled={downloadingExcel || copyingData || importingData || importingOrders || downloadingOrders}
-                >
-                  {downloadingExcel ? "Descargando Excel…" : "Descargar Excel"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg"
-                  onClick={() => { void handleDownloadJson(); }}
-                  disabled={downloadingJson || copyingData || importingData || importingOrders}
-                >
-                  {downloadingJson ? "Descargando…" : "Descargar JSON"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg"
-                  onClick={() => { void handleSaveSnapshot(); }}
-                  disabled={savingBackup || copyingData || importingData}
-                >
-                  {savingBackup ? "Guardando…" : "Guardar copia"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg"
-                  onClick={() => { void handleRestoreSnapshot(); }}
-                  disabled={restoringBackup || copyingData}
-                >
-                  {restoringBackup ? "Restaurando…" : "Restaurar copia"}
-                </Button>
-              </div>
-
-              <div className="text-right text-xs text-muted-foreground">
-                {loadingBackupMeta
-                  ? "Consultando últimas copias…"
-                  : `Última copia: ${formatBackupTimestamp(backupMeta?.updatedAt ?? null)}`}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      )}
-
-      {/* Tabs */}
-      <Tabs value={tab} onValueChange={(v) => setTab(v as ViewTab)} className="space-y-3">
-        <TabsList className="grid h-10 w-full grid-cols-5 rounded-2xl bg-muted/40 p-1">
-          <TabsTrigger className="h-9 rounded-xl px-2 text-xs" value="TODOS">Todos</TabsTrigger>
-          <TabsTrigger className="h-9 rounded-xl px-2 text-xs" value="PENDIENTES">Pendientes</TabsTrigger>
-          <TabsTrigger className="h-9 rounded-xl px-2 text-xs" value="SEMANAL">Semanal</TabsTrigger>
-          <TabsTrigger className="h-9 rounded-xl px-2 text-xs" value="QUINCENAL">Quincenal</TabsTrigger>
-          <TabsTrigger className="h-9 rounded-xl px-2 text-xs" value="MENSUAL">Mensual</TabsTrigger>
-        </TabsList>
-
-        {/* Panel “Agregar a esta semana” */}
-        {(tab === "QUINCENAL" || tab === "MENSUAL") && (() => {
-          const freq = tab as "QUINCENAL" | "MENSUAL";
-          const allCandidates = providers.filter((p) => p.freq === freq).sort(byName);
-          const totalCandidates = allCandidates.length;
-          const addedCount = allCandidates.filter((p) => weekProviders.has(p.id)).length;
-          const searchRaw = massAddSearch[freq] ?? "";
-          const search = searchRaw.trim().toLowerCase();
-          const filteredCandidates = search
-            ? allCandidates.filter((p) =>
-                p.name.toLowerCase().includes(search) ||
-                (p.responsible ?? "").toLowerCase().includes(search)
-              )
-            : allCandidates;
-
-          return (
-            <div className="mt-3">
-              <Accordion type="single" collapsible>
-                <AccordionItem value="agregar-panel" className="rounded-2xl border border-border/60 bg-card/95 shadow-[var(--shadow-card)]">
-                <AccordionTrigger className="px-4 py-3">
-                  <div className="flex w-full items-center justify-between gap-3">
-                    <div className="text-left">
-                      <p className="text-sm font-semibold text-foreground">
-                        Agregar {tab.toLowerCase()}s a <span className="font-semibold">{headerRange}</span>
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        Agregados {addedCount} / {totalCandidates}
-                      </p>
-                    </div>
-                    <Badge variant="muted" className="px-3 text-xs">
-                      {addedCount} / {totalCandidates}
-                    </Badge>
-                  </div>
-                </AccordionTrigger>
-
-                <AccordionContent>
-                  <div className="space-y-3 px-4 pb-4">
-                    {totalCandidates > 0 && (
-                      <Input
-                        value={searchRaw}
-                        onChange={(event) => setMassAddSearch((prev) => ({ ...prev, [freq]: event.target.value }))}
-                        placeholder="Buscar proveedor o responsable"
-                        className="h-9 rounded-xl bg-inputBackground/90 text-sm"
-                        aria-label={`Buscar ${tab.toLowerCase()}s`}
-                      />
-                    )}
-
-                    {filteredCandidates.length > 0 ? (
-                      <div className="max-h-80 space-y-2 overflow-y-auto">
-                        {filteredCandidates.map((p) => {
-                          const included = weekProviders.has(p.id);
-                          const lastISO = lastAddedByProvider[p.id];
-                          const last = lastISO ? new Date(lastISO) : null;
-
+              </PopoverContent>
+            </Popover>
+            <Button
+              className="h-10 rounded-full bg-[#0E2E2B] px-4 text-sm font-semibold text-white hover:bg-[#132f2c]"
+              onClick={() => setAddProvidersOpen(true)}
+            >
+              <Plus className="mr-2 h-4 w-4" aria-hidden />
+              Agregar proveedor
+            </Button>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
+          <span>Total: {totalProviders}</span>
+          <span>Pendientes: {summaryCounts.pending}</span>
+          <span>Realizados: {summaryCounts.fulfilled}</span>
+          <span>Pedidos cliente: {totalPendingClientItems}</span>
+          <span>Listos: {totalCompletedClientItems}</span>
+        </div>
+      </section>
+          {/* Acordeones por día */}
+          <section className="space-y-4">
+            <Accordion type="multiple" defaultValue={[`day-${todayIdx}`]}>
+              {[0,1,2,3,4,5,6,-1].map((idx) => {
+                const list = groupedByDay.get(idx)!;
+                if (!list || list.length === 0) return null;
+                const pendingCount = list.filter((p) => statusFor(p.id) === "PENDIENTE").length;
+                const doneCount = list.length - pendingCount;
+                return (
+                  <AccordionItem
+                    key={`day-${idx}`}
+                    value={`day-${idx}`}
+                    className="mb-3 overflow-hidden rounded-[32px] border border-[#E0E8E3] bg-white shadow-sm"
+                  >
+                    <AccordionTrigger className="px-5 py-4 hover:no-underline">
+                      <div className="flex w-full flex-wrap items-center justify-between gap-3">
+                        <span className="text-left text-base font-semibold text-[#0E2E2B]">{DAY_LABELS_EXT[idx]}</span>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge className="rounded-full bg-[#F4F7F5] px-3 text-xs text-[#0E2E2B]">
+                            {doneCount} de {list.length}
+                          </Badge>
+                          {pendingCount > 0 && (
+                            <Badge className="rounded-full bg-[#FFEEDC] px-3 text-xs text-[#B56724]">
+                              {pendingCount} pendiente{pendingCount === 1 ? "" : "s"}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="bg-[#FBFCFA] px-5 pb-5">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {list.map((p) => {
+                          const st = statusFor(p.id);
+                          const isPending = st === "PENDIENTE";
                           return (
-                            <div key={p.id} className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-3 py-2">
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-semibold text-foreground">{p.name}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  Última vez agregado: {last ? last.toLocaleDateString("es-AR") : "—"}
-                                </p>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                {included ? (
-                                  <>
-                                    <Badge variant="secondary" className="h-6 px-3 text-[11px]">Agregado</Badge>
-                                    <Button
-                                      variant="outline" size="sm" className="h-8 rounded-lg"
-                                      onClick={() => removeProviderFromCurrentWeek(p.id)}
-                                    >
-                                      Quitar
-                                    </Button>
-                                  </>
-                                ) : (
-                                  <Button
-                                    size="sm" className="h-8 rounded-lg"
-                                    onClick={() => addProviderToCurrentWeek(p.id)}
+                            <Card key={p.id} className="border-none bg-transparent">
+                              <CardContent className="rounded-3xl border border-white bg-white p-4 shadow-sm">
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <CalendarDays className="h-3.5 w-3.5" aria-hidden />
+                                  Pedido: {p.updated_at ? formatShortDateTime(p.updated_at) : "—"}
+                                </div>
+                                <div className="mt-2 flex items-center gap-2">
+                                  <p className="flex-1 text-base font-semibold text-[#0E2E2B]">{p.name}</p>
+                                  <Badge
+                                    className={`rounded-full px-3 text-[11px] ${
+                                      isPending ? "bg-[#FFF4EB] text-[#B56724]" : "bg-[#E3F6EE] text-[#1F7F62]"
+                                    }`}
                                   >
-                                    Agregar
+                                    {isPending ? "Pendiente" : "Realizado"}
+                                  </Badge>
+                                  <Badge className="rounded-full bg-[#EBF0FF] px-3 text-[11px] text-[#1B3D8F]">
+                                    {p.freq === "SEMANAL" ? "Semanal" : p.freq === "QUINCENAL" ? "Quincenal" : "Mensual"}
+                                  </Badge>
+                                </div>
+                                <div className="mt-3 space-y-1 text-sm text-[#0E2E2B]">
+                                  <p>Recibe: <b>{DAYS[normalizeDay(p.receive_day) as DayIdx] ?? "—"}</b></p>
+                                  <p>Método de pago: <b>{normalizePayment(p.payment_method) === "EFECTIVO" ? "Efectivo" : "Transferencia"}</b></p>
+                                  <p>Responsable: <b>{p.responsible}</b></p>
+                                </div>
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                  <Button
+                                    variant="outline"
+                                    className="flex-1 rounded-full border-[#D3DAD5] text-sm text-[#0E2E2B]"
+                                    onClick={() => {
+                                      const basePath = branch
+                                        ? `/t/${slug}/b/${branch}/proveedores/${p.id}/pedido`
+                                        : `/t/${slug}/proveedores/${p.id}/pedido`;
+                                      const qs = new URLSearchParams();
+                                      if (p.name) qs.set("name", p.name);
+                                      if (selectedWeek?.id) qs.set("week", selectedWeek.id);
+                                      if (branch) qs.set("branch", branch);
+                                      if (branchId) qs.set("branchId", branchId);
+                                      if (tenantId) qs.set("tenantId", tenantId);
+                                      const qsString = qs.toString();
+                                      router.push(qsString ? `${basePath}?${qsString}` : basePath);
+                                    }}
+                                  >
+                                    Ver pedido
                                   </Button>
-                                )}
-                              </div>
-                            </div>
+                                  <Button
+                                    className={`flex-1 rounded-full text-sm ${
+                                      isPending ? "bg-[#2FB6A0] text-white hover:bg-[#289F8C]" : ""
+                                    }`}
+                                    variant={isPending ? "default" : "outline"}
+                                    onClick={() => toggleStatus(p)}
+                                  >
+                                    {isPending ? "Realizar" : "Pendiente"}
+                                  </Button>
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-9 w-9 rounded-full border border-[#E0E8E3]"
+                                    aria-label={`Editar ${p.name}`}
+                                    onClick={() => openEdit(p)}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-9 w-9 rounded-full border border-[#FDD8D4] text-[#D94130]"
+                                    aria-label={`Eliminar ${p.name}`}
+                                    onClick={() => setConfirmDelete({ open: true, id: p.id, name: p.name })}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </CardContent>
+                            </Card>
                           );
                         })}
                       </div>
-                    ) : (
-                      <p className="py-6 text-center text-xs text-muted-foreground">
-                        {totalCandidates === 0
-                          ? `No hay proveedores ${tab === "QUINCENAL" ? "quincenales" : "mensuales"} registrados.`
-                          : `Sin resultados para "${searchRaw.trim()}".`}
-                      </p>
-                    )}
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-              </Accordion>
-            </div>
-          );
-        })()}
-      </Tabs>
+                    </AccordionContent>
+                  </AccordionItem>
+                );
+              })}
+            </Accordion>
+            {Array.from(groupedByDay.values()).every((arr) => arr.length === 0) && !loading && (
+              <div className="rounded-3xl border border-dashed border-[#D3DAD5] bg-white px-6 py-12 text-center text-sm text-muted-foreground">
+                No hay proveedores para esta vista. Usá “Agregar proveedor” o sumá quincenales/mensuales a la semana actual.
+              </div>
+            )}
+          </section>
 
-      {/* Buscador */}
-      <div>
-        <Input
-          placeholder={loading ? "Cargando..." : "Buscar proveedor o responsable"}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="h-10 rounded-xl bg-inputBackground/90 text-sm shadow-[var(--shadow-card)]"
-          aria-label="Buscar proveedor"
-          disabled={loading}
-        />
-      </div>
-
-      {/* Acordeones por día */}
-      <Accordion type="multiple" defaultValue={[`day-${todayIdx}`]} className="w-full">
-        {[0,1,2,3,4,5,6,-1].map((idx) => {
-          const list = groupedByDay.get(idx)!;
-          if (!list || list.length === 0) return null;
-
-          return (
+        {/* Herramientas para dueños */}
+        {isOwner && (
+          <Accordion
+            type="single"
+            collapsible
+            value={ownerToolsOpen ? "owner-tools" : undefined}
+            onValueChange={(value) => setOwnerToolsOpen(value === "owner-tools")}
+          >
             <AccordionItem
-              key={`day-${idx}`}
-              value={`day-${idx}`}
-              className="mt-3 overflow-hidden rounded-2xl border border-border/60 bg-card/95 shadow-[var(--shadow-card)] first:mt-0"
+              value="owner-tools"
+              className="overflow-hidden rounded-[32px] border border-[#E0E8E3] bg-white shadow-sm"
             >
-              <AccordionTrigger className="px-4 py-3">
-                <div className="flex w-full items-center justify-between">
-                  <span className="text-left text-sm font-semibold text-foreground">{DAY_LABELS_EXT[idx]}</span>
-                  <Badge variant="muted" className="ml-2 px-3 text-xs">
-                    {list.length} {list.length === 1 ? "proveedor" : "proveedores"}
+              <AccordionTrigger className="px-5 py-4 hover:no-underline">
+                <div className="flex w-full items-center justify-between gap-3">
+                  <div className="text-left">
+                    <p className="text-sm font-semibold text-[#0E2E2B]">Herramientas del dueño</p>
+                    <p className="text-xs text-muted-foreground">
+                      Copiá, importá o descargá datos de proveedores.
+                    </p>
+                  </div>
+                  <Badge variant="muted" className="rounded-full px-3 text-xs">
+                    {ownerActionsBusy ? "Procesando" : "Listo"}
                   </Badge>
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="space-y-3 bg-card px-4 pb-4">
-                {list.map((p) => (
-                  <Card key={p.id} className="transition-transform hover:-translate-y-0.5">
-                    <CardContent className="p-4">
-                      {/* Chips */}
-                      {(() => {
-                        const s = weekSummaries[p.id];
-                        const showTotal = (s?.total ?? 0) > 0;
-                        const showItems = (s?.items ?? 0) > 0;
-                        const showDate = !!s?.updated_at;
-                        if (!showTotal && !showItems && !showDate) return null;
-                        const updatedAt = s?.updated_at ? new Date(s.updated_at as string) : null;
-                        return (
-                          <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                            {showTotal && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-[2px] text-[11px] text-foreground/80">
-                                💰 {fmtMoney(s?.total ?? 0)}
-                              </span>
-                            )}
-                            {showItems && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-[2px] text-[11px] text-foreground/80">
-                                📦 {s?.items ?? 0} art.
-                              </span>
-                            )}
-                            {updatedAt && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-[2px] text-[11px] text-foreground/80">
-                                🕒 {updatedAt.toLocaleString("es-AR", {
-                                  day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit",
-                                })}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()}
-
-                      {/* Nombre + Estado */}
-                      {(() => {
-                        const st = statusFor(p.id);
-                        return (
-                          <div className="flex items-center gap-2">
-                            <p className="flex-1 truncate text-sm font-semibold leading-none text-foreground">{p.name}</p>
-                            <Badge
-                              variant={st === "REALIZADO" ? "secondary" : "destructive"}
-                              className="h-6 px-3 text-[10px]"
-                            >
-                              {st === "REALIZADO" ? "Realizado" : "Pendiente"}
-                            </Badge>
-                          </div>
-                        );
-                      })()}
-
-                      {/* Meta compacta */}
-                      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                        <span className="inline-flex items-center gap-1">
-                          <CalendarDays className="h-3 w-3" aria-hidden />
-                          {p.freq.toLowerCase()}
-                        </span>
-                        <span aria-hidden>•</span>
-                        <span className="inline-flex items-center gap-1">
-                          <Truck className="h-3 w-3" aria-hidden />
-                          Recibe: {DAYS[normalizeDay(p.receive_day) as DayIdx] ?? "—"}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-[2px] text-foreground/80">
-                          {normalizePayment(p.payment_method) === "EFECTIVO" ? (
-                            <Banknote className="h-3 w-3" aria-hidden />
-                          ) : (
-                            <Landmark className="h-3 w-3" aria-hidden />
-                          )}
-                          {normalizePayment(p.payment_method) === "EFECTIVO" ? "Efectivo" : "Transferencia"}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-[2px] text-foreground/80">
-                          <UserRound className="h-3 w-3" aria-hidden />
-                          {p.responsible}
-                        </span>
-                      </div>
-
-                      {/* Acciones */}
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 text-xs rounded-lg"
-                          aria-label={`Ver pedido de ${p.name}`}
-                          onClick={() => {
-                            const basePath = branch
-                              ? `/t/${slug}/b/${branch}/proveedores/${p.id}/pedido`
-                              : `/t/${slug}/proveedores/${p.id}/pedido`;
-                            const qs = new URLSearchParams();
-                            if (p.name) qs.set("name", p.name);
-                            if (selectedWeek?.id) qs.set("week", selectedWeek.id);
-                            if (branch) qs.set("branch", branch);
-                            if (branchId) qs.set("branchId", branchId);
-                            if (tenantId) qs.set("tenantId", tenantId);
-                            const qsString = qs.toString();
-                            router.push(qsString ? `${basePath}?${qsString}` : basePath);
-                          }}
-                        >
-                          Ver Pedido
-                        </Button>
-
-                        {(() => {
-                        const st = statusFor(p.id);
-                        const isPending = st === "PENDIENTE";
-                        return (
-                          <Button
-                            size="sm"
-                            variant={isPending ? "destructive" : "default"}
-                            onClick={() => toggleStatus(p)}
-                            className="h-8 rounded-lg px-3 text-xs"
-                            aria-label={isPending ? "Marcar realizado" : "Marcar pendiente"}
-                          >
-                            {isPending ? (
-                              <span className="inline-flex items-center gap-1">
-                                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Realizar
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1">
-                                <Clock3 className="h-3.5 w-3.5" aria-hidden /> Pendiente
-                              </span>
-                            )}
-                          </Button>
-                        );
-                        })()}
-
-                        <div className="col-span-2 -mt-1 flex justify-end gap-1.5">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 rounded-lg border border-border/60 text-muted-foreground hover:bg-muted/30"
-                            aria-label={`Editar ${p.name}`} onClick={() => openEdit(p)} title="Editar">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 rounded-lg border border-border/60 text-muted-foreground hover:bg-muted/30"
-                            aria-label={`Eliminar ${p.name}`}
-                            onClick={() => setConfirmDelete({ open: true, id: p.id, name: p.name })}
-                            title="Eliminar">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+              <AccordionContent className="space-y-4 px-5 pb-5 pt-0">
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    className="rounded-full border-[#D3DAD5] px-4 text-sm text-[#0E2E2B]"
+                    onClick={() => {
+                      void openExportDialog();
+                    }}
+                    disabled={copyingData}
+                  >
+                    {copyingData ? "Copiando…" : "Copiar datos"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="rounded-full border-[#D3DAD5] px-4 text-sm text-[#0E2E2B]"
+                    onClick={handleOrdersImportClick}
+                    disabled={importingOrders || copyingData}
+                  >
+                    {importingOrders ? "Importando pedidos…" : "Importar pedidos"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="rounded-full border-[#D3DAD5] px-4 text-sm text-[#0E2E2B]"
+                    onClick={() => {
+                      void handleDownloadOrders();
+                    }}
+                    disabled={downloadingOrders || importingOrders || importingData || copyingData}
+                  >
+                    {downloadingOrders ? "Descargando pedidos…" : "Descargar pedidos"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="rounded-full border-[#D3DAD5] px-4 text-sm text-[#0E2E2B]"
+                    onClick={() => {
+                      void handleDownloadExcel();
+                    }}
+                    disabled={
+                      downloadingExcel || copyingData || importingData || importingOrders || downloadingOrders
+                    }
+                  >
+                    {downloadingExcel ? "Descargando Excel…" : "Descargar Excel"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="rounded-full border-[#D3DAD5] px-4 text-sm text-[#0E2E2B]"
+                    onClick={() => {
+                      void handleDownloadJson();
+                    }}
+                    disabled={downloadingJson || copyingData || importingData || importingOrders}
+                  >
+                    {downloadingJson ? "Descargando…" : "Descargar JSON"}
+                  </Button>
+                </div>
+                <p className="text-right text-xs text-muted-foreground">
+                  {loadingBackupMeta
+                    ? "Consultando últimas copias…"
+                    : `Última copia: ${formatBackupTimestamp(backupMeta?.updatedAt ?? null)}`}
+                </p>
               </AccordionContent>
             </AccordionItem>
-          );
-        })}
-      </Accordion>
-
-      {/* Sin resultados */}
-      {Array.from(groupedByDay.values()).every((arr) => arr.length === 0) && !loading && (
-        <div className="py-8 text-center text-sm text-muted-foreground" role="status">
-          No hay proveedores para esta vista. Usá “Agregar” o sumá quincenales/mensuales a la semana actual.
+          </Accordion>
+        )}
         </div>
-      )}
-
-      {/* FAB secundaria: Nueva semana */}
-      <Button
-        onClick={() => setConfirmNewWeek(true)}
-        className="fixed bottom-40 right-6 h-11 rounded-full px-5 shadow-[var(--shadow-elevated)]"
-        variant="secondary"
-        aria-label="Iniciar nueva semana"
-        title="Iniciar nueva semana"
-      >
-        Nueva semana
-      </Button>
-
+      </main>
       {/* Confirmación Nueva semana */}
       <AlertDialog open={confirmNewWeek} onOpenChange={setConfirmNewWeek}>
         <AlertDialogContent>
@@ -3684,83 +4116,124 @@ const buildExportPayload = React.useCallback(async (
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* FAB (+) */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogTrigger asChild>
-          <Button size="icon" className="fixed bottom-24 right-6 h-14 w-14 rounded-full shadow-[var(--shadow-elevated)]" aria-label="Agregar proveedor">
-            <Plus className="h-6 w-6" />
-          </Button>
-        </DialogTrigger>
+      <Dialog open={addProvidersOpen} onOpenChange={setAddProvidersOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Agregar proveedor</DialogTitle>
+            <DialogDescription>Sumá proveedores quincenales o mensuales a {headerRange}.</DialogDescription>
+          </DialogHeader>
 
-        <DialogContent className="sm:max-w-md">
+          <Tabs
+            value={addProvidersTab}
+            onValueChange={(value) => setAddProvidersTab(value as "QUINCENAL" | "MENSUAL")}
+            className="mt-2 w-full"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <TabsList className="grid h-10 flex-1 grid-cols-2 rounded-2xl bg-[#F6F7F4]">
+                <TabsTrigger value="QUINCENAL" className="rounded-2xl text-sm font-semibold">Quincenales</TabsTrigger>
+                <TabsTrigger value="MENSUAL" className="rounded-2xl text-sm font-semibold">Mensuales</TabsTrigger>
+              </TabsList>
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-full border-[#D3DAD5] px-4 text-sm font-semibold"
+                onClick={() => {
+                  setAddProvidersOpen(false);
+                  setCreateOpen(true);
+                }}
+              >
+                Registrar proveedor
+              </Button>
+            </div>
+            <div className="mt-4 max-h-[60vh] overflow-y-auto pr-1">
+              <TabsContent value="QUINCENAL" className="space-y-4">
+                {renderFrequencyList("QUINCENAL")}
+              </TabsContent>
+              <TabsContent value="MENSUAL" className="space-y-4">
+                {renderFrequencyList("MENSUAL")}
+              </TabsContent>
+            </div>
+          </Tabs>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>Registrar proveedor</DialogTitle>
             <DialogDescription>Se guardará en la nube y se verá desde cualquier dispositivo.</DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-3">
-            <div className="grid gap-1.5">
-              <label htmlFor="create-name" className="text-sm">Nombre</label>
-              <Input id="create-name" placeholder="Ej: Ankas del Sur" value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
+          <div className="mt-2 flex-1 overflow-y-auto pr-1 pb-2">
+            <div className="grid gap-3">
+              <div className="grid gap-1.5">
+                <label htmlFor="create-name" className="text-sm">Nombre</label>
+                <Input id="create-name" placeholder="Ej: Ankas del Sur" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
 
-            <div className="grid gap-1.5 text-sm">
-              <span>Frecuencia</span>
-              <Select value={freq} onValueChange={(v) => setFreq(v as Freq)}>
-                <SelectTrigger><SelectValue placeholder="Elige frecuencia" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="SEMANAL">Semanal</SelectItem>
-                  <SelectItem value="QUINCENAL">Quincenal</SelectItem>
-                  <SelectItem value="MENSUAL">Mensual</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+              <div className="grid gap-1.5 text-sm">
+                <span>Frecuencia</span>
+                <Select value={freq} onValueChange={(v) => setFreq(v as Freq)}>
+                  <SelectTrigger><SelectValue placeholder="Elige frecuencia" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SEMANAL">Semanal</SelectItem>
+                    <SelectItem value="QUINCENAL">Quincenal</SelectItem>
+                    <SelectItem value="MENSUAL">Mensual</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="grid gap-1.5 text-sm">
-              <span>Día que se pide</span>
-              <Select value={String(orderDay)} onValueChange={(v) => setOrderDay(Number(v) as DayIdx)}>
-                <SelectTrigger><SelectValue placeholder="Selecciona un día" /></SelectTrigger>
-                <SelectContent>
-                  {DAYS.map((d, i) => (<SelectItem key={i} value={String(i)}>{d}</SelectItem>))}
-                </SelectContent>
-              </Select>
-            </div>
+              <div className="grid gap-1.5 text-sm">
+                <span>Día que se pide</span>
+                <Select value={String(orderDay)} onValueChange={(v) => setOrderDay(Number(v) as DayIdx)}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona un día" /></SelectTrigger>
+                  <SelectContent>
+                    {DAYS.map((d, i) => (<SelectItem key={i} value={String(i)}>{d}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="grid gap-1.5 text-sm">
-              <span>Día que se recibe</span>
-              <Select value={String(receiveDay)} onValueChange={(v) => setReceiveDay(Number(v) as DayIdx)}>
-                <SelectTrigger><SelectValue placeholder="Selecciona un día" /></SelectTrigger>
-                <SelectContent>
-                  {DAYS.map((d, i) => (<SelectItem key={i} value={String(i)}>{d}</SelectItem>))}
-                </SelectContent>
-              </Select>
-            </div>
+              <div className="grid gap-1.5 text-sm">
+                <span>Día que se recibe</span>
+                <Select value={String(receiveDay)} onValueChange={(v) => setReceiveDay(Number(v) as DayIdx)}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona un día" /></SelectTrigger>
+                  <SelectContent>
+                    {DAYS.map((d, i) => (<SelectItem key={i} value={String(i)}>{d}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="grid gap-1.5">
-              <label htmlFor="create-responsible" className="text-sm">Responsable</label>
-              <Input id="create-responsible" placeholder="Ej: Jorge / Mariana" value={responsible} onChange={(e) => setResponsible(e.target.value)} />
-            </div>
+              <div className="grid gap-1.5">
+                <label htmlFor="create-responsible" className="text-sm">Responsable</label>
+                <Input
+                  id="create-responsible"
+                  placeholder="Ej: Jorge / Mariana"
+                  value={responsible}
+                  onChange={(e) => setResponsible(e.target.value)}
+                />
+              </div>
 
-            <div className="grid gap-1.5 text-sm">
-              <span>Método de pago</span>
-              <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}>
-                <SelectTrigger><SelectValue placeholder="Selecciona método" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="EFECTIVO">Efectivo</SelectItem>
-                  <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+              <div className="grid gap-1.5 text-sm">
+                <span>Método de pago</span>
+                <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona método" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="EFECTIVO">Efectivo</SelectItem>
+                    <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="grid gap-1.5 text-sm">
-              <span>Estado inicial</span>
-              <Select value={status} onValueChange={(v) => setStatus(v as Status)}>
-                <SelectTrigger><SelectValue placeholder="Selecciona estado" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="PENDIENTE">Pendiente</SelectItem>
-                  <SelectItem value="REALIZADO">Realizado</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="grid gap-1.5 text-sm">
+                <span>Estado inicial</span>
+                <Select value={status} onValueChange={(v) => setStatus(v as Status)}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona estado" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PENDIENTE">Pendiente</SelectItem>
+                    <SelectItem value="REALIZADO">Realizado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
 
@@ -3875,7 +4348,6 @@ const buildExportPayload = React.useCallback(async (
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </main>
     </>
   );
 }
