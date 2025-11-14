@@ -16,6 +16,7 @@ export const paths = {
   priceSearch:(tenant: string, branch: string) => `/t/${tenant}/b/${branch}/price-search`,
   invoices:  (tenant: string, branch: string) => `/t/${tenant}/b/${branch}/invoices`,
   payments:  (tenant: string, branch: string) => `/t/${tenant}/b/${branch}/payments`,
+  depoFreezer:(tenant: string, branch: string) => `/t/${tenant}/b/${branch}/depo/freezer`,
   tasks:     (tenant: string, branch: string) => `/t/${tenant}/b/${branch}/tasks`,
   expirations:(tenant: string, branch: string) => `/t/${tenant}/b/${branch}/expirations`,
   settings:  (tenant: string, branch: string) => `/t/${tenant}/b/${branch}/settings`,

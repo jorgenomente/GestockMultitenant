@@ -15,6 +15,7 @@ import {
   BadgePercent,
   Palette,
   LineChart,
+  Snowflake,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
@@ -129,6 +130,12 @@ export default function BottomNav() {
       icon: BarChart3,
       requiresBranch: true,
       buildHref: (tenantSlug, b) => (tenantSlug && b ? `/t/${tenantSlug}/b/${b}/stats` : null),
+    },
+    {
+      label: "Depósito",
+      icon: Snowflake,
+      requiresBranch: true,
+      buildHref: (tenantSlug, b) => (tenantSlug && b ? `/t/${tenantSlug}/b/${b}/depo/freezer` : null),
     },
     {
       label: "Configuración",

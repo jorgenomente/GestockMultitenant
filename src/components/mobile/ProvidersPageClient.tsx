@@ -1190,6 +1190,15 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     return providers.filter(p => (p.freq === "SEMANAL") || weekProviders.has(p.id));
   }, [providers, weekProviders]);
 
+  const responsibleOptions = React.useMemo(() => {
+    const seen = new Set<string>();
+    visibleProviders.forEach((provider) => {
+      const label = (provider.responsible ?? "").trim();
+      if (label) seen.add(label);
+    });
+    return Array.from(seen).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+  }, [visibleProviders]);
+
   React.useEffect(() => {
     if (responsibleFilter && !responsibleOptions.includes(responsibleFilter)) {
       setResponsibleFilter(null);
@@ -1309,15 +1318,6 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
     ],
     []
   );
-
-  const responsibleOptions = React.useMemo(() => {
-    const seen = new Set<string>();
-    visibleProviders.forEach((provider) => {
-      const label = (provider.responsible ?? "").trim();
-      if (label) seen.add(label);
-    });
-    return Array.from(seen).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
-  }, [visibleProviders]);
 
   const frequencyLists = React.useMemo(() => {
     const build = (freq: "QUINCENAL" | "MENSUAL") => {

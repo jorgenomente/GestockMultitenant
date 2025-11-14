@@ -43,6 +43,8 @@ model branches {
   order_ui_state          order_ui_state[]
   orders                  orders[]
   branch_messages         branch_messages[]
+  depo_groups             depo_groups[]
+  depo_items              depo_items[]
   payment_providers       payment_providers[]
   payments                payments[]
   products                products[]
@@ -396,6 +398,7 @@ model products {
   updated_at DateTime @default(now()) @db.Timestamptz(6)
   branches   branches @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   tenants    tenants  @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  depo_items depo_items[]
 
   @@index([branch_id], map: "products_branch_idx")
   @@index([tenant_id], map: "products_tenant_idx")
@@ -531,6 +534,47 @@ model branch_messages {
   @@schema("public")
 }
 
+model depo_groups {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id  String     @db.Uuid
+  branch_id  String     @db.Uuid
+  slug       String
+  name       String
+  created_at DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at DateTime   @default(now()) @db.Timestamptz(6)
+  branches   branches   @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants    tenants    @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  depo_items depo_items[]
+
+  @@unique([branch_id, slug], map: "depo_groups_branch_slug_uk")
+  @@index([tenant_id, branch_id], map: "depo_groups_tenant_branch_idx")
+  @@index([tenant_id], map: "depo_groups_tenant_idx")
+  @@schema("public")
+}
+
+model depo_items {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id        String      @db.Uuid
+  branch_id        String      @db.Uuid
+  group_id         String      @db.Uuid
+  product_id       String      @db.Uuid
+  quantity         Decimal     @default(0) @db.Decimal(12, 3)
+  created_at       DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime    @default(now()) @db.Timestamptz(6)
+  updated_by       String?     @db.Uuid
+  updated_by_name  String?
+  updated_by_email String?
+  branches         branches    @relation(fields: [branch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tenants          tenants     @relation(fields: [tenant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  depo_groups      depo_groups @relation(fields: [group_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  products         products    @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([group_id, product_id], map: "depo_items_group_product_uk")
+  @@index([group_id], map: "depo_items_group_idx")
+  @@index([tenant_id, branch_id], map: "depo_items_tenant_branch_idx")
+  @@schema("public")
+}
+
 model stock_logs {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   order_item_id String      @db.Uuid
@@ -574,6 +618,8 @@ model tenants {
   payments                payments[]
   prices_raw              prices_raw[]
   products                products[]
+  depo_groups             depo_groups[]
+  depo_items              depo_items[]
   products_test           products_test[]
   provider_week_providers provider_week_providers[]
   provider_week_states    provider_week_states[]
