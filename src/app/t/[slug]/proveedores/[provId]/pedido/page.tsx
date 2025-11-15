@@ -12,6 +12,7 @@ import { SALES_STORAGE_BUCKET, SALES_STORAGE_DIR } from "@/lib/salesStorage";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import "./redesign.css";
 
 /* UI */
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
@@ -45,6 +47,8 @@ import {
 import {
   Plus, Minus, Search, Download, Upload, Trash2, ArrowLeft,
   History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package, Loader2, Save,
+  CalendarDays, FileText, RefreshCw, BookOpen, TrendingUp, TrendingDown, GripVertical, BarChart3,
+  Sparkles,
 } from "lucide-react";
 import { useVisualViewportBottomOffset, isStandaloneDisplayMode } from "@/lib/useVisualViewportBottomOffset";
 
@@ -175,9 +179,10 @@ type StepperProps = {
   min?: number;
   step?: number;
   suffixLabel?: string;
+  disabled?: boolean;
 };
 
-function Stepper({ value, onChange, min = 0, step = 1, suffixLabel }: StepperProps) {
+function Stepper({ value, onChange, min = 0, step = 1, suffixLabel, disabled = false }: StepperProps) {
   const s = Math.max(1, Math.floor(step));
   const clamp = (n: number) => Math.max(min, n);
   const snap  = (n: number) => clamp(Math.round(n / s) * s);
@@ -195,6 +200,7 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel }: StepperPro
         size="icon"
         className="h-9 w-9 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)]"
         aria-label="Restar"
+        disabled={disabled}
         onClick={() => onChange(clamp((value || 0) - s))}
       >
         <Minus className="h-3 w-3" />
@@ -204,6 +210,7 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel }: StepperPro
         className="h-9 w-16 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] px-0 text-center text-sm font-semibold text-[color:var(--order-card-qty-foreground)] focus-visible:ring-0"
         inputMode="numeric"
         value={value ?? 0}
+        disabled={disabled}
         onChange={(e) => {
           const n = parseInt(e.target.value || "0", 10) || 0;
           onChange(snap(n));
@@ -219,6 +226,7 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel }: StepperPro
         size="icon"
         className="h-9 w-9 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)]"
         aria-label="Sumar"
+        disabled={disabled}
         onClick={() => onChange(clamp((value || 0) + s))}
       >
         <Plus className="h-3 w-3" />
@@ -399,6 +407,15 @@ type OrderRow = {
   total: number | null; created_at?: string; updated_at?: string;
   tenant_id?: string | null; branch_id?: string | null;
 };
+type OrderNoteEntry = {
+  id: string;
+  content: string;
+  authorName?: string | null;
+  authorId?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+  status: "pending" | "resolved";
+};
 type ItemRow = {
   id: string;
   order_id: string;
@@ -422,6 +439,13 @@ type ItemRow = {
   previous_qty_updated_at?: string | null;
 };
 
+type MinStockState = {
+  qty: number;
+  enabled: boolean;
+};
+
+type ProviderFrequency = "SEMANAL" | "QUINCENAL" | "MENSUAL";
+
 
 type SalesRow = { product: string; qty: number; subtotal?: number; date: number; category?: string; };
 type Stats = {
@@ -434,6 +458,7 @@ type Stats = {
   lastUnitRetail?: number;
   avgUnitRetail30d?: number;
 };
+type SalesTrendPoint = { date: number; qty: number };
 type ProductStatsEntry = {
   stats: Stats;
   anchor: number;
@@ -487,11 +512,127 @@ type RenameItemHandler = (...args: [string, string]) => Promise<void> | void;
 type ComputeSalesSinceHandler = (...args: [string, number | null]) => number;
 type SetItemCheckedHandler = (...args: [string, boolean]) => void;
 type ToggleStatsHandler = (...args: [string]) => void;
+type UpdateUnitPriceHandler = (id: string, price: number) => Promise<void>;
+
+const createNoteId = () => {
+  if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `note_${Math.random().toString(36).slice(2, 11)}`;
+};
+
+const normalizeNoteStatus = (raw: unknown): OrderNoteEntry["status"] =>
+  raw === "resolved" ? "resolved" : "pending";
+
+const parseOrderNotesField = (raw: string | null | undefined): OrderNoteEntry[] => {
+  if (!raw) return [];
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+
+  const mapEntry = (entry: unknown): OrderNoteEntry | null => {
+    if (!entry || typeof entry !== "object") return null;
+    const draft = entry as Record<string, unknown>;
+    const content = typeof draft.content === "string" ? draft.content.trim() : "";
+    if (!content) return null;
+    const createdAt =
+      typeof draft.createdAt === "string"
+        ? draft.createdAt
+        : typeof draft.timestamp === "string"
+        ? draft.timestamp
+        : new Date().toISOString();
+    return {
+      id: typeof draft.id === "string" ? draft.id : createNoteId(),
+      content,
+      authorName:
+        typeof draft.authorName === "string"
+          ? draft.authorName
+          : typeof draft.author === "string"
+          ? draft.author
+          : null,
+      authorId: typeof draft.authorId === "string" ? draft.authorId : undefined,
+      createdAt,
+      updatedAt: typeof draft.updatedAt === "string" ? draft.updatedAt : undefined,
+      status: normalizeNoteStatus(draft.status),
+    };
+  };
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map(mapEntry)
+        .filter((entry): entry is OrderNoteEntry => Boolean(entry))
+        .sort((a, b) => {
+          const aTime = Date.parse(a.createdAt);
+          const bTime = Date.parse(b.createdAt);
+          return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
+        });
+    }
+    if (typeof parsed === "object" && parsed !== null) {
+      const entry = mapEntry(parsed);
+      return entry ? [entry] : [];
+    }
+    if (typeof parsed === "string" && parsed.trim()) {
+      return [
+        {
+          id: createNoteId(),
+          content: parsed.trim(),
+          createdAt: new Date().toISOString(),
+          status: "pending",
+        },
+      ];
+    }
+  } catch {
+    // Fallback handled below
+  }
+
+  return [
+    {
+      id: createNoteId(),
+      content: trimmed,
+      createdAt: new Date().toISOString(),
+      status: "pending",
+    },
+  ];
+};
+
+const serializeOrderNotesField = (notes: OrderNoteEntry[]): string | null => {
+  if (!notes.length) return null;
+  return JSON.stringify(
+    notes.map((note) => ({
+      id: note.id,
+      content: note.content,
+      authorName: note.authorName ?? null,
+      authorId: note.authorId ?? null,
+      createdAt: note.createdAt,
+      updatedAt: note.updatedAt ?? null,
+      status: note.status,
+    })),
+  );
+};
+
+const relativeTimeFromNow = (value?: string | null) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const diffMs = Date.now() - date.getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "Ahora";
+  if (minutes < 60) return `Hace ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Hace ${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Ayer";
+  if (days < 7) return `Hace ${days}d`;
+  return date.toLocaleDateString("es-AR", { day: "2-digit", month: "short" });
+};
+
 type GroupSectionProps = {
   groupName: string;
   items: ItemRow[];
   productNames: string[];
   sales: SalesRow[];
+  salesByProductMap: Map<string, SalesRow[]>;
   statsByProduct: Map<string, ProductStatsEntry>;
   margin: number;
   tokenMatch: (...args: [string, string]) => boolean;
@@ -518,6 +659,15 @@ type GroupSectionProps = {
   setItemChecked: SetItemCheckedHandler;
   statsOpenMap: Record<string, boolean>;
   onToggleStats: ToggleStatsHandler;
+  minStockMap: Record<string, MinStockState>;
+  onUpdateMinStock: (itemId: string, qty: number) => void;
+  onToggleMinStock: (itemId: string, enabled: boolean) => void;
+  autoQtyMap: Record<string, boolean>;
+  onToggleAutoQty: (itemId: string, enabled: boolean) => void;
+  onRememberManualQty: (itemId: string, qty: number) => void;
+  getManualQtyBackup: (itemId: string) => number | null;
+  frequency: ProviderFrequency;
+  onChangeFrequency: (freq: ProviderFrequency) => void;
   containerProps?: React.HTMLAttributes<HTMLDivElement>;
   bottomViewportOffset: number;
   floatingActionBottomOffset: string;
@@ -528,8 +678,21 @@ const SORT_MODES: SortMode[] = ["manual", "alpha_asc", "alpha_desc", "avg_desc",
 const EMPTY_ITEM_ORDER: string[] = [];
 const isSortMode = (value: unknown): value is SortMode =>
   typeof value === "string" && SORT_MODES.includes(value as SortMode);
+const PROVIDER_FREQUENCIES: ProviderFrequency[] = ["SEMANAL", "QUINCENAL", "MENSUAL"];
+const isProviderFrequency = (value: unknown): value is ProviderFrequency =>
+  typeof value === "string" && PROVIDER_FREQUENCIES.includes(value as ProviderFrequency);
+const providerFrequencyLabel = (value: ProviderFrequency): string => {
+  if (value === "QUINCENAL") return "Quincenal";
+  if (value === "MENSUAL") return "Mensual";
+  return "Semanal";
+};
+const AUTO_FREQUENCY_OPTIONS: Array<{ value: ProviderFrequency; title: string; description: string }> = [
+  { value: "SEMANAL", title: "Auto semanal", description: "Ventas últimos 7 días" },
+  { value: "QUINCENAL", title: "Auto quincenal", description: "Ventas últimos 14 días" },
+  { value: "MENSUAL", title: "Auto mensual", description: "Ventas últimos 30 días" },
+];
 
-const UI_STATE_STORAGE_VERSION = 3;
+const UI_STATE_STORAGE_VERSION = 5;
 
 type StoredUiStatePayload = {
   version: number;
@@ -538,6 +701,8 @@ type StoredUiStatePayload = {
   openGroup?: string | null;
   statsOpen?: string[];
   itemOrder?: Record<string, string[]>;
+  minStockTargets?: Record<string, MinStockState>;
+  autoQtyMap?: Record<string, boolean>;
 };
 
 type ParsedUiState = {
@@ -546,6 +711,8 @@ type ParsedUiState = {
   openGroup?: string | null;
   statsOpenIds: string[];
   itemOrderMap: Record<string, string[]>;
+  minStockMap: Record<string, MinStockState>;
+  autoQtyMap: Record<string, boolean>;
 };
 
 type SnapshotItem = {
@@ -557,6 +724,7 @@ type SnapshotItem = {
   pack_size?: number | null;
   stock_qty?: number | null;
   stock_updated_at?: string | null;
+  stock_signature_label?: string | null;
   previous_qty?: number | null;
   previous_qty_updated_at?: string | null;
   price_updated_at?: string | null;
@@ -617,11 +785,106 @@ type OrderExportJsonPayload = {
     openGroup?: string | null;
     statsOpenIds?: string[];
     itemOrder?: Record<string, string[]>;
+    minStockTargets?: Record<string, MinStockState>;
+    autoQtyMap?: Record<string, boolean>;
   };
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const normalizeMinStockEntry = (value: unknown): MinStockState | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const qty = Math.max(0, Math.round(value));
+    if (qty <= 0) return null;
+    return { qty, enabled: true };
+  }
+  if (!isRecord(value)) return null;
+  const rawQty = value.qty;
+  let qty = 0;
+  if (typeof rawQty === "number") qty = rawQty;
+  else if (typeof rawQty === "string") {
+    const normalized = rawQty.replace(/\s+/g, "").replace(/,/g, ".");
+    const parsed = Number(normalized);
+    qty = Number.isFinite(parsed) ? parsed : 0;
+  } else if (rawQty != null) {
+    const coerced = Number(rawQty);
+    qty = Number.isFinite(coerced) ? coerced : 0;
+  }
+  const rounded = Math.max(0, Math.round(qty));
+  const enabled = Boolean(value.enabled);
+  if (!enabled && rounded <= 0) return null;
+  return { qty: rounded, enabled };
+};
+
+const sanitizeMinStockMap = (
+  raw: unknown,
+  validIds?: Set<string>,
+): Record<string, MinStockState> => {
+  if (!isRecord(raw)) return {};
+  return Object.entries(raw).reduce<Record<string, MinStockState>>((acc, [id, value]) => {
+    if (validIds && !validIds.has(id)) return acc;
+    const entry = normalizeMinStockEntry(value);
+    if (entry) acc[id] = entry;
+    return acc;
+  }, {});
+};
+
+const serializeMinStockMap = (
+  map: Record<string, MinStockState>,
+): Record<string, MinStockState> | undefined => {
+  const entries = Object.entries(map).filter(
+    ([, value]) => value && (value.qty > 0 || value.enabled),
+  );
+  if (!entries.length) return undefined;
+  return Object.fromEntries(
+    entries.map(([id, value]) => ({
+      id,
+      value: {
+        qty: Math.max(0, Math.round(value.qty || 0)),
+        enabled: Boolean(value.enabled),
+      },
+    })).map(({ id, value }) => [id, value]),
+  );
+};
+
+const areMinStockMapsEqual = (
+  a: Record<string, MinStockState>,
+  b: Record<string, MinStockState>,
+): boolean => {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => {
+    const av = a[key];
+    const bv = b[key];
+    if (!bv) return false;
+    return av.qty === bv.qty && av.enabled === bv.enabled;
+  });
+};
+
+const hasEnabledMinStock = (map: Record<string, MinStockState>) =>
+  Object.values(map).some((entry) => entry.enabled && entry.qty > 0);
+
+const sanitizeAutoQtyMap = (
+  raw: unknown,
+  validIds?: Set<string>,
+): Record<string, boolean> => {
+  if (!isRecord(raw)) return {};
+  return Object.entries(raw).reduce<Record<string, boolean>>((acc, [id, value]) => {
+    if (validIds && !validIds.has(id)) return acc;
+    if (typeof value === "boolean") acc[id] = value;
+    return acc;
+  }, {});
+};
+
+const serializeAutoQtyMap = (
+  map: Record<string, boolean>,
+): Record<string, boolean> | undefined => {
+  const entries = Object.entries(map);
+  if (!entries.length) return undefined;
+  return Object.fromEntries(entries.map(([id, value]) => [id, Boolean(value)]));
+};
 
 const statsOpenIdsToMap = (ids: string[]): Record<string, boolean> =>
   ids.reduce<Record<string, boolean>>((acc, id) => {
@@ -687,6 +950,8 @@ const parseStoredUiState = (raw: unknown): ParsedUiState => {
     openGroup: undefined,
     statsOpenIds: [],
     itemOrderMap: {},
+    minStockMap: {},
+    autoQtyMap: {},
   };
   if (!isRecord(raw)) return base;
 
@@ -710,6 +975,8 @@ const parseStoredUiState = (raw: unknown): ParsedUiState => {
       openGroup: undefined,
       statsOpenIds: [],
       itemOrderMap: {},
+      minStockMap: {},
+      autoQtyMap: {},
     };
   }
 
@@ -730,8 +997,13 @@ const parseStoredUiState = (raw: unknown): ParsedUiState => {
     ? (raw.statsOpen as unknown[]).filter((id): id is string => typeof id === "string" && id.length > 0)
     : [];
   const itemOrderMap = sanitizeItemOrderMap(raw.itemOrder);
+  const minStockRaw =
+    raw.minStockTargets ?? raw.minStockMap ?? raw.minStock ?? raw.min_stock_targets;
+  const minStockMap = sanitizeMinStockMap(minStockRaw);
+  const autoQtyRaw = raw.autoQtyMap ?? raw.auto_qty_map;
+  const autoQtyMap = sanitizeAutoQtyMap(autoQtyRaw);
 
-  return { checked, sortMode, openGroup, statsOpenIds, itemOrderMap };
+  return { checked, sortMode, openGroup, statsOpenIds, itemOrderMap, minStockMap, autoQtyMap };
 };
 
 const buildStoredUiStatePayload = (args: {
@@ -740,14 +1012,25 @@ const buildStoredUiStatePayload = (args: {
   openGroup: string | null;
   statsOpenIds: string[];
   itemOrderMap: Record<string, string[]>;
-}): StoredUiStatePayload => ({
-  version: UI_STATE_STORAGE_VERSION,
-  checked: { ...args.checked },
-  sortMode: args.sortMode,
-  openGroup: args.openGroup,
-  statsOpen: [...args.statsOpenIds],
-  itemOrder: cloneItemOrderMap(args.itemOrderMap),
-});
+  minStockMap: Record<string, MinStockState>;
+  autoQtyMap: Record<string, boolean>;
+}): StoredUiStatePayload => {
+  const payload: StoredUiStatePayload = {
+    version: UI_STATE_STORAGE_VERSION,
+    checked: { ...args.checked },
+    sortMode: args.sortMode,
+    openGroup: args.openGroup,
+    statsOpen: [...args.statsOpenIds],
+    itemOrder: cloneItemOrderMap(args.itemOrderMap),
+  };
+
+  const minStockTargets = serializeMinStockMap(args.minStockMap);
+  if (minStockTargets) payload.minStockTargets = minStockTargets;
+  const autoQtySerialized = serializeAutoQtyMap(args.autoQtyMap);
+  if (autoQtySerialized) payload.autoQtyMap = autoQtySerialized;
+
+  return payload;
+};
 
 const shallowEqualRecord = (a: Record<string, boolean>, b: Record<string, boolean>): boolean => {
   const aKeys = Object.keys(a);
@@ -768,8 +1051,6 @@ const areStringArraysEqual = (a: string[], b: string[]): boolean => {
 };
 
 /* ========= Drag & Drop de grupos (HTML5 nativo) ========= */
-import { GripVertical } from "lucide-react";
-
 function DraggableGroupList({ groups, renderGroup, onReorder }: DraggableGroupListProps) {
   const [dragIndex, setDragIndex] = React.useState<number | null>(null);
   const [overIndex, setOverIndex] = React.useState<number | null>(null);
@@ -957,20 +1238,70 @@ const toLocalInputFromISO = (iso: string | null | undefined) => {
 const excelSerialToUTC = (s: number) => Date.UTC(1899, 11, 30) + Math.round(s * 86400000);
 function parseDateCell(v: unknown): number | null {
   if (v == null) return null;
-  if (v instanceof Date) return v.getTime();
+  if (v instanceof Date) {
+    const ts = v.getTime();
+    return Number.isNaN(ts) ? null : ts;
+  }
   if (typeof v === "number") return v < 100000 ? excelSerialToUTC(v) : v;
   if (typeof v === "string") {
-    const s = v.replace(NBSP_RX, " ").trim().replace(/\./g, "/").replace(/-/g, "/");
-    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-    if (m) { const dd = +m[1], mm = +m[2] - 1; let yy = +m[3]; if (yy < 100) yy += 2000; return Date.UTC(yy, mm, dd); }
+    const normalized = v
+      .replace(NBSP_RX, " ")
+      .trim()
+      .replace(/\./g, "/")
+      .replace(/-/g, "/")
+      .replace(/\s+hs?$/i, "");
+    if (!normalized) return null;
+    const parsed = Date.parse(normalized);
+    if (!Number.isNaN(parsed)) return parsed;
+    const dateTimeMatch = normalized.match(
+      /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
+    );
+    if (dateTimeMatch) {
+      const [, dd, mm, rawYear, rawHour, rawMinute, rawSecond] = dateTimeMatch;
+      const day = Math.max(1, Math.min(31, Number(dd)));
+      const month = Math.max(1, Math.min(12, Number(mm))) - 1;
+      let year = rawYear == null || rawYear === "" ? new Date().getFullYear() : Number(rawYear);
+      if (year < 100) year += 2000;
+      const hour = rawHour != null ? Math.max(0, Math.min(23, Number(rawHour))) : 0;
+      const minute = rawMinute != null ? Math.max(0, Math.min(59, Number(rawMinute))) : 0;
+      const second = rawSecond != null ? Math.max(0, Math.min(59, Number(rawSecond))) : 0;
+      let timestamp = Date.UTC(year, month, day, hour, minute, second);
+      if (!rawYear) {
+        const now = Date.now();
+        const sixMonths = 180 * 24 * 60 * 60 * 1000;
+        if (timestamp - now > sixMonths) {
+          timestamp = Date.UTC(year - 1, month, day, hour, minute, second);
+        }
+      }
+      return timestamp;
+    }
   }
   return null;
 }
 const startOfDayUTC = (t: number) => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); };
 const fmtMoney = (n: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n || 0);
 const fmtInt = (n: number) => new Intl.NumberFormat("es-AR").format(n || 0);
+const formatStockSignatureLabel = (value?: string | null): string | null => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const pad = (x: number) => String(Math.floor(Math.abs(x))).padStart(2, "0");
+  const dd = pad(date.getDate());
+  const mm = pad(date.getMonth() + 1);
+  const hh = pad(date.getHours());
+  const mins = pad(date.getMinutes());
+  return `${dd}/${mm} ${hh}:${mins}`;
+};
 const qtyFormatter = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 });
 const round2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+
+/** Ajusta una cantidad al múltiplo del paquete (si existe). */
+function snapToPack(n: number, pack?: number | null) {
+  const v = Math.max(0, Math.round(n || 0));
+  const m = pack && pack > 1 ? Math.round(pack) : 1;
+  if (m <= 1) return v;
+  return Math.max(0, Math.round(v / m) * m); // usar Math.ceil si siempre querés redondear hacia arriba
+}
 const parseNumberInput = (value: string): number => {
   if (!value) return 0;
   const normalized = value.replace(/\s+/g, "").replace(/,/g, ".");
@@ -1014,7 +1345,7 @@ async function parseSalesArrayBuffer(ab: ArrayBuffer): Promise<SalesRow[]> {
     const subtotal = sk ? Number(r[sk]) : undefined;
     const category = ck ? String(r[ck]) : undefined;
     if (!product || !date) continue;
-    out.push({ product, qty, subtotal, date: startOfDayUTC(date), category });
+    out.push({ product, qty, subtotal, date, category });
   }
   return out;
 }
@@ -1119,6 +1450,27 @@ function computeStats(sales: SalesRow[], product: string, now = Date.now()): Sta
   const rows = sales.filter((s) => normKey(s.product) === key);
   return computeStatsFromRows(rows, now);
 }
+
+function buildSalesTrendSeries(rows: SalesRow[], days = 14, anchor = Date.now()): SalesTrendPoint[] {
+  if (days <= 0) return [];
+  const dayMs = 24 * 3600 * 1000;
+  const end = startOfDayUTC(anchor);
+  const start = end - (days - 1) * dayMs;
+  const buckets: SalesTrendPoint[] = [];
+  for (let i = 0; i < days; i += 1) {
+    buckets.push({ date: start + i * dayMs, qty: 0 });
+  }
+  const bucketMap = new Map(buckets.map((point) => [point.date, point.qty]));
+  rows.forEach((row) => {
+    const day = startOfDayUTC(row.date);
+    if (day < start || day > end) return;
+    bucketMap.set(day, (bucketMap.get(day) ?? 0) + (row.qty || 0));
+  });
+  return buckets.map((point) => ({
+    date: point.date,
+    qty: bucketMap.get(point.date) ?? 0,
+  }));
+}
 const estCost = (st?: Stats, marginPct = 45) =>
   Math.round((st?.lastUnitRetail ?? st?.avgUnitRetail30d ?? 0) * (1 - marginPct / 100));
 
@@ -1176,11 +1528,45 @@ export default function ProviderOrderPage() {
   const tenantIdFromQuery = normalizeSearchParam(search.get("tenantId"));
   const branchIdFromQuery = normalizeSearchParam(search.get("branchId"));
   const providerNameFromQuery = normalizeSearchParam(search.get("name"));
-
+  const providerFrequencyFromQueryRaw = normalizeSearchParam(search.get("freq"));
+  const providerFrequencyFromQuery = React.useMemo<ProviderFrequency | null>(() => {
+    if (!providerFrequencyFromQueryRaw) return null;
+    const upper = providerFrequencyFromQueryRaw.toUpperCase();
+    return isProviderFrequency(upper) ? upper : null;
+  }, [providerFrequencyFromQueryRaw]);
   const [providerNameOverride, setProviderNameOverride] = React.useState<string | null>(null);
   const providerName = providerNameFromQuery || providerNameOverride || "Proveedor";
+  const [providerFrequency, setProviderFrequency] = React.useState<ProviderFrequency>(
+    providerFrequencyFromQuery ?? "SEMANAL"
+  );
+  const autoFrequencyLockedRef = React.useRef<boolean>(providerFrequencyFromQuery != null);
+  React.useEffect(() => {
+    if (!providerFrequencyFromQuery) return;
+    autoFrequencyLockedRef.current = true;
+    setProviderFrequency(providerFrequencyFromQuery);
+  }, [providerFrequencyFromQuery]);
+  const handleChangeAutoFrequency = React.useCallback((next: ProviderFrequency) => {
+    autoFrequencyLockedRef.current = true;
+    setProviderFrequency(next);
+  }, []);
+  const handleBackToProviders = React.useCallback(() => {
+    if (!tenantSlug) {
+      router.back();
+      return;
+    }
+    router.push(`/t/${tenantSlug}/proveedores`);
+  }, [router, tenantSlug]);
 
-  const [orderNotes, setOrderNotes] = React.useState("");
+  const [orderNotes, setOrderNotes] = React.useState<OrderNoteEntry[]>([]);
+  const orderNotesRef = React.useRef<OrderNoteEntry[]>([]);
+  const [noteInput, setNoteInput] = React.useState("");
+  const [editingNoteId, setEditingNoteId] = React.useState<string | null>(null);
+  const [editingContent, setEditingContent] = React.useState("");
+  const [notesExpanded, setNotesExpanded] = React.useState(true);
+  const [notesSubmitting, setNotesSubmitting] = React.useState(false);
+  const [noteActionState, setNoteActionState] = React.useState<{ id: string; type: "delete" | "toggle" | "edit" } | null>(null);
+  const [currentUserName, setCurrentUserName] = React.useState("Equipo");
+  const [currentUserId, setCurrentUserId] = React.useState<string | null>(null);
   const lastPersistedNotesRef = React.useRef<string>("");
 
   const [contextIds, setContextIds] = React.useState<{ tenantId: string | null; branchId: string | null }>({
@@ -1213,8 +1599,34 @@ export default function ProviderOrderPage() {
   const [lastStockAppliedAt, setLastStockAppliedAt] = React.useState<string | null>(null);
   const [stockUndoSnapshot, setStockUndoSnapshot] = React.useState<StockUndoSnapshot | null>(null);
   const [statsOpenMap, setStatsOpenMap] = React.useState<Record<string, boolean>>({});
+  const [minStockMap, setMinStockMap] = React.useState<Record<string, MinStockState>>({});
+  const [autoQtyMap, setAutoQtyMap] = React.useState<Record<string, boolean>>({});
+  const [peMarginEnabled, setPeMarginEnabled] = React.useState(false);
+  const [peApplying, setPeApplying] = React.useState(false);
+  const [peSettingsOpen, setPeSettingsOpen] = React.useState(false);
+  const [peSimInput, setPeSimInput] = React.useState("");
+  const [peSimProviderInput, setPeSimProviderInput] = React.useState("");
+  const manualPriceRef = React.useRef<Record<string, number>>({});
+  const peApplyPromiseRef = React.useRef<Promise<void> | null>(null);
+  const updateUnitPriceRef = React.useRef<UpdateUnitPriceHandler | null>(updateUnitPrice);
 
   const filterInputRef = React.useRef<HTMLInputElement | null>(null);
+  const manualQtyBackupRef = React.useRef<Record<string, number>>({});
+  const rememberManualQty = React.useCallback((itemId: string, qty: number) => {
+    const safe = Math.max(0, Math.round(Number.isFinite(qty) ? qty : 0));
+    manualQtyBackupRef.current[itemId] = safe;
+  }, []);
+  const getManualQtyBackup = React.useCallback((itemId: string) => {
+    const value = manualQtyBackupRef.current[itemId];
+    return typeof value === "number" ? value : null;
+  }, []);
+  React.useEffect(() => {
+    const ids = new Set(items.map((it) => it.id));
+    const store = manualQtyBackupRef.current;
+    Object.keys(store).forEach((itemId) => {
+      if (!ids.has(itemId)) delete store[itemId];
+    });
+  }, [items]);
   const floatingFilterStyle = React.useMemo<React.CSSProperties>(() => ({
     top: isDesktop
       ? "calc(env(safe-area-inset-top) + 1.5rem)"
@@ -1234,18 +1646,46 @@ export default function ProviderOrderPage() {
   }, [isFilterOpen]);
 
   React.useEffect(() => {
-    const next = order?.notes ?? "";
-    lastPersistedNotesRef.current = next;
-    setOrderNotes((prev) => (prev === next ? prev : next));
+    lastPersistedNotesRef.current = order?.notes ?? "";
+    setOrderNotes(parseOrderNotesField(order?.notes));
   }, [order?.notes]);
+
+  React.useEffect(() => {
+    orderNotesRef.current = orderNotes;
+  }, [orderNotes]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    supabase.auth
+      .getUser()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const user = data?.user ?? null;
+        if (!user) {
+          setCurrentUserId(null);
+          setCurrentUserName("Equipo");
+          return;
+        }
+        setCurrentUserId(user.id);
+        const rawName = typeof user.user_metadata?.full_name === "string" ? user.user_metadata.full_name : "";
+        const fallbackName = typeof user.email === "string" ? user.email : "Equipo";
+        setCurrentUserName(rawName?.trim() ? rawName.trim() : fallbackName);
+      })
+      .catch((err) => {
+        console.warn("getUser for notes failed", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
 
   // Persistir notas del pedido en Supabase para compartirlas entre dispositivos
   const persistOrderNotes = React.useCallback(
-    async (value: string) => {
+    async (value: OrderNoteEntry[]) => {
       if (!order?.id) return;
       const targetTable = ordersTable;
       try {
-        const payload = { notes: value.trim() === "" ? null : value };
+        const payload = { notes: serializeOrderNotesField(value) };
         const { data, error } = await supabase
           .from(targetTable)
           .update(payload)
@@ -1253,24 +1693,127 @@ export default function ProviderOrderPage() {
           .select("notes")
           .maybeSingle();
         if (error) throw error;
-        const stored = data?.notes ?? "";
-        lastPersistedNotesRef.current = stored;
-        setOrder((prev) => (prev ? { ...prev, notes: data?.notes ?? null } : prev));
+        const stored = data?.notes ?? null;
+        lastPersistedNotesRef.current = stored ?? "";
+        setOrder((prev) => (prev ? { ...prev, notes: stored } : prev));
       } catch (err) {
         console.error("persist order notes error", err);
+        throw err;
       }
     },
     [order?.id, ordersTable, setOrder, supabase]
   );
 
-  React.useEffect(() => {
-    if (!order?.id) return;
-    if (orderNotes === lastPersistedNotesRef.current) return;
-    const id = window.setTimeout(() => {
-      void persistOrderNotes(orderNotes);
-    }, 600);
-    return () => window.clearTimeout(id);
-  }, [order?.id, orderNotes, persistOrderNotes]);
+  const updateNotesList = React.useCallback(
+    async (updater: (prev: OrderNoteEntry[]) => OrderNoteEntry[]) => {
+      const next = updater(orderNotesRef.current);
+      setOrderNotes(next);
+      try {
+        await persistOrderNotes(next);
+      } catch (err) {
+        setOrderNotes(parseOrderNotesField(lastPersistedNotesRef.current));
+        throw err;
+      }
+    },
+    [persistOrderNotes]
+  );
+
+  const handleAddNote = React.useCallback(async () => {
+    const message = noteInput.trim();
+    if (!message || !order?.id) return;
+    const newNote: OrderNoteEntry = {
+      id: createNoteId(),
+      content: message,
+      authorName: currentUserName || null,
+      authorId: currentUserId ?? undefined,
+      createdAt: new Date().toISOString(),
+      status: "pending",
+    };
+    setNotesSubmitting(true);
+    setNoteInput("");
+    try {
+      await updateNotesList((prev) => [newNote, ...prev]);
+    } catch (err) {
+      console.error("add note failed", err);
+      setNoteInput(message);
+    } finally {
+      setNotesSubmitting(false);
+    }
+  }, [currentUserId, currentUserName, noteInput, order?.id, updateNotesList]);
+
+  const handleDeleteNote = React.useCallback(
+    async (id: string) => {
+      setNoteActionState({ id, type: "delete" });
+      try {
+        await updateNotesList((prev) => prev.filter((note) => note.id !== id));
+        if (editingNoteId === id) {
+          setEditingNoteId(null);
+          setEditingContent("");
+        }
+      } catch (err) {
+        console.error("delete note failed", err);
+      } finally {
+        setNoteActionState(null);
+      }
+    },
+    [editingNoteId, updateNotesList]
+  );
+
+  const handleToggleResolved = React.useCallback(
+    async (id: string) => {
+      setNoteActionState({ id, type: "toggle" });
+      try {
+        await updateNotesList((prev) =>
+          prev.map((note) =>
+            note.id === id
+              ? {
+                  ...note,
+                  status: note.status === "resolved" ? "pending" : "resolved",
+                  updatedAt: new Date().toISOString(),
+                }
+              : note
+          )
+        );
+      } catch (err) {
+        console.error("toggle note failed", err);
+      } finally {
+        setNoteActionState(null);
+      }
+    },
+    [updateNotesList]
+  );
+
+  const handleStartEdit = React.useCallback((note: OrderNoteEntry) => {
+    setEditingNoteId(note.id);
+    setEditingContent(note.content);
+  }, []);
+
+  const handleCancelEdit = React.useCallback(() => {
+    setEditingNoteId(null);
+    setEditingContent("");
+  }, []);
+
+  const handleSaveNoteEdit = React.useCallback(async () => {
+    if (!editingNoteId) return;
+    const trimmed = editingContent.trim();
+    if (!trimmed) return;
+    setNoteActionState({ id: editingNoteId, type: "edit" });
+    try {
+      await updateNotesList((prev) =>
+        prev.map((note) =>
+          note.id === editingNoteId
+            ? { ...note, content: trimmed, updatedAt: new Date().toISOString() }
+            : note
+        )
+      );
+      setEditingNoteId(null);
+      setEditingContent("");
+    } catch (err) {
+      console.error("edit note failed", err);
+    } finally {
+      setNoteActionState(null);
+    }
+  }, [editingContent, editingNoteId, updateNotesList]);
 
   React.useEffect(() => {
     setStockUndoSnapshot(null);
@@ -1315,6 +1858,120 @@ export default function ProviderOrderPage() {
     () => items.filter((item) => item.product_name !== GROUP_PLACEHOLDER),
     [items]
   );
+  React.useEffect(() => {
+    const map = manualPriceRef.current;
+    const ids = new Set(actionableItems.map((item) => item.id));
+    Object.keys(map).forEach((id) => {
+      if (!ids.has(id)) delete map[id];
+    });
+  }, [actionableItems]);
+  const applyMarginPeToItems = React.useCallback(async () => {
+    const updater = updateUnitPriceRef.current;
+    if (!updater || !actionableItems.length) return;
+    const updates: Array<{ id: string; price: number }> = [];
+
+    actionableItems.forEach((item) => {
+      const statsEntry = statsByProduct.get(normKey(item.product_name));
+      const retail = statsEntry?.stats.lastUnitRetail ?? statsEntry?.stats.avgUnitRetail30d;
+      if (!retail || !Number.isFinite(retail) || retail <= 0) return;
+      const predicted = Math.max(0, Math.round(retail * (1 - marginPct / 100)));
+      const current = Math.max(0, Math.round(item.unit_price ?? 0));
+      if (predicted === current) return;
+      updates.push({ id: item.id, price: predicted });
+    });
+
+    for (const entry of updates) {
+      await updater(entry.id, entry.price);
+    }
+  }, [actionableItems, marginPct, statsByProduct]);
+
+  const waitForPeApply = React.useCallback(async () => {
+    const pending = peApplyPromiseRef.current;
+    if (pending) {
+      try {
+        await pending;
+      } catch (err) {
+        console.warn("applyMarginPeToItems pending error", err);
+      }
+    }
+  }, []);
+
+  const runMarginPeApply = React.useCallback(() => {
+    if (peApplying && peApplyPromiseRef.current) {
+      return peApplyPromiseRef.current;
+    }
+    const promise = (async () => {
+      setPeApplying(true);
+      try {
+        await applyMarginPeToItems();
+      } finally {
+        setPeApplying(false);
+      }
+    })();
+    peApplyPromiseRef.current = promise.finally(() => {
+      if (peApplyPromiseRef.current === promise) {
+        peApplyPromiseRef.current = null;
+      }
+    });
+    return peApplyPromiseRef.current;
+  }, [applyMarginPeToItems, peApplying]);
+
+  const restoreMarginPePrices = React.useCallback(async () => {
+    const updater = updateUnitPriceRef.current;
+    if (!updater) return;
+    const map = manualPriceRef.current;
+    const entries: Array<{ id: string; price: number }> = [];
+    actionableItems.forEach((item) => {
+      const stored = map[item.id];
+      if (typeof stored !== "number") return;
+      const safe = Math.max(0, Math.round(stored));
+      const current = Math.max(0, Math.round(item.unit_price ?? 0));
+      if (safe === current) return;
+      entries.push({ id: item.id, price: safe });
+    });
+
+    for (const entry of entries) {
+      await updater(entry.id, entry.price);
+    }
+  }, [actionableItems]);
+
+  const handleMarginPeCheckboxChange = React.useCallback((state: CheckedState) => {
+    const next = state === true;
+    if (next) {
+      const snapshot: Record<string, number> = {};
+      actionableItems.forEach((item) => {
+        snapshot[item.id] = Math.max(0, Math.round(item.unit_price ?? 0));
+      });
+      manualPriceRef.current = snapshot;
+      setPeMarginEnabled(true);
+      void runMarginPeApply();
+    } else {
+      setPeMarginEnabled(false);
+      void (async () => {
+        await waitForPeApply();
+        await restoreMarginPePrices();
+        manualPriceRef.current = {};
+      })();
+    }
+  }, [actionableItems, restoreMarginPePrices, runMarginPeApply, waitForPeApply]);
+  const peSimBase = React.useMemo(() => parseNumberInput(peSimInput), [peSimInput]);
+  const peSimRetail = Number.isFinite(peSimBase) ? Math.max(0, peSimBase) : 0;
+  const peSimEstimate = React.useMemo(
+    () => Math.max(0, Math.round(peSimRetail * (1 - marginPct / 100))),
+    [peSimRetail, marginPct]
+  );
+  const peSimDiff = Math.max(0, Math.round(peSimRetail - peSimEstimate));
+  const peSimProviderBase = React.useMemo(
+    () => parseNumberInput(peSimProviderInput),
+    [peSimProviderInput]
+  );
+  const peSimProvider = Number.isFinite(peSimProviderBase) ? Math.max(0, peSimProviderBase) : 0;
+  const peSimMarginFromInputs = React.useMemo(() => {
+    if (peSimRetail <= 0 || peSimProvider <= 0) return null;
+    const ratio = 1 - peSimProvider / peSimRetail;
+    if (!Number.isFinite(ratio)) return null;
+    return Math.round(ratio * 10000) / 100; // 2 decimales
+  }, [peSimRetail, peSimProvider]);
 
   const stockOrderedItems = React.useMemo(() => {
     if (!actionableItems.length) return [] as ItemRow[];
@@ -1370,7 +2027,7 @@ export default function ProviderOrderPage() {
       const rows = salesByProduct.get(normKey(productName));
       if (!rows || !rows.length) return 0;
       const now = Date.now();
-      const from = startOfDayUTC(fromTs);
+      const from = Math.min(fromTs, now);
       return rows
         .filter((row) => row.date >= from && row.date <= now)
         .reduce((acc, row) => acc + (row.qty || 0), 0);
@@ -1436,6 +2093,158 @@ export default function ProviderOrderPage() {
       { stockPrev: 0, addition: 0, salesQty: 0, stockResult: 0 }
     );
   }, [stockPreviewRows]);
+
+  const persistQtyPatch = React.useCallback(
+    async (patch: Array<{ id: string; qty: number }>) => {
+      if (!patch.length) return true;
+      try {
+        const CHUNK = 25;
+        for (let i = 0; i < patch.length; i += CHUNK) {
+          const slice = patch.slice(i, i + CHUNK);
+          const results = await Promise.all(
+            slice.map((entry) =>
+              supabase.from(itemsTable).update({ qty: entry.qty }).eq("id", entry.id),
+            ),
+          );
+          const failed = results.find((res) => res.error);
+          if (failed?.error) {
+            console.warn("bulk qty update error", failed.error);
+            return false;
+          }
+        }
+        return true;
+      } catch (error) {
+        console.warn("persistQtyPatch exception", error);
+        return false;
+      }
+    },
+    [supabase, itemsTable],
+  );
+
+  const totalsDebounceRef = React.useRef<number | null>(null);
+  const pendingTotalsRef = React.useRef<PendingTotals | null>(null);
+
+  const flushPendingTotals = React.useCallback(async () => {
+    const pending = pendingTotalsRef.current;
+    if (!pending) return;
+    pendingTotalsRef.current = null;
+
+    const { orderId, providerId, orderTable, weekId, total, qty, updatedAt } = pending;
+
+    try {
+      const mutations: Array<Promise<unknown>> = [
+        supabase.from(orderTable).update({ total }).eq("id", orderId),
+        supabase
+          .from(TABLE_ORDER_SUMMARIES)
+          .upsert(
+            { provider_id: providerId, total, items: qty, updated_at: updatedAt },
+            { onConflict: "provider_id" },
+          ),
+      ];
+      if (weekId) {
+        mutations.push(
+          supabase
+            .from(TABLE_ORDER_SUMMARIES_WEEK)
+            .upsert(
+              { week_id: weekId, provider_id: providerId, total, items: qty, updated_at: updatedAt },
+              { onConflict: "week_id,provider_id" },
+            ),
+        );
+      }
+      await Promise.all(mutations);
+    } catch (err) {
+      console.error("flushOrderTotals error", err);
+    }
+  }, [supabase]);
+
+  const recomputeOrderTotal = React.useCallback((newItems?: ItemRow[]) => {
+    if (!order) return;
+
+    const rows = newItems ?? items;
+    const total = rows.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
+    const qty = rows.reduce((a, it) => a + (it.qty || 0), 0);
+    const updatedAt = new Date().toISOString();
+
+    pendingTotalsRef.current = {
+      orderId: order.id,
+      providerId: order.provider_id,
+      orderTable: ordersTable,
+      weekId: selectedWeekId ?? null,
+      total,
+      qty,
+      updatedAt,
+    };
+
+    if (totalsDebounceRef.current != null) window.clearTimeout(totalsDebounceRef.current);
+    totalsDebounceRef.current = window.setTimeout(() => {
+      totalsDebounceRef.current = null;
+      void flushPendingTotals();
+    }, 500);
+  }, [order, items, ordersTable, selectedWeekId, flushPendingTotals]);
+
+  React.useEffect(() => {
+    return () => {
+      if (totalsDebounceRef.current != null) window.clearTimeout(totalsDebounceRef.current);
+      void flushPendingTotals();
+    };
+  }, [flushPendingTotals]);
+
+  React.useEffect(() => {
+    if (!order?.id) return;
+    void flushPendingTotals();
+  }, [order?.id, flushPendingTotals]);
+
+  const computeAutoTarget = React.useCallback(
+    (item: ItemRow) => {
+      const stats = computeStats(sales, item.product_name, latestDateForProduct(sales, item.product_name));
+      let target = 0;
+      if (providerFrequency === "QUINCENAL") target = stats.sum2w || 0;
+      else if (providerFrequency === "MENSUAL") target = stats.sum30d || 0;
+      else target = stats.sum7d || 0;
+      const minEntry = minStockMap[item.id];
+      if (minEntry?.enabled && minEntry.qty > 0) target = minEntry.qty;
+      return Math.max(0, target);
+    },
+    [sales, providerFrequency, minStockMap],
+  );
+
+  React.useEffect(() => {
+    if (!items.length) return;
+    const updates: Array<{ id: string; qty: number }> = [];
+    const nextItems = items.map((item) => {
+      if (item.product_name === GROUP_PLACEHOLDER) return item;
+      const minEntry = minStockMap[item.id];
+      const minActive = Boolean(minEntry?.enabled && minEntry.qty > 0);
+      const autoEnabled = minActive || (autoQtyMap[item.id] ?? true);
+      if (!autoEnabled) return item;
+      const target = computeAutoTarget(item);
+      const productLabel = (item.display_name?.trim() || item.product_name).trim();
+      const baselineStock = typeof item.stock_qty === "number" ? item.stock_qty : null;
+      const lastStockTs =
+        baselineStock != null && item.stock_updated_at ? new Date(item.stock_updated_at).getTime() : null;
+      const pendingSales =
+        baselineStock != null && lastStockTs ? computeSalesSinceStock(productLabel, lastStockTs) : 0;
+      const liveStock =
+        baselineStock == null ? 0 : Math.max(0, round2(baselineStock - pendingSales));
+      const qty = snapToPack(Math.max(0, target - liveStock), item.pack_size);
+      const currentQty = Math.max(0, Math.round(Number(item.qty ?? 0)));
+      if (qty === currentQty) return item;
+      updates.push({ id: item.id, qty });
+      return { ...item, qty };
+    });
+    if (!updates.length) return;
+    setItems(nextItems);
+    recomputeOrderTotal(nextItems);
+    void persistQtyPatch(updates);
+  }, [
+    items,
+    autoQtyMap,
+    minStockMap,
+    computeAutoTarget,
+    computeSalesSinceStock,
+    persistQtyPatch,
+    recomputeOrderTotal,
+  ]);
 
   const previewDateLabel = React.useMemo(() => {
     if (applyTimestampMs == null) return "";
@@ -1734,7 +2543,7 @@ export default function ProviderOrderPage() {
     (async () => {
       const { data, error } = await supabase
         .from("providers")
-        .select("name, tenant_id, branch_id")
+        .select("name, tenant_id, branch_id, freq")
         .eq("id", provId)
         .maybeSingle();
       if (cancelled) return;
@@ -1744,6 +2553,7 @@ export default function ProviderOrderPage() {
       }
       if (!data) return;
       if (data.name && !providerNameOverride) setProviderNameOverride(data.name);
+      if (data.freq && isProviderFrequency(data.freq) && !autoFrequencyLockedRef.current) setProviderFrequency(data.freq);
       setContextIds((prev) => ({
         tenantId: prev.tenantId ?? data.tenant_id ?? null,
         branchId: prev.branchId ?? data.branch_id ?? null,
@@ -1822,6 +2632,8 @@ export default function ProviderOrderPage() {
       if (parsedUI.openGroup !== undefined) setOpenGroup(parsedUI.openGroup ?? "");
       setStatsOpenMap(statsOpenIdsToMap(parsedUI.statsOpenIds));
       setItemOrderMap(parsedUI.itemOrderMap);
+      setMinStockMap(parsedUI.minStockMap);
+      setAutoQtyMap(parsedUI.autoQtyMap);
     } catch (err) {
       console.error("loadUIState exception", err);
     }
@@ -2211,83 +3023,25 @@ React.useEffect(() => {
     return entries;
   }, [items, filter, groupOrder]);
 
-  const totalsDebounceRef = React.useRef<number | null>(null);
-  const pendingTotalsRef = React.useRef<PendingTotals | null>(null);
-
-  const flushPendingTotals = React.useCallback(async () => {
-    const pending = pendingTotalsRef.current;
-    if (!pending) return;
-    pendingTotalsRef.current = null;
-
-    const { orderId, providerId, orderTable, weekId, total, qty, updatedAt } = pending;
-
-    try {
-      const mutations: Array<Promise<unknown>> = [
-        supabase.from(orderTable).update({ total }).eq("id", orderId),
-        supabase
-          .from(TABLE_ORDER_SUMMARIES)
-          .upsert(
-            { provider_id: providerId, total, items: qty, updated_at: updatedAt },
-            { onConflict: "provider_id" },
-          ),
-      ];
-      if (weekId) {
-        mutations.push(
-          supabase
-            .from(TABLE_ORDER_SUMMARIES_WEEK)
-            .upsert(
-              { week_id: weekId, provider_id: providerId, total, items: qty, updated_at: updatedAt },
-              { onConflict: "week_id,provider_id" },
-            ),
-        );
-      }
-      await Promise.all(mutations);
-    } catch (err) {
-      console.error("flushOrderTotals error", err);
-    }
-  }, [supabase]);
-
-  const recomputeOrderTotal = React.useCallback((newItems?: ItemRow[]) => {
-    if (!order) return;
-
-    const rows = newItems ?? items;
-    const total = rows.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
-    const qty = rows.reduce((a, it) => a + (it.qty || 0), 0);
-    const updatedAt = new Date().toISOString();
-
-    pendingTotalsRef.current = {
-      orderId: order.id,
-      providerId: order.provider_id,
-      orderTable: ordersTable,
-      weekId: selectedWeekId ?? null,
-      total,
-      qty,
-      updatedAt,
-    };
-
-    if (totalsDebounceRef.current != null) window.clearTimeout(totalsDebounceRef.current);
-    totalsDebounceRef.current = window.setTimeout(() => {
-      totalsDebounceRef.current = null;
-      void flushPendingTotals();
-    }, 500);
-  }, [order, items, ordersTable, selectedWeekId, flushPendingTotals]);
-
-  React.useEffect(() => {
-    return () => {
-      if (totalsDebounceRef.current != null) window.clearTimeout(totalsDebounceRef.current);
-      void flushPendingTotals();
-    };
-  }, [flushPendingTotals]);
-
-  React.useEffect(() => {
-    if (!order?.id) return;
-    void flushPendingTotals();
-  }, [order?.id, flushPendingTotals]);
-
   // Totales
   const grandTotal = React.useMemo(() => items.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0), [items]);
   const grandQty   = React.useMemo(() => items.reduce((a, it) => a + (it.qty || 0), 0), [items]);
+  const visibleGroupNames = React.useMemo(() => groups.map(([name]) => name || "Sin grupo"), [groups]);
 
+  const formatDateTime = React.useCallback((value?: string | null) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    return date.toLocaleString("es-AR", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }, []);
+  const orderStatusLabel = order?.status ?? "PENDIENTE";
+  const orderUpdatedAtLabel = formatDateTime(order?.updated_at);
   // Estado de selección global (para la casilla maestra)
 const selectableItems = React.useMemo(
   () => items.filter((it) => it.product_name !== GROUP_PLACEHOLDER),
@@ -2371,6 +3125,8 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       openGroup?: string | null | undefined;
       statsOpenMap?: Record<string, boolean>;
       itemOrderMap?: Record<string, string[]>;
+      minStockMap?: Record<string, MinStockState>;
+      autoQtyMap?: Record<string, boolean>;
     }) => {
       if (!order?.id) return;
 
@@ -2379,12 +3135,15 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       const hasOpenOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "openGroup") : false;
       const hasStatsOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "statsOpenMap") : false;
       const hasItemOrderOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "itemOrderMap") : false;
-
+      const hasMinOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "minStockMap") : false;
+      const hasAutoOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "autoQtyMap") : false;
       const nextChecked = hasCheckedOverride ? overrides!.checked ?? {} : checkedMap;
       const nextSortMode = hasSortOverride ? overrides!.sortMode ?? sortMode : sortMode;
       const nextOpenGroup = hasOpenOverride ? overrides!.openGroup ?? null : openGroup || null;
       const nextStatsMap = hasStatsOverride ? overrides!.statsOpenMap ?? {} : statsOpenMap;
       const nextItemOrderMap = hasItemOrderOverride ? overrides!.itemOrderMap ?? {} : itemOrderMap;
+      const nextMinStockMap = hasMinOverride ? overrides!.minStockMap ?? {} : minStockMap;
+      const nextAutoQtyMap = hasAutoOverride ? overrides!.autoQtyMap ?? {} : autoQtyMap;
 
       const payload = buildStoredUiStatePayload({
         checked: nextChecked,
@@ -2392,11 +3151,13 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
         openGroup: nextOpenGroup,
         statsOpenIds: mapStatsOpenIds(nextStatsMap),
         itemOrderMap: nextItemOrderMap,
+        minStockMap: nextMinStockMap,
+        autoQtyMap: nextAutoQtyMap,
       });
 
       void saveUIState(order.id, { checked_map: payload });
     },
-    [order?.id, checkedMap, sortMode, openGroup, statsOpenMap, itemOrderMap, saveUIState]
+    [order?.id, checkedMap, sortMode, openGroup, statsOpenMap, itemOrderMap, minStockMap, autoQtyMap, saveUIState]
   );
 
   // Mantener coherencia: si el grupo abierto ya no existe (renombre/eliminación), cerramos
@@ -2421,15 +3182,27 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       return acc;
     }, {});
 
+    const sanitizedMin = sanitizeMinStockMap(minStockMap, validIds);
+    const sanitizedAuto = sanitizeAutoQtyMap(autoQtyMap, validIds);
+
     const checkedChanged = !shallowEqualRecord(checkedMap, sanitizedChecked);
     const statsChanged = !shallowEqualRecord(statsOpenMap, sanitizedStats);
+    const minChanged = !areMinStockMapsEqual(minStockMap, sanitizedMin);
+    const autoChanged = !shallowEqualRecord(autoQtyMap, sanitizedAuto);
 
-    if (!checkedChanged && !statsChanged) return;
+    if (!checkedChanged && !statsChanged && !minChanged && !autoChanged) return;
 
     if (checkedChanged) setCheckedMap(sanitizedChecked);
     if (statsChanged) setStatsOpenMap(sanitizedStats);
-    persistUiState({ checked: sanitizedChecked, statsOpenMap: sanitizedStats });
-  }, [items, checkedMap, statsOpenMap, persistUiState]);
+    if (minChanged) setMinStockMap(sanitizedMin);
+    if (autoChanged) setAutoQtyMap(sanitizedAuto);
+    persistUiState({
+      checked: sanitizedChecked,
+      statsOpenMap: sanitizedStats,
+      ...(minChanged ? { minStockMap: sanitizedMin } : {}),
+      ...(autoChanged ? { autoQtyMap: sanitizedAuto } : {}),
+    });
+  }, [items, checkedMap, statsOpenMap, minStockMap, autoQtyMap, persistUiState]);
 
   React.useEffect(() => {
     let nextState: Record<string, string[]> | null = null;
@@ -2480,6 +3253,8 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
     openGroup?: string | null;
     statsOpenIds?: string[];
     itemOrderMap?: Record<string, string[]>;
+    minStockMap?: Record<string, MinStockState>;
+    autoQtyMap?: Record<string, boolean>;
   }) {
     const patch: UiStatePatch = {};
     if (opts.groupOrder !== undefined) {
@@ -2492,7 +3267,9 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       opts.sortMode !== undefined ||
       opts.openGroup !== undefined ||
       opts.statsOpenIds !== undefined ||
-      opts.itemOrderMap !== undefined;
+      opts.itemOrderMap !== undefined ||
+      opts.minStockMap !== undefined ||
+      opts.autoQtyMap !== undefined;
 
     if (hasUiOverrides) {
       const resolvedChecked = opts.checkedMap ?? checkedMap;
@@ -2500,12 +3277,16 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       const resolvedOpenGroup = opts.openGroup !== undefined ? opts.openGroup : openGroup || null;
       const resolvedStatsMap = opts.statsOpenIds !== undefined ? statsOpenIdsToMap(opts.statsOpenIds) : statsOpenMap;
       const resolvedItemOrder = opts.itemOrderMap ?? itemOrderMap;
+      const resolvedMinStock = opts.minStockMap ?? minStockMap;
+      const resolvedAutoQty = opts.autoQtyMap ?? autoQtyMap;
 
       if (opts.checkedMap !== undefined) setCheckedMap(resolvedChecked);
       if (opts.sortMode !== undefined) setSortMode(resolvedSortMode);
       if (opts.openGroup !== undefined) setOpenGroup(resolvedOpenGroup ?? "");
       if (opts.statsOpenIds !== undefined) setStatsOpenMap(resolvedStatsMap);
       if (opts.itemOrderMap !== undefined) setItemOrderMap(resolvedItemOrder);
+      if (opts.minStockMap !== undefined) setMinStockMap(resolvedMinStock);
+      if (opts.autoQtyMap !== undefined) setAutoQtyMap(resolvedAutoQty);
 
       const payload = buildStoredUiStatePayload({
         checked: resolvedChecked,
@@ -2513,6 +3294,8 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
         openGroup: resolvedOpenGroup,
         statsOpenIds: mapStatsOpenIds(resolvedStatsMap),
         itemOrderMap: resolvedItemOrder,
+        minStockMap: resolvedMinStock,
+        autoQtyMap: resolvedAutoQty,
       });
       patch.checked_map = payload;
     }
@@ -2694,32 +3477,28 @@ async function handlePickSuggested(mode: "week" | "2w" | "30d") {
   setSuggesting(false);
 }
 
-
-
-
-/** Ajusta una cantidad al múltiplo del paquete (si existe).
- *  Por defecto redondea al múltiplo MÁS CERCANO.
- *  Si preferís redondear siempre hacia arriba, cambiá Math.round -> Math.ceil
- */
-function snapToPack(n: number, pack?: number | null) {
-  const v = Math.max(0, Math.round(n || 0));
-  const m = pack && pack > 1 ? Math.round(pack) : 1;
-  if (m <= 1) return v;
-  return Math.max(0, Math.round(v / m) * m); // ⇐ usa ceil para “siempre para arriba”
-}
-
 /** Aplica cantidades sugeridas a TODOS los ítems del pedido */
 async function applySuggested(mode: "week" | "2w" | "30d"): Promise<boolean> {
   try {
     const qtyFor = (it: ItemRow) => {
       const st = computeStats(sales, it.product_name, latestDateForProduct(sales, it.product_name));
       let n = 0;
-      if (mode === "week") n = st.avg4w || 0;
+      const minConfig = minStockMap[it.id];
+      if (minConfig?.enabled && minConfig.qty > 0) {
+        n = minConfig.qty;
+      } else if (mode === "week") n = st.avg4w || 0;
       else if (mode === "2w") n = st.sum2w || 0;
       else n = st.sum30d || 0;
 
-      const inStock = Number(it.stock_qty ?? 0);
-      const net = Math.max(0, (n || 0) - inStock);
+      const productLabel = (it.display_name?.trim() || it.product_name).trim();
+      const manualStock = typeof it.stock_qty === "number" ? it.stock_qty : null;
+      const lastStockTs =
+        manualStock != null && it.stock_updated_at ? new Date(it.stock_updated_at).getTime() : null;
+      const pendingSales =
+        manualStock != null && lastStockTs ? computeSalesSinceStock(productLabel, lastStockTs) : 0;
+      const currentStock =
+        manualStock == null ? 0 : Math.max(0, round2(manualStock - pendingSales));
+      const net = Math.max(0, (n || 0) - currentStock);
 
       return Math.max(0, snapToPack(net, it.pack_size));
     };
@@ -2735,22 +3514,9 @@ async function applySuggested(mode: "week" | "2w" | "30d"): Promise<boolean> {
       .map((it) => ({ id: it.id, qty: it.qty }));
 
     if (patch.length) {
-     // actualizar en lotes para no saturar la red
-  const CHUNK = 25;
-  for (let i = 0; i < patch.length; i += CHUNK) {
-    const slice = patch.slice(i, i + CHUNK);
-    const results = await Promise.all(
-      slice.map((p) =>
-        supabase.from(itemsTable).update({ qty: p.qty }).eq("id", p.id)
-      )
-    );
-    const failed = results.find((res) => res.error);
-    if (failed?.error) {
-      console.warn("bulk update error", failed.error);
-      return false; // dispara tu alert
+      const persisted = await persistQtyPatch(patch);
+      if (!persisted) return false;
     }
-  }
-}
 
     setItems(next);
 
@@ -2762,9 +3528,6 @@ async function applySuggested(mode: "week" | "2w" | "30d"): Promise<boolean> {
     return false;
   }
 }
-
-
-
 
 /** Pone en 0 la cantidad de TODOS los ítems (de este pedido) */
 async function zeroAllQuantities() {
@@ -2999,7 +3762,7 @@ async function bulkAddItems(names: string[], groupName: string) {
   );
 }
 
-  async function updateUnitPrice(id: string, unit_price: number) {
+async function updateUnitPrice(id: string, unit_price: number) {
   const safe = Math.max(0, Number.isFinite(unit_price) ? Math.round(unit_price) : 0);
   const nowIso = new Date().toISOString();
 
@@ -3039,6 +3802,10 @@ async function bulkAddItems(names: string[], groupName: string) {
   }
 }
 
+React.useEffect(() => {
+  updateUnitPriceRef.current = updateUnitPrice;
+}, [updateUnitPrice]);
+
 async function updatePackSize(id: string, pack: number | null) {
   const value = pack && pack > 1 ? Math.round(pack) : null;
   const { error } = await supabase
@@ -3054,6 +3821,64 @@ async function updatePackSize(id: string, pack: number | null) {
 
   setItems((prev) => prev.map((r) => (r.id === id ? { ...r, pack_size: value } : r)));
 }
+
+  const updateMinStockValueForItem = React.useCallback(
+    (itemId: string, qty: number) => {
+      const safeQty = Math.max(0, Math.round(Number.isFinite(qty) ? qty : 0));
+      setMinStockMap((prev) => {
+        const prevEntry = prev[itemId];
+        const shouldStore = safeQty > 0 || prevEntry?.enabled;
+        const nextEntry = shouldStore ? { qty: safeQty, enabled: Boolean(prevEntry?.enabled) } : null;
+        const noChange =
+          (!prevEntry && !nextEntry) ||
+          (prevEntry && nextEntry && prevEntry.qty === nextEntry.qty && prevEntry.enabled === nextEntry.enabled);
+        if (noChange) return prev;
+        const next = { ...prev };
+        if (!nextEntry) delete next[itemId];
+        else next[itemId] = nextEntry;
+        persistUiState({ minStockMap: next });
+        return next;
+      });
+    },
+    [persistUiState],
+  );
+
+  const toggleMinStockForItem = React.useCallback(
+    (itemId: string, enabled: boolean) => {
+      setMinStockMap((prev) => {
+        const prevEntry = prev[itemId];
+        const qty = prevEntry?.qty ?? 0;
+        const shouldStore = enabled || qty > 0;
+        const nextEntry = shouldStore ? { qty: Math.max(0, qty), enabled } : null;
+        const noChange =
+          (!prevEntry && !nextEntry) ||
+          (prevEntry && nextEntry && prevEntry.qty === nextEntry.qty && prevEntry.enabled === nextEntry.enabled);
+        if (noChange) return prev;
+        const next = { ...prev };
+        if (!nextEntry) delete next[itemId];
+        else next[itemId] = nextEntry;
+        persistUiState({ minStockMap: next });
+        return next;
+      });
+    },
+    [persistUiState],
+  );
+
+  const toggleAutoQtyForItem = React.useCallback(
+    (itemId: string, enabled: boolean) => {
+      setAutoQtyMap((prev) => {
+        const hasEntry = Object.prototype.hasOwnProperty.call(prev, itemId);
+        if (enabled && !hasEntry) return prev;
+        if (!enabled && prev[itemId] === false) return prev;
+        const next = { ...prev };
+        if (enabled) delete next[itemId];
+        else next[itemId] = false;
+        persistUiState({ autoQtyMap: next });
+        return next;
+      });
+    },
+    [persistUiState],
+  );
 
 
   async function updateQty(id: string, qty: number) {
@@ -3454,6 +4279,8 @@ async function exportOrderAsXlsx() {
       return acc;
     }, {});
 
+    const serializedMinStock = serializeMinStockMap(minStockMap);
+    const serializedAutoMap = serializeAutoQtyMap(autoQtyMap);
     return {
       kind: ORDER_EXPORT_KIND,
       version: ORDER_EXPORT_VERSION,
@@ -3492,6 +4319,8 @@ async function exportOrderAsXlsx() {
         openGroup: currentOpenGroup,
         statsOpenIds,
         itemOrder: exportedItemOrder,
+        ...(serializedMinStock ? { minStockTargets: serializedMinStock } : {}),
+        ...(serializedAutoMap ? { autoQtyMap: serializedAutoMap } : {}),
       },
     };
   }
@@ -3729,6 +4558,14 @@ async function exportOrderAsXlsx() {
           return acc;
         }, {})
       : undefined;
+    const importedMinStock =
+      uiStateRaw?.minStockTargets && isRecord(uiStateRaw.minStockTargets)
+        ? sanitizeMinStockMap(uiStateRaw.minStockTargets, validIds)
+        : undefined;
+    const importedAutoQty =
+      uiStateRaw?.autoQtyMap && isRecord(uiStateRaw.autoQtyMap)
+        ? sanitizeAutoQtyMap(uiStateRaw.autoQtyMap, validIds)
+        : undefined;
 
     const uiPatch: {
       groupOrder?: string[];
@@ -3737,6 +4574,7 @@ async function exportOrderAsXlsx() {
       openGroup?: string | null;
       statsOpenIds?: string[];
       itemOrderMap?: Record<string, string[]>;
+      minStockMap?: Record<string, MinStockState>;
     } = {
       checkedMap: legacyChecked,
     };
@@ -3747,6 +4585,8 @@ async function exportOrderAsXlsx() {
     if (importedItemOrder !== undefined && Object.keys(importedItemOrder).length) {
       uiPatch.itemOrderMap = importedItemOrder;
     }
+    if (importedMinStock !== undefined) uiPatch.minStockMap = importedMinStock;
+    if (importedAutoQty !== undefined) uiPatch.autoQtyMap = importedAutoQty;
     applyImportedUIState(uiPatch);
 
     alert("Pedido importado correctamente ✅");
@@ -3965,6 +4805,7 @@ async function exportOrderAsXlsx() {
           pack_size: it.pack_size ?? null,
           stock_qty: it.stock_qty ?? null,
           stock_updated_at: it.stock_updated_at ?? null,
+          stock_signature_label: formatStockSignatureLabel(it.stock_updated_at),
           previous_qty: it.previous_qty ?? null,
           previous_qty_updated_at: it.previous_qty_updated_at ?? null,
           price_updated_at: it.price_updated_at ?? null,
@@ -4104,7 +4945,7 @@ async function exportOrderAsXlsx() {
 
   // Ajuste global de alturas: --bottom-nav-h se comparte con el footer
   return (
-    <>
+    <React.Fragment>
       <Dialog
         open={exportDialogOpen}
         onOpenChange={(open) => {
@@ -4153,11 +4994,11 @@ async function exportOrderAsXlsx() {
         </DialogContent>
       </Dialog>
 
-      <main
-        className="mx-auto w-full max-w-5xl bg-[var(--background)] px-4 pb-[calc(156px+env(safe-area-inset-bottom)+var(--bottom-nav-h))] pt-4 text-[var(--foreground)] md:px-8 lg:px-10"
+      <div
+        className="order-detail-redesign"
         style={rootStyle}
       >
-        <div className="pointer-events-none fixed z-50" style={floatingFilterStyle}>
+        <div className="pointer-events-none rd-floating-filter z-50" style={floatingFilterStyle}>
           <div className="pointer-events-auto">
             <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
               <PopoverTrigger asChild>
@@ -4225,475 +5066,820 @@ async function exportOrderAsXlsx() {
             </Popover>
           </div>
         </div>
-      {/* Header */}
-      <div
-        data-hidden={isDesktop ? barsHidden : undefined}
-        className={clsx(
-          isDesktop ? "sticky top-4 z-30" : "relative",
-          "translate-y-0",
-          "transition-transform duration-300 will-change-transform",
-          isDesktop && "data-[hidden=true]:-translate-y-full",
-        )}
-      >
-        <div className="rounded-[26px] border border-[var(--border)] bg-card/95 px-4 py-4 text-[var(--foreground)] shadow-card md:px-6 md:py-6">
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-              <div className="flex items-start gap-3">
+
+        <div className="order-shell text-[var(--foreground)]">
+          <section
+            data-hidden={isDesktop ? barsHidden : undefined}
+            className={clsx(
+              isDesktop ? "sticky top-4 z-30" : "relative",
+              "rd-header-card translate-y-0 transition-transform duration-300 will-change-transform",
+              isDesktop && "data-[hidden=true]:-translate-y-full",
+            )}
+          >
+            <div className="rd-header-top">
+              <div className="rd-header-left">
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => router.back()}
+                  onClick={handleBackToProviders}
                   aria-label="Volver"
-                  className="h-10 w-10 rounded-2xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
+                  className="rd-back-btn"
                 >
                   <ArrowLeft className="h-5 w-5" />
                 </Button>
-                <div className="min-w-0 space-y-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                    Pedido a
-                  </span>
-                  <div className="truncate text-2xl font-semibold leading-snug md:text-3xl">
-                    {providerName}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span className="inline-flex items-center rounded-full bg-muted/60 px-3 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--foreground)]/80">
-                      Fuente
+                <div className="rd-header-info">
+                  <p>Pedido a</p>
+                  <h1>{providerName}</h1>
+                  <div className="rd-header-meta">
+                    <span className="rd-meta-item">
+                      <Package className="h-4 w-4 text-[#788092]" />
+                      <span
+                        className={clsx("rd-status-pill", {
+                          pendiente: orderStatusLabel === "PENDIENTE",
+                          confirmado: orderStatusLabel === "CONFIRMADO",
+                          recibido: orderStatusLabel === "RECIBIDO",
+                        })}
+                      >
+                        {orderStatusLabel}
+                      </span>
                     </span>
-                    <span className="inline-flex items-center rounded-full bg-[var(--primary)]/20 px-3 py-0.5 text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--primary)]">
-                      {salesMeta.source === "imported" ? "Ventas importadas" : "Ventas reales"}
+                    <span className="rd-header-divider" />
+                    <span className="rd-meta-item">
+                      <CalendarDays className="h-4 w-4 text-[#788092]" />
+                      {orderUpdatedAtLabel}
                     </span>
-                    <span className="truncate text-muted-foreground/80">
+                    <span className="rd-header-divider" />
+                    <span className="rd-meta-item">
+                      <FileText className="h-4 w-4 text-[#788092]" />
                       {salesMeta.label}
                     </span>
                   </div>
                 </div>
               </div>
+              <Button
+                onClick={handleOpenStockModal}
+                disabled={stockProcessing || actionableItems.length === 0}
+                className="rd-stock-button"
+              >
+                {stockProcessing ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                )}
+                Stock
+              </Button>
+            </div>
+            <div className="rd-header-bottom">
+              <div className="rd-header-links">
+                <div className="rd-meta-item">
+                  <History className="h-4 w-4 text-[#788092]" />
+                  <Sheet
+                    open={historyOpen}
+                    onOpenChange={(v) => {
+                      setHistoryOpen(v);
+                      if (v) void loadSnapshots();
+                      else cancelEditingSnapshot();
+                    }}
+                  >
+                    <SheetTrigger asChild>
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-[#1f2a37]"
+                        aria-label="Abrir historial"
+                      >
+                        Historial
+                      </button>
+                    </SheetTrigger>
+                    <SheetContent side="right" className="flex w-[85vw] max-w-sm flex-col">
+                      <SheetHeader>
+                        <SheetTitle>Historial</SheetTitle>
+                      </SheetHeader>
+                      <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-2">
+                        {snapshots.length === 0 && (
+                          <div className="text-sm text-muted-foreground">Aún no hay versiones guardadas.</div>
+                        )}
+                        {snapshots.map((s) => {
+                          const isEditing = editingSnapshotId === s.id;
+                          const isRenaming = renamingSnapshotId === s.id;
+                          return (
+                            <Card key={s.id}>
+                              <CardContent className="p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    {isEditing ? (
+                                      <Input
+                                        ref={isEditing ? snapshotTitleInputRef : undefined}
+                                        value={snapshotTitleDraft}
+                                        onChange={(e) => setSnapshotTitleDraft(e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            void commitSnapshotTitle();
+                                          } else if (e.key === "Escape") {
+                                            e.preventDefault();
+                                            cancelEditingSnapshot();
+                                          }
+                                        }}
+                                        onBlur={() => void commitSnapshotTitle()}
+                                        disabled={isRenaming}
+                                        className="h-8"
+                                      />
+                                    ) : (
+                                      <div className="truncate font-medium" title={s.title}>
+                                        {s.title}
+                                      </div>
+                                    )}
+                                    <div className="text-xs text-muted-foreground">
+                                      {new Date(s.created_at).toLocaleString()}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {isEditing ? (
+                                      <>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          aria-label="Guardar nombre"
+                                          onMouseDown={(e) => e.preventDefault()}
+                                          onClick={() => void commitSnapshotTitle()}
+                                          disabled={isRenaming}
+                                        >
+                                          {isRenaming ? (
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                          ) : (
+                                            <Check className="h-4 w-4" />
+                                          )}
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          aria-label="Cancelar edición"
+                                          onMouseDown={(e) => e.preventDefault()}
+                                          onClick={() => cancelEditingSnapshot()}
+                                          disabled={isRenaming}
+                                        >
+                                          <X className="h-4 w-4" />
+                                        </Button>
+                                      </>
+                                    ) : (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        aria-label="Renombrar versión"
+                                        onClick={() => startEditingSnapshot(s)}
+                                      >
+                                        <Pencil className="h-4 w-4" />
+                                      </Button>
+                                    )}
+                                    <Button size="sm" onClick={() => void openSnapshot(s)} disabled={isRenaming}>
+                                      Abrir
+                                    </Button>
+                                    <AlertDialog>
+                                      <AlertDialogTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="text-destructive"
+                                          aria-label="Eliminar"
+                                          disabled={isRenaming}
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      </AlertDialogTrigger>
+                                      <AlertDialogContent>
+                                        <AlertDialogHeader>
+                                          <AlertDialogTitle>Eliminar versión</AlertDialogTitle>
+                                          <AlertDialogDescription>
+                                            ¿Seguro querés eliminar esta versión del historial?
+                                          </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                          <AlertDialogAction asChild>
+                                            <Button
+                                              variant="destructive"
+                                              onClick={() => void deleteSnapshot(s.id)}
+                                            >
+                                              Eliminar
+                                            </Button>
+                                          </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                      </AlertDialogContent>
+                                    </AlertDialog>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    </SheetContent>
+                  </Sheet>
+                </div>
+                <span className="rd-header-divider" />
+                <div className="rd-meta-item">
+                  <Upload className="h-4 w-4 text-[#788092]" />
+                  <input
+                    ref={salesUploadRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.currentTarget.files?.[0];
+                      if (f) void handleImportSales(f);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="text-sm font-medium text-[#1f2a37]"
+                    onClick={() => salesUploadRef.current?.click()}
+                    disabled={importingSales}
+                  >
+                    {importingSales ? "Importando…" : "Importar ventas"}
+                  </button>
+                </div>
+              </div>
+              <div className="rd-header-total">
+                <span>Total del pedido:</span>
+                <strong>{fmtMoney(grandTotal)}</strong>
+              </div>
+            </div>
+          </section>
+
+
+          {salesImportError && (
+            <div className="rd-alert mt-4">
+              <p className="flex-1 whitespace-pre-wrap break-words">{salesImportError}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleCopySalesError}
+                className="rounded-full border border-[var(--destructive)] bg-transparent px-4 text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/5"
+              >
+                Copiar
+              </Button>
+            </div>
+          )}
+
+          <div className="rd-summary-grid mt-6">
+            <div className="rd-card rd-notes-card">
+              <div className="rd-card-content space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                  <div className="flex flex-1 items-start gap-3">
+                    <span className="rounded-full bg-muted/70 p-2 text-muted-foreground">
+                      <BookOpen className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <div className="rd-card-title">Notas del pedido ({orderNotes.length})</div>
+                      <p className="text-sm text-muted-foreground">
+                        Añadí recordatorios rápidos compartidos con todo el equipo.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setNotesExpanded((prev) => !prev)}
+                    className="ml-auto h-9 w-9 rounded-full border border-transparent text-muted-foreground hover:bg-muted/60 sm:ml-0"
+                    aria-label={notesExpanded ? "Ocultar notas" : "Mostrar notas"}
+                  >
+                    <ChevronDown
+                      className={clsx("h-4 w-4 transition-transform", notesExpanded ? "rotate-180" : "rotate-0")}
+                    />
+                  </Button>
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    value={noteInput}
+                    onChange={(event) => setNoteInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void handleAddNote();
+                      }
+                    }}
+                    placeholder="Añade nota..."
+                    className="flex-1 rounded-2xl border border-[var(--border)] bg-muted/20 px-4 py-5"
+                  />
+                  <Button
+                    type="button"
+                    onClick={() => void handleAddNote()}
+                    disabled={notesSubmitting || !noteInput.trim() || !order?.id}
+                    className="h-12 rounded-2xl bg-emerald-500 text-sm font-semibold text-emerald-50 hover:bg-emerald-600 disabled:opacity-60"
+                  >
+                    {notesSubmitting ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Plus className="mr-2 h-4 w-4" />
+                    )}
+                    Añadir
+                  </Button>
+                </div>
+
+                <div
+                  className={clsx(
+                    "space-y-3 transition-all duration-300 ease-out",
+                    notesExpanded ? "max-h-[1200px] opacity-100" : "max-h-0 overflow-hidden opacity-0"
+                  )}
+                >
+                  {orderNotes.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-[var(--border)] bg-muted/30 px-6 py-8 text-center text-sm text-muted-foreground">
+                      No hay notas registradas aún.
+                    </div>
+                  ) : (
+                    orderNotes.map((note) => (
+                      <div
+                        key={note.id}
+                        className={clsx(
+                          "rounded-2xl border p-4 shadow-sm transition",
+                          note.status === "resolved"
+                            ? "border-dashed border-[var(--border)] bg-muted/30"
+                            : "border-[var(--border)] bg-background"
+                        )}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1">
+                            {editingNoteId === note.id ? (
+                              <>
+                                <Textarea
+                                  value={editingContent}
+                                  onChange={(event) => setEditingContent(event.target.value)}
+                                  className="min-h-[88px] rounded-xl border border-[var(--border)] bg-background"
+                                />
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <Button
+                                    size="sm"
+                                    onClick={() => void handleSaveNoteEdit()}
+                                    disabled={noteActionState?.id === note.id && noteActionState?.type === "edit"}
+                                  >
+                                    {noteActionState?.id === note.id && noteActionState?.type === "edit" ? (
+                                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Check className="mr-2 h-3.5 w-3.5" />
+                                    )}
+                                    Guardar
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={handleCancelEdit}
+                                    className="border-[var(--border)] text-muted-foreground"
+                                  >
+                                    Cancelar
+                                  </Button>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <p
+                                  className={clsx(
+                                    "text-sm text-[var(--foreground)]",
+                                    note.status === "resolved" && "text-muted-foreground line-through"
+                                  )}
+                                >
+                                  {note.content}
+                                </p>
+                                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                  {note.authorName ? (
+                                    <span className="font-medium text-foreground/80">{note.authorName}</span>
+                                  ) : null}
+                                  {note.authorName ? <span>•</span> : null}
+                                  <span>{relativeTimeFromNow(note.createdAt)}</span>
+                                  {note.updatedAt ? (
+                                    <>
+                                      <span>•</span>
+                                      <span>Editada {relativeTimeFromNow(note.updatedAt)}</span>
+                                    </>
+                                  ) : null}
+                                  {note.status === "resolved" ? (
+                                    <>
+                                      <span>•</span>
+                                      <Badge className="bg-emerald-500 text-[11px] font-semibold text-emerald-50">
+                                        Resuelta
+                                      </Badge>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                          {editingNoteId !== note.id ? (
+                            <div className="flex items-center gap-1">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => void handleToggleResolved(note.id)}
+                                disabled={noteActionState?.id === note.id && noteActionState?.type === "toggle"}
+                                className={clsx(
+                                  "h-8 w-8 rounded-full",
+                                  note.status === "resolved"
+                                    ? "text-muted-foreground hover:bg-muted hover:text-[var(--destructive)]"
+                                    : "text-emerald-600 hover:bg-emerald-50"
+                                )}
+                                title={note.status === "resolved" ? "Marcar como pendiente" : "Marcar como resuelta"}
+                              >
+                                {noteActionState?.id === note.id && noteActionState?.type === "toggle" ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : note.status === "resolved" ? (
+                                  <X className="h-4 w-4" />
+                                ) : (
+                                  <Check className="h-4 w-4" />
+                                )}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleStartEdit(note)}
+                                className="h-8 w-8 rounded-full text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                                title="Editar nota"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => void handleDeleteNote(note.id)}
+                                disabled={noteActionState?.id === note.id && noteActionState?.type === "delete"}
+                                className="h-8 w-8 rounded-full text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
+                                title="Eliminar nota"
+                              >
+                                {noteActionState?.id === note.id && noteActionState?.type === "delete" ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Sheet
-                  open={historyOpen}
-                  onOpenChange={(v) => {
-                    setHistoryOpen(v);
-                    if (v) {
-                    void loadSnapshots();
-                  } else {
-                    cancelEditingSnapshot();
-                  }
-                }}
-              >
-                <SheetTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    aria-label="Historial"
-                    title="Historial"
-                    className="h-10 w-10 rounded-2xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
-                  >
-                    <History className="h-4 w-4" />
-                  </Button>
-                </SheetTrigger>
-                <SheetContent side="right" className="flex w-[85vw] max-w-sm flex-col">
-                  <SheetHeader>
-                    <SheetTitle>Historial</SheetTitle>
-                  </SheetHeader>
-                  <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-2">
-                    {snapshots.length === 0 && (
-                      <div className="text-sm text-muted-foreground">Aún no hay versiones guardadas.</div>
-                    )}
-                    {snapshots.map((s) => {
-                      const isEditing = editingSnapshotId === s.id;
-                      const isRenaming = renamingSnapshotId === s.id;
-                      return (
-                        <Card key={s.id}>
-                          <CardContent className="p-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0 flex-1">
-                                {isEditing ? (
-                                  <Input
-                                    ref={isEditing ? snapshotTitleInputRef : undefined}
-                                    value={snapshotTitleDraft}
-                                    onChange={(e) => setSnapshotTitleDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") {
-                                        e.preventDefault();
-                                        void commitSnapshotTitle();
-                                      } else if (e.key === "Escape") {
-                                        e.preventDefault();
-                                        cancelEditingSnapshot();
-                                      }
-                                    }}
-                                    onBlur={() => void commitSnapshotTitle()}
-                                    disabled={isRenaming}
-                                    className="h-8"
-                                  />
-                                ) : (
-                                  <div className="font-medium truncate" title={s.title}>
-                                    {s.title}
+            <div className="rd-card">
+              <div className="rd-card-content space-y-3">
+                <div className="rd-card-header">
+                  <div className="rd-card-title">Crear nuevo grupo</div>
+                </div>
+                <GroupCreator onCreate={(name) => { if (name.trim()) void createGroup(name.trim()); }} />
+              </div>
+            </div>
+          </div>
+
+          <div className="rd-card mt-6">
+            <div className="rd-card-content space-y-4">
+              <div className="rd-card-header">
+                <div>
+                  <div className="rd-card-title">Acciones de stock</div>
+                  <p className="text-sm text-muted-foreground">Sincronizá el inventario con las ventas reales.</p>
+                </div>
+              </div>
+              <div className="rd-actions-grid">
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={handleOpenStockModal}
+                  disabled={stockProcessing || actionableItems.length === 0}
+                  className="h-11 flex-1 rounded-full bg-[var(--primary)]/90 px-6 text-[var(--primary-foreground)] shadow-[0_8px_18px_var(--surface-action-primary-strong)] hover:bg-[var(--primary)]"
+                >
+                  {stockProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Obtener stock
+                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      className="h-11 flex-1 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] hover:bg-muted"
+                      title="Aplicar cantidades sugeridas"
+                      disabled={suggesting}
+                    >
+                      Sugerido
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>¿Qué tipo de pedido vas a hacer?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Elegí el período para calcular las cantidades:
+                        <br />• <b>Semanal</b>: promedio semanal (últimas 4 semanas)
+                        <br />• <b>Quincenal</b>: ventas de las últimas 2 semanas
+                        <br />• <b>Mensual</b>: ventas de los últimos 30 días
+                        <br />Si un producto tiene “paquete”, se ajusta al múltiplo del pack.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <div className="flex justify-end gap-2 pt-2">
+                      <AlertDialogCancel asChild>
+                        <Button variant="outline">Cancelar</Button>
+                      </AlertDialogCancel>
+                      <AlertDialogAction asChild>
+                        <Button disabled={suggesting} onClick={() => void handlePickSuggested("week")}>
+                          Semanal
+                        </Button>
+                      </AlertDialogAction>
+                      <AlertDialogAction asChild>
+                        <Button disabled={suggesting} onClick={() => void handlePickSuggested("2w")}>
+                          Quincenal
+                        </Button>
+                      </AlertDialogAction>
+                      <AlertDialogAction asChild>
+                        <Button disabled={suggesting} onClick={() => void handlePickSuggested("30d")}>
+                          Mensual
+                        </Button>
+                      </AlertDialogAction>
+                    </div>
+                  </AlertDialogContent>
+                </AlertDialog>
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="h-11 flex-1 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] transition hover:bg-muted disabled:opacity-60"
+                  onClick={() => void handleUndoStock()}
+                  disabled={stockProcessing || !stockUndoSnapshot || stockUndoSnapshot.rows.length === 0}
+                >
+                  Deshacer
+                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      className="h-11 flex-1 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] transition hover:bg-muted disabled:opacity-60"
+                      disabled={zeroing}
+                    >
+                      Cant.0
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>¿Poner todas las cantidades en 0?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Esto pondrá en 0 la cantidad de <b>todos</b> los productos del pedido.
+                        No afecta precios ni grupos. ¿Confirmás?
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => void zeroAllQuantities()} disabled={zeroing}>
+                        Sí, poner todo en 0
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+              {actionableItems.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Agregá productos al pedido para habilitar estas acciones.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="rd-card mt-6">
+            <div className="rd-card-content space-y-4">
+              <div className="rd-card-header">
+                <div>
+                  <div className="rd-card-title">Organización de productos</div>
+                  <p className="text-sm text-muted-foreground">Definí el orden y margen estimado de cada ítem.</p>
+                </div>
+              </div>
+              <div className="rd-sort-card">
+                <div className="flex flex-1 flex-col gap-3">
+                  <Label htmlFor="sort-mode" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    Ordenar items
+                  </Label>
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
+                    <div className="flex-1">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-3">
+                        <div className="flex-1">
+                          <Select
+                            value={sortMode}
+                            onValueChange={(v) => {
+                              const next = v as SortMode;
+                              setSortMode(next);
+                              persistUiState({ sortMode: next });
+                            }}
+                          >
+                            <SelectTrigger id="sort-mode" className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-5 text-sm">
+                              <SelectValue placeholder="Ordenar por..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="manual">Orden manual</SelectItem>
+                              <SelectItem value="alpha_asc">Alfabético A→Z</SelectItem>
+                              <SelectItem value="alpha_desc">Alfabético Z→A</SelectItem>
+                              <SelectItem value="avg_desc">Prom/sem ↓</SelectItem>
+                              <SelectItem value="avg_asc">Prom/sem ↑</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-3 md:w-[260px]">
+                      <Label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Precio x U
+                      </Label>
+                      <Dialog open={peSettingsOpen} onOpenChange={setPeSettingsOpen}>
+                        <DialogTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-11 rounded-full border border-[var(--border)] bg-[var(--background)] text-sm font-semibold uppercase tracking-[0.16em]"
+                          >
+                            Precio x U
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-xl max-h-[80vh] overflow-y-auto z-[80]">
+                          <DialogHeader>
+                            <DialogTitle>Precio por unidad (P.E.)</DialogTitle>
+                            <DialogDescription>
+                              Ajustá el margen estimado para inferir el costo del proveedor y aplicalo sobre todos los productos.
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-6">
+                            <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-muted/30 p-4">
+                              <div className="flex flex-wrap items-end gap-3">
+                                <div className="flex-1">
+                                  <Label htmlFor="pe-margin" className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                                    Margen estimado
+                                  </Label>
+                                  <div className="relative mt-2 text-[var(--foreground)]">
+                                    <Input
+                                      id="pe-margin"
+                                      type="number"
+                                      inputMode="decimal"
+                                      min={0}
+                                      max={100}
+                                      step={1}
+                                      value={marginPct}
+                                      onChange={(e) => {
+                                        const raw = e.target.value;
+                                        if (raw === "") {
+                                          setMarginPct(0);
+                                          return;
+                                        }
+                                        const parsed = Number(raw);
+                                        if (Number.isNaN(parsed)) return;
+                                        const clamped = Math.max(0, Math.min(100, parsed));
+                                        setMarginPct(clamped);
+                                      }}
+                                      className="h-11 w-full rounded-full border border-[var(--border)] bg-[var(--input-background)] pr-10 text-right text-base font-semibold tabular-nums"
+                                      aria-label="Margen para precio estimado"
+                                    />
+                                    <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
                                   </div>
-                                )}
-                                <div className="text-xs text-muted-foreground">
-                                  {new Date(s.created_at).toLocaleString()}
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  className="h-11 rounded-full px-6 text-xs font-semibold uppercase tracking-[0.16em]"
+                                  onClick={() => void runMarginPeApply()}
+                                  disabled={!peMarginEnabled || actionableItems.length === 0 || peApplying}
+                                >
+                                  {peApplying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                  Aplicar margen
+                                </Button>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                El margen se descuenta del precio promedio de ventas para estimar el costo del proveedor.
+                              </p>
+                            </div>
+                            <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-muted/20 p-4">
+                              <Label
+                                htmlFor="pe-margin-toggle"
+                                className="inline-flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+                              >
+                                <Checkbox
+                                  id="pe-margin-toggle"
+                                  checked={peMarginEnabled}
+                                  onCheckedChange={handleMarginPeCheckboxChange}
+                                  disabled={actionableItems.length === 0}
+                                  aria-label="Aplicar margen automáticamente"
+                                />
+                                <span className="text-[var(--foreground)]">
+                                  {peMarginEnabled ? "Aplicación automática activada" : "Aplicar automáticamente al precio U"}
+                                </span>
+                              </Label>
+                              <p className="text-xs text-muted-foreground">
+                                Cuando está activo, el margen se aplica sobre todos los productos utilizando los datos de ventas disponibles.
+                              </p>
+                            </div>
+                            <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-muted/20 p-4">
+                              <Label htmlFor="pe-sim" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                Simulá un ejemplo
+                              </Label>
+                              <div className="grid gap-4 sm:grid-cols-2">
+                                <div className="space-y-1.5">
+                                  <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                                    Precio de venta / subtotal
+                                  </span>
+                                  <Input
+                                    id="pe-sim"
+                                    inputMode="decimal"
+                                    type="number"
+                                    value={peSimInput}
+                                    onChange={(e) => setPeSimInput(e.target.value)}
+                                    placeholder="Ej. 1500"
+                                    className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 text-base font-semibold tabular-nums"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                                    Precio proveedor real (opcional)
+                                  </span>
+                                  <Input
+                                    id="pe-sim-provider"
+                                    inputMode="decimal"
+                                    type="number"
+                                    value={peSimProviderInput}
+                                    onChange={(e) => setPeSimProviderInput(e.target.value)}
+                                    placeholder="Ej. 900"
+                                    className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 text-base font-semibold tabular-nums"
+                                  />
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2">
-                                {isEditing ? (
-                                  <>
+                              <div className="grid gap-4 sm:grid-cols-2">
+                                <div className="rounded-2xl border border-[var(--border)] bg-background px-4 py-3 text-sm">
+                                  <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                                    Precio estimado proveedor
+                                  </div>
+                                  <div className="text-2xl font-semibold tabular-nums text-[var(--foreground)]">
+                                    {fmtMoney(peSimEstimate)}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    Ahorro estimado: {fmtMoney(peSimDiff)}
+                                  </div>
+                                </div>
+                                <div className="rounded-2xl border border-[var(--border)] bg-background px-4 py-3 text-sm flex flex-col gap-2">
+                                  <div>
+                                    <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                                      Margen según tus datos
+                                    </div>
+                                    <div className="text-2xl font-semibold tabular-nums text-[var(--foreground)]">
+                                      {peSimMarginFromInputs != null ? `${peSimMarginFromInputs}%` : "—"}
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                                    <span>Fórmula: 1 - (Proveedor / Venta)</span>
                                     <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      aria-label="Guardar nombre"
-                                      onMouseDown={(e) => e.preventDefault()}
-                                      onClick={() => void commitSnapshotTitle()}
-                                      disabled={isRenaming}
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 rounded-full px-3 text-[11px] font-semibold uppercase tracking-[0.16em]"
+                                      onClick={() => {
+                                        if (peSimMarginFromInputs == null) return;
+                                        const safe = Math.max(0, Math.min(100, peSimMarginFromInputs));
+                                        setMarginPct(safe);
+                                      }}
+                                      disabled={peSimMarginFromInputs == null}
                                     >
-                                      {isRenaming ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                      ) : (
-                                        <Check className="h-4 w-4" />
-                                      )}
+                                      Usar este
                                     </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      aria-label="Cancelar edición"
-                                      onMouseDown={(e) => e.preventDefault()}
-                                      onClick={() => cancelEditingSnapshot()}
-                                      disabled={isRenaming}
-                                    >
-                                      <X className="h-4 w-4" />
-                                    </Button>
-                                  </>
-                                ) : (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    aria-label="Renombrar versión"
-                                    onClick={() => startEditingSnapshot(s)}
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                )}
-                                <Button size="sm" onClick={() => void openSnapshot(s)} disabled={isRenaming}>
-                                  Abrir
-                                </Button>
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="text-destructive"
-                                      aria-label="Eliminar"
-                                      disabled={isRenaming}
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>Eliminar versión</AlertDialogTitle>
-                                      <AlertDialogDescription>
-                                        ¿Seguro querés eliminar esta versión del historial?
-                                      </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                      <AlertDialogAction asChild>
-                                        <Button
-                                          variant="destructive"
-                                          onClick={() => void deleteSnapshot(s.id)}
-                                        >
-                                          Eliminar
-                                        </Button>
-                                      </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
+                                  </div>
+                                </div>
                               </div>
                             </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
+                          </div>
+                          <DialogFooter className="gap-2">
+                            <Button variant="outline" onClick={() => setPeSettingsOpen(false)}>
+                              Cerrar
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                    </div>
                   </div>
-                </SheetContent>
-              </Sheet>
-
-              <input
-                ref={salesUploadRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.currentTarget.files?.[0];
-                  if (f) void handleImportSales(f);
-                }}
-              />
-              <Button
-                variant="outline"
-                size="icon"
-                aria-label="Importar ventas actualizadas"
-                onClick={() => salesUploadRef.current?.click()}
-                disabled={importingSales}
-                title="Importar ventas actualizadas"
-                className="sales-import-highlight h-10 w-10 rounded-2xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
-              >
-                <Upload className="h-4 w-4" />
-              </Button>
-
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-sm font-semibold text-[var(--foreground)] transition hover:bg-muted"
-                    disabled={zeroing}
-                    title="Poner todas las cantidades en 0"
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label
+                    htmlFor="check-all"
+                    className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-[var(--border)] bg-muted/60 px-3 py-1.5 hover:bg-muted"
+                    title={allChecked ? "Desmarcar todos" : "Marcar todos"}
                   >
-                    Cant.0
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>¿Poner todas las cantidades en 0?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Esto pondrá en 0 la cantidad de <b>todos</b> los productos del pedido.
-                      No afecta precios ni grupos. ¿Confirmás?
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void zeroAllQuantities()} disabled={zeroing}>
-                      Sí, poner todo en 0
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-              </div>
-
-              <div className="flex flex-col items-end justify-end gap-1">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                  Total
-                </span>
-                <span className="inline-flex items-center rounded-2xl bg-[var(--primary)] px-5 py-2 text-lg font-semibold text-[var(--primary-foreground)] shadow-[0_14px_36px_-22px_rgba(32,56,44,0.55)] md:text-xl">
-                  {fmtMoney(grandTotal)}
-                </span>
-              </div>
-            </div>
-
-            {salesImportError && (
-              <div className="flex items-start gap-3 rounded-2xl border border-[var(--surface-alert-strong)] bg-[var(--surface-alert-soft)] px-4 py-3 text-xs text-[var(--destructive)]">
-                <p className="flex-1 whitespace-pre-wrap break-words">{salesImportError}</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCopySalesError}
-                  className="shrink-0 rounded-full border border-[var(--destructive)] bg-transparent px-4 text-[var(--destructive)] transition-colors hover:bg-[var(--surface-alert-soft)]"
-                >
-                  Copiar
-                </Button>
-              </div>
-            )}
-
-          </div>
-        </div>
-      </div>
-
-
-      {/* Crear grupo */}
-      <div className="mt-6 rounded-3xl border border-[var(--border)] bg-card/90 px-5 py-4 shadow-card">
-        <Label htmlFor="new-group-name" className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-          Crear grupo
-        </Label>
-        <GroupCreator onCreate={(name) => { if (name.trim()) void createGroup(name.trim()); }} />
-      </div>
-
-      {/* Notas rápidas */}
-      <div className="mt-6 rounded-3xl border border-[var(--border)] bg-card/90 px-5 py-4 shadow-card">
-        <div className="flex items-start justify-between gap-3">
-          <Label htmlFor="order-notes" className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Notas rápidas
-          </Label>
-          {orderNotes ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setOrderNotes("")}
-              className="h-8 rounded-full px-3 text-xs font-medium text-muted-foreground hover:bg-muted/60"
-            >
-              Limpiar
-            </Button>
-          ) : null}
-        </div>
-        <Textarea
-          id="order-notes"
-          value={orderNotes}
-          onChange={(event) => setOrderNotes(event.target.value)}
-          placeholder="Anotá recordatorios o artículos pendientes para este proveedor."
-          className="mt-3 min-h-[96px] resize-y rounded-2xl border border-[var(--border)] bg-background/80 text-sm shadow-[0_1px_3px_rgba(15,23,42,0.08)] focus-visible:ring-0"
-        />
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          Se guarda automáticamente en la nube para que lo veas desde cualquier dispositivo.
-        </p>
-      </div>
-
-      <div className="mt-6 flex flex-wrap items-center gap-3">
-        <Button
-          variant="secondary"
-          size="lg"
-          onClick={handleOpenStockModal}
-          disabled={stockProcessing || actionableItems.length === 0}
-          className="h-11 rounded-full bg-[var(--primary)]/90 px-6 text-[var(--primary-foreground)] shadow-[0_8px_18px_var(--surface-action-primary-strong)] hover:bg-[var(--primary)]"
-        >
-          {stockProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-          Obtener stock
-        </Button>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button
-              variant="outline"
-              size="lg"
-              className="h-11 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] hover:bg-muted"
-              title="Aplicar cantidades sugeridas"
-              disabled={suggesting}
-            >
-              Sugerido
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>¿Qué tipo de pedido vas a hacer?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Elegí el período para calcular las cantidades:
-                <br />• <b>Semanal</b>: promedio semanal (últimas 4 semanas)
-                <br />• <b>Quincenal</b>: ventas de las últimas 2 semanas
-                <br />• <b>Mensual</b>: ventas de los últimos 30 días
-                <br />Si un producto tiene “paquete”, se ajusta al múltiplo del pack.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <div className="flex justify-end gap-2 pt-2">
-              <AlertDialogCancel asChild>
-                <Button variant="outline">Cancelar</Button>
-              </AlertDialogCancel>
-
-              <AlertDialogAction asChild>
-                <Button disabled={suggesting} onClick={() => void handlePickSuggested("week")}>
-                  Semanal
-                </Button>
-              </AlertDialogAction>
-              <AlertDialogAction asChild>
-                <Button disabled={suggesting} onClick={() => void handlePickSuggested("2w")}>
-                  Quincenal
-                </Button>
-              </AlertDialogAction>
-              <AlertDialogAction asChild>
-                <Button disabled={suggesting} onClick={() => void handlePickSuggested("30d")}>
-                  Mensual
-                </Button>
-              </AlertDialogAction>
-            </div>
-          </AlertDialogContent>
-        </AlertDialog>
-        <Button
-          variant="outline"
-          size="lg"
-          className="h-11 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] transition hover:bg-muted disabled:opacity-60"
-          onClick={() => void handleUndoStock()}
-          disabled={stockProcessing || !stockUndoSnapshot || stockUndoSnapshot.rows.length === 0}
-        >
-          Deshacer
-        </Button>
-        {actionableItems.length === 0 && (
-          <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
-            Agregá productos al pedido para habilitar estas acciones.
-          </span>
-        )}
-      </div>
-
-      {/* Ordenar items + Casilla maestra */}
-      <div className="mt-6">
-        <Label htmlFor="sort-mode" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          Ordenar items
-        </Label>
-        <div className="mt-1 flex items-center gap-2">
-          <div className="flex flex-1 items-center gap-3">
-            {/* Select de orden, ocupa el espacio */}
-            <div className="flex-1">
-              <Select
-                value={sortMode}
-                onValueChange={(v) => {
-                  const next = v as SortMode;
-                  setSortMode(next);
-                  persistUiState({ sortMode: next });
-                }}
-              >
-                <SelectTrigger id="sort-mode" className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-5 text-sm">
-                  <SelectValue placeholder="Ordenar por..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="manual">Orden manual</SelectItem>
-                  <SelectItem value="alpha_asc">Alfabético A→Z</SelectItem>
-                  <SelectItem value="alpha_desc">Alfabético Z→A</SelectItem>
-                  <SelectItem value="avg_desc">Prom/sem ↓</SelectItem>
-                  <SelectItem value="avg_asc">Prom/sem ↑</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              <span>Margen P.E.</span>
-              <div className="relative text-[var(--foreground)]">
-                <Input
-                  id="pe-margin"
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={marginPct}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    if (raw === "") {
-                      setMarginPct(0);
-                      return;
-                    }
-                    const parsed = Number(raw);
-                    if (Number.isNaN(parsed)) return;
-                    const clamped = Math.max(0, Math.min(100, parsed));
-                    setMarginPct(clamped);
-                  }}
-                  className="h-11 w-24 rounded-full border border-[var(--border)] bg-[var(--input-background)] pr-8 text-right text-sm font-medium uppercase tracking-normal"
-                  aria-label="Margen para precio estimado"
-                />
-                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground">%</span>
+                    <Checkbox
+                      id="check-all"
+                      checked={bulkState}
+                      onCheckedChange={(v) => setAllChecked(v === true)}
+                      aria-label={allChecked ? "Desmarcar todos" : "Marcar todos"}
+                    />
+                    <span className="hidden select-none text-sm sm:inline">
+                      {allChecked ? "Todos" : "Marcar todos"}
+                    </span>
+                  </Label>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Casilla maestra a la derecha */}
-            <Label
-              htmlFor="check-all"
-              className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-[var(--border)] bg-muted/60 px-3 py-1.5 hover:bg-muted"
-              title={allChecked ? "Desmarcar todos" : "Marcar todos"}
-            >
-              <Checkbox
-                id="check-all"
-                checked={bulkState}
-                onCheckedChange={(v) => setAllChecked(v === true)}
-                aria-label={allChecked ? "Desmarcar todos" : "Marcar todos"}
-              />
-              <span className="text-sm select-none hidden sm:inline">
-                {allChecked ? "Todos" : "Marcar todos"}
-              </span>
-            </Label>
-          </div>
-        </div>
-      </div>
-
-      <AlertDialog
+          <AlertDialog
         open={stockModalOpen}
         onOpenChange={(open) => {
           if (stockProcessing) return;
@@ -4885,6 +6071,7 @@ async function exportOrderAsXlsx() {
                 productNames={productNames}
                 sales={sales}
                 statsByProduct={statsByProduct}
+                salesByProductMap={salesByProduct}
                 margin={marginPct}
                 tokenMatch={tokenMatch}
                 placeholder={GROUP_PLACEHOLDER}
@@ -4910,6 +6097,15 @@ async function exportOrderAsXlsx() {
                 computeSalesSinceStock={computeSalesSinceStock}
                 statsOpenMap={statsOpenMap}
                 onToggleStats={toggleStats}
+                minStockMap={minStockMap}
+                onUpdateMinStock={updateMinStockValueForItem}
+                onToggleMinStock={toggleMinStockForItem}
+                autoQtyMap={autoQtyMap}
+                onToggleAutoQty={toggleAutoQtyForItem}
+                onRememberManualQty={rememberManualQty}
+                getManualQtyBackup={getManualQtyBackup}
+                frequency={providerFrequency}
+                onChangeFrequency={handleChangeAutoFrequency}
                 containerProps={containerProps} // <-- clave
                 bottomViewportOffset={effectiveViewportOffset}
                 floatingActionBottomOffset={floatingActionBottomOffset}
@@ -4923,91 +6119,90 @@ async function exportOrderAsXlsx() {
 
       {/* Footer */}
       <div
-        className="fixed left-0 right-0 z-50 px-4 pb-4 pt-2 transition-transform duration-300 will-change-transform md:left-72 md:px-8 lg:px-10"
+        className="order-sticky-bar transition-transform duration-300 will-change-transform"
         style={{
           transform: footerTransform,
           bottom: footerBottomOffset,
         }}
       >
-        <div className="mx-auto w-full max-w-5xl rounded-[24px] border border-[var(--border)] bg-card/95 px-4 py-3 text-[var(--foreground)] shadow-card md:px-6 md:py-4">
-          <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 items-end gap-2">
-              <div className="rounded-xl border border-[var(--border)] bg-muted/40 px-3 py-2 shadow-sm">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                  Total unidades
-                </div>
-                <div className="mt-1 text-base font-semibold tabular-nums md:text-lg">{grandQty}</div>
+        <div className="mx-auto w-full max-w-4xl rd-sticky-card text-[var(--foreground)]">
+          <div className="rd-sticky-metrics">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                Total unidades
               </div>
-              <div className="rounded-xl border border-[var(--border)] bg-[var(--primary)]/15 px-3 py-2 text-right shadow-sm">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--primary)]/80">
-                  Total a pagar
-                </div>
-                <div className="mt-1 text-base font-semibold tabular-nums text-[var(--primary)] md:text-lg">{fmtMoney(grandTotal)}</div>
-              </div>
+              <div className="mt-1 text-base font-semibold tabular-nums md:text-lg">{grandQty}</div>
             </div>
-
-            <div className="grid grid-cols-4 gap-2">
-              <div className="relative">
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".xlsx,.xls,.csv,.json"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.currentTarget.files?.[0];
-                    if (f) void handleImportFile(f);
-                  }}
-                />
-                <Button
-                  variant="outline"
-                  onClick={() => fileRef.current?.click()}
-                  disabled={importing}
-                  aria-label="Importar"
-                  title="Importar"
-                  className="flex h-10 w-full items-center justify-center rounded-xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
-                >
-                  <Upload className="h-4 w-4" />
-                </Button>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                Total a pagar
               </div>
+              <div className="mt-1 text-base font-semibold tabular-nums text-[var(--primary)] md:text-lg">{fmtMoney(grandTotal)}</div>
+            </div>
+          </div>
 
-              <Button
-                variant="outline"
-                onClick={() => void handleCopySimpleList()}
-                aria-label="Copiar"
-                title="Copiar"
-                className="flex h-10 w-full items-center justify-center rounded-xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setExportFormat("xlsx");
-                  setExportDialogOpen(true);
+          <div className="rd-sticky-actions">
+            <div className="relative">
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0];
+                  if (f) void handleImportFile(f);
                 }}
-                aria-label="Exportar"
-                title="Exportar"
-                className="flex h-10 w-full items-center justify-center rounded-xl border border-[var(--border)] bg-muted/60 text-[var(--foreground)] transition hover:bg-muted"
-              >
-                <Download className="h-4 w-4" />
-              </Button>
-
+              />
               <Button
-                onClick={() => void saveSnapshot()}
-                aria-label="Guardar"
-                title="Guardar"
-                className="flex h-10 w-full items-center justify-center rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_16px_36px_-24px_rgba(34,60,48,0.55)] transition hover:bg-[var(--primary)]/90"
+                variant="outline"
+                onClick={() => fileRef.current?.click()}
+                disabled={importing}
+                aria-label="Importar pedido"
+                className="h-10 w-full rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted"
               >
-                <Save className="h-4 w-4" />
+                {importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                Importar
               </Button>
             </div>
+
+            <Button
+              variant="outline"
+              onClick={() => void handleCopySimpleList()}
+              aria-label="Copiar pedido"
+              className="h-10 w-full rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted"
+            >
+              <Copy className="mr-2 h-4 w-4" />
+              Copiar
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                setExportFormat("xlsx");
+                setExportDialogOpen(true);
+              }}
+              aria-label="Exportar pedido"
+              className="h-10 w-full rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted"
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Exportar
+            </Button>
+
+            <Button
+              onClick={() => void saveSnapshot()}
+              aria-label="Guardar pedido"
+              className="h-10 w-full rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_16px_36px_-24px_rgba(34,60,48,0.55)] transition hover:bg-[var(--primary)]/90"
+            >
+              <Save className="mr-2 h-4 w-4" />
+              Guardar
+            </Button>
           </div>
         </div>
       </div>
-    </main>
-    </>
-  );
+    </div>
+    </div>
+  </React.Fragment>
+);
 }
 
 type ItemTitleProps = {
@@ -5213,12 +6408,12 @@ function PriceEditor({
     <div className="w-full text-[color:var(--order-card-accent)]">
       <div className="flex flex-col gap-1">
         <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--order-card-accent)]/70">
-          Precio
+          Precio u.
         </span>
 
-        <div className="inline-flex h-9 w-[96px] items-center justify-between rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+        <div className="inline-flex h-10 w-full max-w-[140px] items-center justify-between rounded-2xl border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
           <Input
-            className="h-7 w-12 border-none bg-transparent pl-2 pr-0 text-right text-sm text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
+            className="h-7 w-14 border-none bg-transparent pl-1 pr-0 text-right text-base font-semibold text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
             inputMode="decimal"
             placeholder="0"
             value={val}
@@ -5236,7 +6431,7 @@ function PriceEditor({
             size="icon"
             variant="ghost"
             className={clsx(
-              "h-7 w-7 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors",
+              "h-7 w-7 rounded-full border border-[color:var(--order-card-pill-border)] bg-white text-[color:var(--order-card-accent)] shadow-none transition-colors",
               dirty ? "hover:border-[color:var(--order-card-accent)]" : "opacity-60"
             )}
             disabled={!dirty}
@@ -5265,6 +6460,7 @@ type StockEditorProps = {
   previousUpdatedAt?: string | null;
   onCommit: (...args: [number | null]) => Promise<void> | void;
   salesSince?: number;
+  onInputMount?: (el: HTMLInputElement | null) => void;
 };
 
 function StockEditor({
@@ -5273,9 +6469,18 @@ function StockEditor({
   previousUpdatedAt,
   onCommit,
   salesSince,
+  onInputMount,
 }: StockEditorProps) {
   const [val, setVal] = React.useState<string>(value == null ? "" : String(value));
   const [dirty, setDirty] = React.useState(false);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const handleInputRef = React.useCallback(
+    (node: HTMLInputElement | null) => {
+      inputRef.current = node;
+      onInputMount?.(node);
+    },
+    [onInputMount],
+  );
 
   React.useEffect(() => {
     setVal(value == null ? "" : String(value));
@@ -5319,6 +6524,8 @@ function StockEditor({
   }
 
   const since = sinceText(updatedAt);
+  const signatureLabel = formatStockSignatureLabel(updatedAt);
+  const hasSalesSinceSignature = typeof salesSince === "number" && !!updatedAt;
   let appliedFrom: { absolute: string; relative: string; title: string } | null = null;
   if (previousUpdatedAt) {
     const date = new Date(previousUpdatedAt);
@@ -5335,11 +6542,12 @@ function StockEditor({
     <div className="w-full text-[color:var(--order-card-accent)]">
       <div className="flex flex-col gap-1">
         <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--order-card-accent)]/70">
-          Stock
+          Stock actual
         </span>
-        <div className="inline-flex h-9 w-[96px] items-center justify-between rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+        <div className="inline-flex h-10 w-full max-w-[140px] items-center justify-end gap-0 rounded-2xl border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
           <Input
-            className="h-7 w-12 border-none bg-transparent pl-2 pr-0 text-right text-sm text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
+            ref={handleInputRef}
+            className="h-7 w-12 border-none bg-transparent pl-1 pr-0 text-right text-base font-semibold text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
             inputMode="numeric"
             placeholder="000"
             value={val}
@@ -5364,7 +6572,7 @@ function StockEditor({
             size="icon"
             variant="ghost"
             className={clsx(
-              "h-7 w-7 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-colors",
+              "h-7 w-7 rounded-full border border-[color:var(--order-card-pill-border)] bg-white text-[color:var(--order-card-accent)] shadow-none transition-colors",
               dirty ? "hover:border-[color:var(--order-card-accent)]" : "opacity-60"
             )}
             disabled={!dirty}
@@ -5378,9 +6586,19 @@ function StockEditor({
       </div>
 
       <div className="mt-1 flex flex-col items-end gap-1 text-[10px] text-[color:var(--order-card-accent)] opacity-60">
+        <div className="text-right" title={signatureLabel || since.title}>
+          {signatureLabel ? `Firma ${signatureLabel}` : "sin firma"}
+        </div>
         <div className="text-right" title={since.title}>
           {updatedAt ? `Aplicado ${since.text}` : "sin aplicación"}
         </div>
+        {hasSalesSinceSignature ? (
+          <div className="text-right" title="Ventas detectadas desde la firma">
+            {salesSince && salesSince > 0
+              ? `Ventas descontadas: -${fmtInt(salesSince)}`
+              : "Sin ventas desde la firma"}
+          </div>
+        ) : null}
         {appliedFrom && (
           <div className="text-right" title={appliedFrom.title}>
             Ventas descontadas desde {appliedFrom.absolute} ({appliedFrom.relative})
@@ -5395,7 +6613,7 @@ function StockEditor({
 /* =================== GroupSection =================== */
 function GroupSection(props: GroupSectionProps) {
   const {
-    groupName, items, productNames, sales, margin, tokenMatch, placeholder,
+    groupName, items, productNames, sales, salesByProductMap, margin, tokenMatch, placeholder,
     onAddItem, onRemoveItem, onUpdateQty, onUpdateUnitPrice, onRenameGroup, onDeleteGroup,
     onBulkAddItems, onBulkRemoveByNames, sortMode,
     manualOrder, manualSortActive, onMoveItem,
@@ -5404,10 +6622,15 @@ function GroupSection(props: GroupSectionProps) {
     onRenameItemLabel, computeSalesSinceStock,
     statsByProduct,
     statsOpenMap, onToggleStats,
+    minStockMap, onUpdateMinStock, onToggleMinStock,
+    autoQtyMap, onToggleAutoQty, onRememberManualQty, getManualQtyBackup,
+    frequency, onChangeFrequency,
     margin: marginPct,
     bottomViewportOffset,
     floatingActionBottomOffset,
   } = props;
+
+  const frequencyLabelText = React.useMemo(() => providerFrequencyLabel(frequency), [frequency]);
 
   // === Estado del texto del buscador (queda ARRIBA del bloque nuevo)
   const [q, setQ] = React.useState("");
@@ -5584,16 +6807,39 @@ function GroupSection(props: GroupSectionProps) {
   }, [editing]);
 
   const arrVisible = items.filter((x) => x.product_name !== placeholder);
-  // Items visibles (sin placeholder) ya existe:
-// const arrVisible = items.filter((x) => x.product_name !== placeholder);
+  const confirmedCount = React.useMemo(
+    () => arrVisible.reduce((acc, it) => acc + (checkedMap[it.id] ? 1 : 0), 0),
+    [arrVisible, checkedMap]
+  );
 
-// 👉 Confirmados dentro del grupo (según checkedMap)
-const confirmedCount = React.useMemo(
-  () => arrVisible.reduce((acc, it) => acc + (checkedMap[it.id] ? 1 : 0), 0),
-  [arrVisible, checkedMap]
-);
+  const groupStats = React.useMemo(() => {
+    return arrVisible.reduce(
+      (acc, it) => {
+        const qty = round2(Number(it.qty ?? 0));
+        const price = round2(Number(it.unit_price ?? 0));
+        const subtotal = price * qty;
+        const label = (it.display_name?.trim() || it.product_name).trim();
+        const lastStockTs = it.stock_updated_at ? new Date(it.stock_updated_at).getTime() : null;
+        const pendingSales = lastStockTs ? computeSalesSinceStock(label, lastStockTs) : 0;
+        const baselineStock = typeof it.stock_qty === "number" ? round2(it.stock_qty) : null;
+        const currentStock =
+          baselineStock == null ? 0 : Math.max(0, round2(baselineStock - pendingSales));
+        const projected = currentStock + qty;
 
-  const groupSubtotal = arrVisible.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
+        return {
+          subtotal: acc.subtotal + subtotal,
+          units: acc.units + qty,
+          stockBalance: acc.stockBalance + projected,
+        };
+      },
+      { subtotal: 0, units: 0, stockBalance: 0 }
+    );
+  }, [arrVisible, computeSalesSinceStock]);
+
+  const groupSubtotal = groupStats.subtotal;
+  const groupUnits = groupStats.units;
+  const groupAvgPrice = groupUnits > 0 ? groupSubtotal / groupUnits : 0;
+  const groupStockBalance = groupStats.stockBalance;
   const suggestions = React.useMemo(() => {
     if (!q) return [] as string[];
     const matches = productNames.filter((n) => tokenMatch(n, q));
@@ -5630,6 +6876,15 @@ const confirmedCount = React.useMemo(
     }
     return visibleOrderIds;
   }, [sortMode, manualOrder, arrVisible, visibleOrderIds]);
+
+  const stockInputRefs = React.useRef<Record<string, HTMLInputElement | null>>({});
+  const setStockInputRef = React.useCallback((itemId: string, node: HTMLInputElement | null) => {
+    if (node) stockInputRefs.current[itemId] = node;
+    else delete stockInputRefs.current[itemId];
+  }, []);
+  const focusStockInput = React.useCallback((itemId: string) => {
+    stockInputRefs.current[itemId]?.focus();
+  }, []);
 
   async function commitRename() {
     const nv = (editValue || "").trim() || "Sin grupo";
@@ -5693,7 +6948,7 @@ const confirmedCount = React.useMemo(
         </button>
       )}
     </div>
-  ), [arrVisible, groupName, handleInputRef, open, q, readRect, scrollInputToTop, showFullscreenSearch]);
+  ), [arrVisible, groupName, handleInputRef, onAddItem, open, q, readRect, scrollInputToTop, showFullscreenSearch]);
 
   const SuggestionsContent = ({ scrollable }: { scrollable?: boolean }) => {
     const entries = scrollable ? suggestions : inlineSuggestions;
@@ -5770,28 +7025,35 @@ const confirmedCount = React.useMemo(
     return inner;
   };
 
-const mergedClassName = [
-  "mb-4 overflow-visible rounded-3xl border border-[var(--border)] bg-card/80 shadow-card",
-  containerProps?.className || "",
-].join(" ");
+const mergedClassName = clsx(
+  "mb-5 overflow-visible rounded-[28px] border border-[color:var(--border)] bg-[color:var(--order-group-background,var(--card))] shadow-[0_18px_40px_rgba(12,24,20,0.12)]",
+  containerProps?.className,
+);
 type DragHandleProps = {
   draggable?: boolean;
-  onDragStart?: React.DragEventHandler<any>;
-  onDragOver?: React.DragEventHandler<any>;
-  onDrop?: React.DragEventHandler<any>;
-  onDragEnd?: React.DragEventHandler<any>;
+  onDragStart?: React.DragEventHandler<HTMLDivElement>;
+  onDragOver?: React.DragEventHandler<HTMLDivElement>;
+  onDrop?: React.DragEventHandler<HTMLDivElement>;
+  onDragEnd?: React.DragEventHandler<HTMLDivElement>;
 };
-const dragHandleProps = React.useMemo<DragHandleProps>(() => {
-  if (!containerProps) return {};
-  const { className: _ignoredClassName, ...rest } = containerProps;
-  return {
-    draggable: Boolean(rest.draggable),
-    onDragStart: rest.onDragStart as React.DragEventHandler<any>,
-    onDragOver: rest.onDragOver as React.DragEventHandler<any>,
-    onDrop: rest.onDrop as React.DragEventHandler<any>,
-    onDragEnd: rest.onDragEnd as React.DragEventHandler<any>,
-  };
-}, [containerProps]);
+  const dragHandleProps = React.useMemo<DragHandleProps>(() => {
+    if (!containerProps) return {};
+    const {
+      className: _ignoredClassName,
+      draggable,
+      onDragStart,
+      onDragOver,
+      onDrop,
+      onDragEnd,
+    } = containerProps;
+    return {
+      draggable: Boolean(draggable),
+      onDragStart,
+      onDragOver,
+      onDrop,
+      onDragEnd,
+    };
+  }, [containerProps]);
 
   return (
   <AccordionItem
@@ -5806,84 +7068,122 @@ const dragHandleProps = React.useMemo<DragHandleProps>(() => {
       onDragOver={dragHandleProps.onDragOver}
       onDrop={dragHandleProps.onDrop}
       onDragEnd={dragHandleProps.onDragEnd}
-      className="rounded-t-3xl bg-muted/40 px-5 py-4 text-left text-base font-semibold text-[var(--foreground)] transition-colors data-[state=open]:rounded-b-none"
+      className="group rounded-t-[28px] bg-[color:var(--order-group-header,var(--muted)/30)] px-6 py-5 text-left text-base font-semibold text-[var(--foreground)] transition-colors data-[state=open]:rounded-b-none"
     >
-      <div className="flex w-full items-center gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          {!editing ? (
-            <span
-              role="button"
-              tabIndex={0}
-              className="inline-flex items-center gap-1 font-semibold truncate hover:opacity-80 focus:outline-none"
-              title="Tocar para renombrar"
-              onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault(); e.stopPropagation(); setEditing(true);
-                }
-              }}
-            >
-              <span className="truncate">{groupName || "Sin grupo"}</span>
-              <Pencil className="h-3.5 w-3.5 opacity-70" />
-            </span>
-          ) : (
-            <Input
-              ref={groupNameInputRef}
-              className="h-8 w-[10.5rem]"
-              value={editValue}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => setEditValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") { e.preventDefault(); void commitRename(); }
-                if (e.key === "Escape") {
-                  e.preventDefault(); setEditing(false); setEditValue(groupName || "Sin grupo");
-                }
-              }}
-              onBlur={() => void commitRename()}
-            />
-          )}
-          <Badge variant="secondary" className="shrink-0 rounded-full border border-[var(--border)] bg-white/70 px-3 py-1 text-[11px] font-medium text-[var(--foreground)]">
-            {arrVisible.length}
-          </Badge>
-        {/* NUEVO: cantidad de confirmados */}
-  <Badge
-    className={[
-      "shrink-0 rounded-full border px-3 py-1 text-[11px]",
-      confirmedCount > 0
-        ? "border-[var(--surface-success-strong)] bg-[var(--surface-success-soft)] text-[var(--success)]"
-        : "border-[var(--border)] bg-muted/60 text-muted-foreground"
-    ].join(" ")}
-    title="Productos confirmados"
-  >
-    <span className="inline-flex items-center gap-1">
-      <Check className="h-3.5 w-3.5" />
-      {confirmedCount}
-    </span>
-  </Badge>
-        </div>
+      <div className="flex w-full flex-wrap gap-4">
+        <div className="flex min-w-0 flex-1 items-start gap-4">
+          <div className="hidden h-11 w-11 items-center justify-center rounded-2xl bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-inner group-data-[state=open]:rotate-0 sm:flex">
+            <Package className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex flex-wrap items-center gap-3">
+              {!editing ? (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="inline-flex items-center gap-2 truncate text-lg font-semibold hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+                  title="Renombrar grupo"
+                  onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault(); e.stopPropagation(); setEditing(true);
+                    }
+                  }}
+                >
+                  <span className="truncate">{groupName || "Sin grupo"}</span>
+                  <Pencil className="h-4 w-4 opacity-70" />
+                </span>
+              ) : (
+                <Input
+                  ref={groupNameInputRef}
+                  className="h-9 w-[11rem] rounded-2xl"
+                  value={editValue}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); void commitRename(); }
+                    if (e.key === "Escape") {
+                      e.preventDefault(); setEditing(false); setEditValue(groupName || "Sin grupo");
+                    }
+                  }}
+                  onBlur={() => void commitRename()}
+                />
+              )}
+              <Badge className="shrink-0 rounded-full bg-[color:var(--surface-accent-soft)] px-3 py-1 text-[11px] font-semibold text-[color:var(--surface-accent-strong)]">
+                {arrVisible.length} {arrVisible.length === 1 ? "producto" : "productos"}
+              </Badge>
+              <Badge
+                className={clsx(
+                  "shrink-0 rounded-full px-3 py-1 text-[11px]",
+                  confirmedCount > 0
+                    ? "border border-[var(--surface-success-strong)] bg-[var(--surface-success-soft)] text-[var(--success)]"
+                    : "border border-[var(--border)] bg-muted/60 text-muted-foreground"
+                )}
+                title="Productos confirmados"
+              >
+                <span className="inline-flex items-center gap-1">
+                  <Check className="h-3.5 w-3.5" />
+                  {confirmedCount}
+                </span>
+              </Badge>
+            </div>
 
-        {/* Handle de DnD dentro del header (no crea nodos fuera del AccordionItem) */}
-        <span
-          className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground select-none"
-          title="Arrastrar para mover"
-          onPointerDown={(e) => e.stopPropagation()} // evita toggle al empezar drag
-        >
-          <GripVertical className="h-3.5 w-3.5" />
-          mover
-        </span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <div className="inline-flex items-center gap-1 font-medium text-[color:var(--foreground)]">
+                {fmtInt(groupUnits)} unidades
+              </div>
+              <span className="hidden text-muted-foreground sm:inline">•</span>
+              <div className="inline-flex items-center gap-1">
+                Promedio: <span className="font-semibold text-[color:var(--foreground)]">{fmtMoney(groupAvgPrice)}</span>
+              </div>
+              <span className="hidden text-muted-foreground sm:inline">•</span>
+              <div
+                className={clsx(
+                  "inline-flex items-center gap-1 font-semibold",
+                  groupStockBalance > 0
+                    ? "text-[var(--success)]"
+                    : groupStockBalance < 0
+                      ? "text-[var(--destructive)]"
+                      : "text-muted-foreground"
+                )}
+              >
+                {groupStockBalance > 0 ? <TrendingUp className="h-3.5 w-3.5" /> : null}
+                {groupStockBalance < 0 ? <TrendingDown className="h-3.5 w-3.5" /> : null}
+                <span>Stock: {groupStockBalance === 0 ? "0" : `${groupStockBalance > 0 ? "+" : "-"}${fmtInt(Math.abs(groupStockBalance))}`}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col justify-between text-right md:items-end">
+          <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Subtotal</span>
+          <span className="text-2xl font-semibold tabular-nums text-[var(--foreground)]">{fmtMoney(groupSubtotal)}</span>
+          <span
+            className="mt-2 inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--border)] px-3 py-1 text-[11px] font-medium text-muted-foreground"
+            title="Arrastrar para reordenar"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <GripVertical className="h-3.5 w-3.5" />
+            mover
+          </span>
+        </div>
       </div>
     </AccordionTrigger>
 
 
       {/* TOOLBAR */}
-      <div className="flex items-center justify-between border-b border-[var(--border)] bg-muted/40 px-5 py-3">
-        <div className="text-sm tabular-nums">{fmtMoney(groupSubtotal)}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[color:var(--order-group-toolbar,var(--background))] px-6 py-3 text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="inline-flex items-center gap-2 rounded-full border border-dashed border-[var(--border)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+            Gestión
+          </span>
+          <span>Reordená o eliminá el grupo sin perder los productos.</span>
+        </div>
         <div className="flex items-center gap-2">
           <Button
             type="button"
             size="icon"
             variant="secondary"
-            className="h-9 w-9 rounded-xl border border-[var(--border)] bg-card/80 text-[var(--foreground)] hover:bg-muted/60"
+            className="h-9 w-9 rounded-2xl border border-[var(--border)] bg-card/80 text-[var(--foreground)] hover:bg-muted/60"
             aria-label="Mover grupo arriba"
             onClick={() => onMoveUp()}
             title="Mover hacia arriba"
@@ -5894,7 +7194,7 @@ const dragHandleProps = React.useMemo<DragHandleProps>(() => {
             type="button"
             size="icon"
             variant="secondary"
-            className="h-9 w-9 rounded-xl border border-[var(--border)] bg-card/80 text-[var(--foreground)] hover:bg-muted/60"
+            className="h-9 w-9 rounded-2xl border border-[var(--border)] bg-card/80 text-[var(--foreground)] hover:bg-muted/60"
             aria-label="Mover grupo abajo"
             onClick={() => onMoveDown()}
             title="Mover hacia abajo"
@@ -5904,7 +7204,7 @@ const dragHandleProps = React.useMemo<DragHandleProps>(() => {
           <Button
             variant="ghost"
             size="icon"
-            className="h-9 w-9 rounded-xl text-destructive hover:bg-destructive/10"
+            className="h-9 w-9 rounded-2xl text-destructive hover:bg-destructive/10"
             aria-label="Eliminar grupo"
             onClick={() => setConfirmOpen(true)}
             title="Eliminar grupo"
@@ -6023,138 +7323,274 @@ const dragHandleProps = React.useMemo<DragHandleProps>(() => {
             const productLabel = (it.display_name?.trim() || it.product_name).trim();
             const lastStockTs = it.stock_updated_at ? new Date(it.stock_updated_at).getTime() : null;
             const pendingSales = lastStockTs ? computeSalesSinceStock(productLabel, lastStockTs) : 0;
+            const baselineStock = typeof it.stock_qty === "number" ? it.stock_qty : null;
+            const liveStock =
+              baselineStock == null ? null : Math.max(0, round2(baselineStock - pendingSales));
             const isChecked = !!checkedMap[it.id];
-            const metricChipClass = "inline-flex min-w-[140px] items-center justify-between gap-2 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 py-1 text-[11px] text-[color:var(--order-card-accent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]";
-            const statsOpen = !!statsOpenMap[it.id];
             const orderIndex = manualSequence.indexOf(it.id);
             const canMoveUp = manualSequence.length > 1 && orderIndex > 0;
             const canMoveDown = manualSequence.length > 1 && orderIndex !== -1 && orderIndex < manualSequence.length - 1;
+            const projectedStock = round2((liveStock ?? 0) + (it.qty ?? 0));
+            const orderDelta = round2(it.qty ?? 0);
+            const statusBadgeClass = isChecked
+              ? "border border-[var(--surface-success-strong)] bg-[var(--surface-success-soft)] text-[var(--success)]"
+              : "border border-[var(--border)] bg-white text-muted-foreground";
+            const metricChipClass =
+              "rounded-2xl border border-[var(--border)] bg-white/70 px-3 py-2 text-[11px] text-muted-foreground";
+            const salesRows = salesByProductMap.get(key) ?? [];
+            const sparklineSeries = buildSalesTrendSeries(salesRows, 14, anchor);
+            const latestTrend = sparklineSeries.length ? sparklineSeries[sparklineSeries.length - 1]?.qty ?? 0 : 0;
+            const statsOpen = !!statsOpenMap[it.id];
+            const minState = minStockMap[it.id];
+            const minQtyDefined = Math.max(0, minState?.qty ?? 0);
+            const minActive = Boolean(minState?.enabled) && minQtyDefined > 0;
+            const autoMinSuggestion = minActive
+              ? snapToPack(Math.max(0, minQtyDefined - (liveStock ?? 0)), it.pack_size)
+              : null;
+            const autoEnabled = minActive || (autoQtyMap[it.id] ?? true);
+            const autoHelperText = autoEnabled
+              ? minActive
+                ? `Sugerido por mínimo (${fmtInt(minQtyDefined)} u)`
+                : `Sugerido auto ${frequencyLabelText.toLowerCase()}`
+              : "Modo manual: podés editar la cantidad";
+            const autoControlClasses = clsx(
+              "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors",
+              autoEnabled
+                ? "border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-highlight)]/10 text-[color:var(--order-card-highlight)]"
+                : "border-[color:var(--order-card-pill-border)] bg-white text-[color:var(--order-card-accent)]",
+              minActive && "opacity-70"
+            );
+            const autoSelectLabel = `Auto ${frequencyLabelText.toLowerCase()}`;
 
             return (
               <Card
                 key={it.id}
                 className={clsx(
-                  "group relative mb-3 overflow-hidden rounded-[24px] border border-[color:var(--order-card-border)] bg-[color:var(--order-card-background)] px-0 py-0 shadow-[0_12px_28px_rgba(12,24,20,0.18)] transition-all duration-200",
-                  isChecked
-                    ? "border-[color:var(--order-card-highlight)] shadow-[0_0_0_2px_var(--order-card-highlight),0_18px_32px_rgba(12,24,20,0.24)]"
-                    : "hover:-translate-y-[2px] hover:border-[color:var(--order-card-accent)] hover:shadow-[0_16px_36px_rgba(12,24,20,0.22)]"
+                  "group relative mb-4 overflow-hidden rounded-[26px] border border-[color:var(--border)] bg-white px-0 py-0 shadow-[0_8px_24px_rgba(15,23,42,0.08)] transition-all duration-200",
+                  isChecked && "border-[color:var(--order-card-highlight)] ring-1 ring-[color:var(--order-card-highlight)]/40"
                 )}
+                style={
+                  isChecked
+                    ? {
+                        boxShadow: "0 8px 24px rgba(15,23,42,0.08), 0 18px 48px var(--order-card-highlight)",
+                      }
+                    : undefined
+                }
               >
                 <CardContent
                   className={clsx(
-                    "relative m-2 rounded-[20px] border border-[color:var(--order-card-inner-border)] bg-[color:var(--order-card-inner-background)] px-4 py-4 transition-all duration-200",
-                    isChecked && "border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-inner-highlight)]"
+                    "relative m-2 rounded-[22px] border border-[color:var(--border)] bg-white px-5 py-5 transition-all duration-200",
+                    isChecked &&
+                      "border-[color:var(--order-card-highlight)] ring-1 ring-inset ring-[color:var(--order-card-highlight)]/40"
                   )}
                 >
-                  <div className="flex flex-col gap-3">
-                    <div className="min-w-0">
-                      <ItemTitle
-                        name={it.display_name || it.product_name}
-                        canonical={it.product_name}
-                        onCommit={(label) => onRenameItemLabel(it.id, label)}
-                      />
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <PackSizeEditor
-                        value={it.pack_size}
-                        onCommit={(n) => onUpdatePackSize(it.id, n)}
-                      />
-                      <Label
-                        htmlFor={`item-check-${it.id}`}
-                        className={clsx(
-                          "inline-flex cursor-pointer items-center justify-center rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-all duration-200 hover:border-[color:var(--order-card-accent)]",
-                          isChecked && "border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-highlight)]"
-                        )}
-                      >
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-start gap-4">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-start gap-3">
+                          <div className="min-w-0 flex-1">
+                            <ItemTitle
+                              name={it.display_name || it.product_name}
+                              canonical={it.product_name}
+                              onCommit={(label) => onRenameItemLabel(it.id, label)}
+                            />
+                          </div>
+                          <PackSizeEditor value={it.pack_size} onCommit={(n) => onUpdatePackSize(it.id, n)} />
+                        </div>
+                        {it.display_name && it.display_name.trim() !== it.product_name ? (
+                          <p className="text-[11px] text-muted-foreground">{it.product_name}</p>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge className={clsx("rounded-full px-4 py-1 text-[11px] font-semibold", statusBadgeClass)}>
+                          {isChecked ? "Completo" : "Pendiente"}
+                        </Badge>
                         <Checkbox
                           id={`item-check-${it.id}`}
                           checked={isChecked}
                           onCheckedChange={(v) => setItemChecked(it.id, v === true)}
                           className={clsx(
-                            "size-4 rounded-sm border-[color:var(--order-card-pill-border)] bg-transparent text-transparent shadow-none transition-colors",
-                            isChecked
-                              ? "data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)] data-[state=checked]:text-[color:var(--destructive-foreground)]"
-                              : "focus-visible:ring-[color:var(--order-card-accent)] focus-visible:ring-opacity-30"
+                            "size-6 rounded-full border-2 border-[color:var(--border)] bg-white shadow-none transition-colors",
+                            isChecked &&
+                              "data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)]"
                           )}
                           aria-label="Marcar como cargado"
                         />
-                      </Label>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className={clsx(
-                          "ml-auto h-8 w-8 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-none transition-transform",
-                          statsOpen && "rotate-180"
-                        )}
-                        onClick={() => onToggleStats(it.id)}
-                        aria-label={statsOpen ? "Ocultar estadísticas" : "Mostrar estadísticas"}
-                      >
-                        <ChevronDown className="h-4 w-4" />
-                      </Button>
+                      </div>
                     </div>
-                  </div>
 
-                  {statsOpen && (
-                    <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-3">
-                      {[
-                        { label: "Prom/sem (4s)", value: fmtInt(st.avg4w) },
-                        { label: "Ventas 7 días", value: fmtInt(st.sum7d) },
-                        { label: "Ventas 2 sem", value: fmtInt(st.sum2w) },
-                        { label: "Ventas 30d", value: fmtInt(st.sum30d) },
-                        {
-                          label: "Últ. venta",
-                          value: typeof st.lastDate === "number"
-                            ? `${formatUTCWeekday(st.lastDate)} ${formatUTCDate(st.lastDate)}`
-                            : "—"
-                        },
-                        { label: "Pedido anterior", value: it.previous_qty != null ? fmtInt(it.previous_qty) : "—" },
-                      ].map((metric) => (
-                        <div key={metric.label} className={metricChipClass}>
-                          <span className="text-[color:var(--order-card-accent)] opacity-70">{metric.label}</span>
-                          <span className="font-semibold tabular-nums">{metric.value}</span>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <div className="flex flex-1 flex-wrap items-center gap-4">
+                        <div className="min-w-[140px]">
+                          <StockEditor
+                            value={liveStock}
+                            updatedAt={it.stock_updated_at}
+                            previousUpdatedAt={it.previous_qty_updated_at}
+                            onCommit={(n) => onUpdateStock(it.id, n)}
+                            salesSince={pendingSales}
+                            onInputMount={(node) => setStockInputRef(it.id, node)}
+                          />
                         </div>
-                      ))}
+                        <div className="inline-flex min-w-[170px] items-center gap-3 rounded-2xl border border-[color:var(--surface-success-strong)] bg-[color:var(--surface-success-soft)] px-4 py-3 text-[color:var(--success)]">
+                          <div className="flex flex-col">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.2em] opacity-70">Stock proyectado</div>
+                            <div className="text-2xl font-semibold tabular-nums">{fmtInt(projectedStock)}</div>
+                          </div>
+                          <div className="text-sm font-semibold">
+                            {orderDelta === 0 ? "—" : orderDelta > 0 ? `+${fmtInt(orderDelta)}` : `-${fmtInt(Math.abs(orderDelta))}`}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Stepper
+                            value={it.qty}
+                            min={0}
+                            step={it.pack_size || 1}
+                            suffixLabel="pedido"
+                            disabled={autoEnabled}
+                            onChange={(n: number) => {
+                              onToggleAutoQty(it.id, false);
+                              onRememberManualQty(it.id, n);
+                              void onUpdateQty(it.id, n);
+                            }}
+                          />
+                          <div className={autoControlClasses}>
+                            <Checkbox
+                              checked={autoEnabled}
+                              onCheckedChange={(value) => {
+                                if (minActive) return;
+                                const nextAuto = value === true;
+                                const currentQty = Math.max(0, Math.round(Number(it.qty ?? 0)));
+                                if (nextAuto) {
+                                  onRememberManualQty(it.id, currentQty);
+                                  onToggleAutoQty(it.id, true);
+                                  return;
+                                }
+                                onToggleAutoQty(it.id, false);
+                                const manualQty = getManualQtyBackup(it.id);
+                                if (manualQty != null && manualQty !== currentQty) {
+                                  void onUpdateQty(it.id, manualQty);
+                                }
+                              }}
+                              disabled={minActive}
+                              className="size-5 rounded-full border-2 border-[color:var(--order-card-pill-border)] bg-white text-white data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)]"
+                              aria-label="Activar pedido sugerido automático"
+                            />
+                            <Select value={frequency} onValueChange={(value) => onChangeFrequency(value as ProviderFrequency)}>
+                              <SelectTrigger
+                                className="h-auto border-none bg-transparent px-0 py-0 text-xs font-semibold text-current shadow-none hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+                                aria-label="Cambiar auto sugerido"
+                                title="Cambiar periodo para todos los productos"
+                              >
+                                <span className="inline-flex items-center gap-1">
+                                  <Sparkles className="h-3.5 w-3.5" />
+                                  <span className="capitalize">{autoSelectLabel}</span>
+                                </span>
+                              </SelectTrigger>
+                              <SelectContent className="min-w-[220px]">
+                                {AUTO_FREQUENCY_OPTIONS.map((option) => (
+                                  <SelectItem key={option.value} value={option.value} className="flex flex-col items-start gap-0.5">
+                                    <span className="text-sm font-semibold text-[color:var(--foreground)]">{option.title}</span>
+                                    <span className="text-xs font-normal text-muted-foreground">{option.description}</span>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                          {autoHelperText}
+                        </span>
+                      </div>
                     </div>
-                  )}
 
-                  <div className="mt-4 flex flex-col gap-3 border-t border-[color:var(--order-card-divider)] pt-3">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="flex flex-1 min-w-[120px]">
-                        <PriceEditor
-                          price={it.unit_price}
-                          updatedAt={it.price_updated_at}
-                          onCommit={(n) => onUpdateUnitPrice(it.id, n)}
-                        />
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[color:var(--border)] pt-3 text-sm text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-[color:var(--foreground)]">Stats:</span>
+                        <span>Prom/sem (4s): {fmtInt(st.avg4w)}</span>
+                        <span>| 7d: {fmtInt(st.sum7d)}</span>
                       </div>
-                      <div className="flex flex-1 min-w-[120px]">
-                        <StockEditor
-                          value={it.stock_qty ?? null}
-                          updatedAt={it.stock_updated_at}
-                          previousUpdatedAt={it.previous_qty_updated_at}
-                          onCommit={(n) => onUpdateStock(it.id, n)}
-                          salesSince={pendingSales}
-                        />
-                      </div>
-                      <div className="flex flex-1 min-w-[150px] justify-end">
-                        <Stepper
-                          value={it.qty}
-                          min={0}
-                          step={it.pack_size || 1}
-                          suffixLabel="pedido"
-                          onChange={(n: number) => {
-                            void onUpdateQty(it.id, n);
-                          }}
-                        />
-                      </div>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 text-[color:var(--primary)] hover:underline"
+                        onClick={() => onToggleStats(it.id)}
+                      >
+                        <BarChart3 className="h-4 w-4" />
+                        {statsOpen ? "Ocultar" : "Ver más"}
+                      </button>
                     </div>
+                    {statsOpen && (
+                      <div className="space-y-3 rounded-3xl border border-[color:var(--border)] bg-muted/20 p-4">
+                        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[color:var(--border)] bg-white/90 p-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                              Definir mínimo
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {minActive
+                                ? `El pedido se ajusta solo para llegar a ${fmtInt(minQtyDefined)} u.`
+                                : "Guardá un mínimo para calcular cuánto falta sin depender de las ventas."}
+                            </p>
+                            {minActive ? (
+                              <p className="text-xs font-semibold text-[color:var(--foreground)]">
+                                Sugerido actual: {fmtInt(autoMinSuggestion ?? 0)} u
+                              </p>
+                            ) : null}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              className="h-9 w-24 rounded-2xl text-right text-sm font-semibold tabular-nums"
+                              inputMode="numeric"
+                              placeholder="Ej: 120"
+                              value={minQtyDefined > 0 ? String(minQtyDefined) : ""}
+                              onChange={(event) => {
+                                const parsed = parseNumberInput(event.target.value);
+                                onUpdateMinStock(it.id, Number.isFinite(parsed) ? parsed : 0);
+                              }}
+                            />
+                            <Checkbox
+                              checked={Boolean(minState?.enabled)}
+                              onCheckedChange={(value) => onToggleMinStock(it.id, value === true)}
+                              className="size-6 rounded-lg border-2"
+                              aria-label="Activar mínimo automático"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Tendencia 14 días</span>
+                          <span className="font-semibold text-[color:var(--foreground)]">{fmtInt(latestTrend)} u</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground lg:grid-cols-3">
+                          {[
+                            { label: "Prom/sem (4s)", value: fmtInt(st.avg4w) },
+                            { label: "Ventas 7 días", value: fmtInt(st.sum7d) },
+                            { label: "Ventas 2 sem", value: fmtInt(st.sum2w) },
+                            { label: "Ventas 30d", value: fmtInt(st.sum30d) },
+                            {
+                              label: "Últ. venta",
+                              value:
+                                typeof st.lastDate === "number"
+                                  ? `${formatUTCWeekday(st.lastDate)} ${formatUTCDate(st.lastDate)}`
+                                  : "—",
+                            },
+                            { label: "Pedido anterior", value: it.previous_qty != null ? fmtInt(it.previous_qty) : "—" },
+                          ].map((metric) => (
+                            <div key={metric.label} className={metricChipClass}>
+                              <div className="text-[10px] uppercase tracking-[0.16em]">{metric.label}</div>
+                              <div className="font-semibold tabular-nums text-[color:var(--foreground)]">{metric.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--border)] pt-3">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-9 w-9 rounded-full border border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-highlight)] text-[color:var(--destructive-foreground)] transition-opacity hover:opacity-85"
+                          className="h-9 w-9 rounded-full text-destructive hover:bg-destructive/10"
                           onClick={() => void onRemoveItem(it.id)}
                           aria-label="Quitar producto"
                         >
@@ -6162,8 +7598,8 @@ const dragHandleProps = React.useMemo<DragHandleProps>(() => {
                         </Button>
                         <div
                           className={clsx(
-                            "flex items-center gap-1 rounded-full border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] p-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.4)]",
-                            !manualSortActive && "opacity-90",
+                            "flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-muted/40 p-0.5",
+                            !manualSortActive && "opacity-85"
                           )}
                           title={manualSortActive ? "Reordenar este producto" : "Al mover se activa el orden manual"}
                         >
@@ -6189,9 +7625,20 @@ const dragHandleProps = React.useMemo<DragHandleProps>(() => {
                           </Button>
                         </div>
                       </div>
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--order-card-accent)] opacity-70">Subtotal</span>
-                        <span className="text-lg font-semibold text-[color:var(--order-card-accent)] tabular-nums">{fmtMoney(subtotal)}</span>
+                      <div className="flex flex-wrap items-end gap-4">
+                        <div className="min-w-[140px]">
+                          <PriceEditor
+                            price={it.unit_price}
+                            updatedAt={it.price_updated_at}
+                            onCommit={(n) => onUpdateUnitPrice(it.id, n)}
+                          />
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Subtotal</div>
+                          <div className="text-xl font-semibold tabular-nums text-[color:var(--foreground)]">
+                            {fmtMoney(subtotal)}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>

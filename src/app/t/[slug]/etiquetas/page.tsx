@@ -1131,15 +1131,18 @@ function exportPlainXlsxFallback(items: LabelItem[]) {
                         )}
                       </li>
                     )}
-                    {suggestions.map((s) => (
-                      <li key={s.id} className="p-2 hover:bg-muted/50">
-                        {/* alineamos desde arriba por si el nombre ocupa 2 líneas */}
-                        <label className="flex items-start gap-2">
-                          <Checkbox
-                            checked={inListBySourceKey(s.id)}
-                            onCheckedChange={() => toggleById(s.id)}
-                            aria-label={inListBySourceKey(s.id) ? "Quitar de la lista" : "Agregar a la lista"}
-                          />
+                    {suggestions.map((s) => {
+                      const checkboxId = `suggestion-${s.id}`;
+                      return (
+                        <li key={s.id} className="p-2 hover:bg-muted/50">
+                          {/* alineamos desde arriba por si el nombre ocupa 2 líneas */}
+                          <label className="flex items-start gap-2" htmlFor={checkboxId}>
+                            <Checkbox
+                              id={checkboxId}
+                              checked={inListBySourceKey(s.id)}
+                              onCheckedChange={() => toggleById(s.id)}
+                              aria-label={inListBySourceKey(s.id) ? "Quitar de la lista" : "Agregar a la lista"}
+                            />
                           <div className="flex-1 min-w-0">
                             <div className="font-medium leading-tight whitespace-normal break-words pr-2">
                               {s.name}
@@ -1150,8 +1153,9 @@ function exportPlainXlsxFallback(items: LabelItem[]) {
                           </div>
                           <Badge variant="outline" className="shrink-0 self-start">ARS</Badge>
                         </label>
-                      </li>
-                    ))}
+                        </li>
+                      );
+                    })}
                   </ul>
 
                   {/* Footer del dropdown */}

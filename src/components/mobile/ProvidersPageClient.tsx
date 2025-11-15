@@ -30,8 +30,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 
 /* Icons */
 import {
-  Plus, Trash2, Pencil, CalendarDays, Truck, UserRound, CheckCircle2, Clock3,
-  Banknote, Landmark, Search, ChevronDown, Circle,
+  Plus, Trash2, Pencil, CalendarDays, CheckCircle2,
+  Search, ChevronDown, Circle,
 } from "lucide-react";
 
 /* =================== Props =================== */
@@ -326,12 +326,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null && !Array.isArray(value);
 }
 
-type AlertHandler = (message: string, copyToClipboard: boolean) => Promise<void>;
-let alertHandler: AlertHandler | null = null;
+let alertHandler: Function | null = null;
 
 async function showAlert(message: string, copyToClipboard = false) {
   if (alertHandler) {
-    await alertHandler(message, copyToClipboard);
+    await (alertHandler as Function)(message, copyToClipboard);
     return;
   }
   if (copyToClipboard && typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -347,16 +346,6 @@ async function showAlert(message: string, copyToClipboard = false) {
 }
 
 /* =================== Utils =================== */
-function fmtMoney(n: number | null | undefined) {
-  const val = typeof n === "number" ? n : 0;
-  try {
-    return new Intl.NumberFormat("es-AR", {
-      style: "currency", currency: "ARS", maximumFractionDigits: 0,
-    }).format(val);
-  } catch {
-    return `$ ${Math.round(val).toLocaleString("es-AR")}`;
-  }
-}
 
 const stripBranchSuffix = (name: string) => name.replace(/\s*\([^()]*\)\s*$/, '').trim();
 const byName = (a: Provider, b: Provider) =>
@@ -1263,7 +1252,7 @@ export default function ProvidersPageClient({ slug, branch, tenantId, branchId }
   const ownerActionsBusy = importingData || importingOrders || copyingData || downloadingOrders || downloadingExcel || downloadingJson || savingBackup || restoringBackup;
 
   React.useEffect(() => {
-    const handler: AlertHandler = (message, copyToClipboard) => new Promise<void>((resolve) => {
+    const handler = (message: string, copyToClipboard: boolean) => new Promise<void>((resolve) => {
       alertResolverRef.current = resolve;
       setAlertDialog({ open: true, message, copy: copyToClipboard });
     });

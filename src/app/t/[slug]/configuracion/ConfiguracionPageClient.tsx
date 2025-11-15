@@ -14,6 +14,7 @@ import {
   THEME_PRESETS_SETTINGS_KEY,
   ThemePreset,
   buildCssVariableMap,
+  adjustLightness,
   sanitizeHexColor,
   sanitizeStoredTheme,
   sanitizeThemePresetList,
@@ -77,6 +78,10 @@ const FIELD_METADATA: Record<keyof BranchThemeFormValues, { label: string; descr
     label: "Pedido (cantidad)",
     description: "Inputs y botones para sumar/restar en la tarjeta de pedido",
   },
+  orderCardHighlight: {
+    label: "Resaltado completado",
+    description: "Bordes y glow de la tarjeta cuando marcás un producto como completo",
+  },
   clientOrderPending: {
     label: "Check pedido",
     description: "Botón azul de “Pedido” en la vista de proveedores",
@@ -108,7 +113,17 @@ type FieldSection = {
 const FIELD_SECTIONS: FieldSection[] = [
   {
     title: "Acciones y estados",
-    fields: ["primary", "secondary", "accent", "success", "alert", "orderQty", "clientOrderPending", "clientOrderSaved"],
+    fields: [
+      "primary",
+      "secondary",
+      "accent",
+      "success",
+      "alert",
+      "orderQty",
+      "orderCardHighlight",
+      "clientOrderPending",
+      "clientOrderSaved",
+    ],
   },
   {
     title: "Superficies",
@@ -146,6 +161,7 @@ const COLOR_PREVIEW_GROUPS: ColorPreviewGroup[] = [
       { field: "success", label: "Éxito", usage: "Mensajes positivos", cssVar: "--success" },
       { field: "alert", label: "Alerta", usage: "Advertencias", cssVar: "--destructive" },
       { field: "orderQty", label: "Cantidad pedido", usage: "Stepers de pedido", type: "surface" },
+      { field: "orderCardHighlight", label: "Resaltado tarjeta", usage: "Glow al completar pedidos" },
       { field: "clientOrderPending", label: "Check pedido", usage: "Botón azul en Proveedores", cssVar: "--client-order-pending" },
       { field: "clientOrderSaved", label: "Check guardado", usage: "Botón verde en Proveedores", cssVar: "--client-order-saved" },
     ],
@@ -179,6 +195,18 @@ const COLOR_PREVIEW_GROUPS: ColorPreviewGroup[] = [
 ];
 
 const HEX_FULL_REGEX = /^#[0-9A-F]{6}$/;
+
+const hexToRgba = (hex: string, alpha: number) => {
+  if (!HEX_FULL_REGEX.test(hex)) {
+    const clamped = clamp01(alpha);
+    return `rgba(0, 0, 0, ${clamped.toFixed(2)})`;
+  }
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const clamped = clamp01(alpha);
+  return `rgba(${r}, ${g}, ${b}, ${clamped.toFixed(2)})`;
+};
 
 const EMPTY_PRESETS: ThemePreset[] = [];
 
@@ -247,6 +275,7 @@ function generateRandomTheme(): BranchThemeFormValues {
   const card = hslToHex(cardHue, isDark ? 0.22 : 0.14, isDark ? 0.25 : 0.96);
   const nav = hslToHex(navHue, isDark ? 0.3 : 0.2, isDark ? 0.18 : 0.9);
   const inputBackground = isDark ? "#F4F5F4" : "#FFFFFF";
+  const alert = hslToHex(alertHue, 0.6, isDark ? 0.48 : 0.5);
 
   const textPrimary = isDark ? "#F6F7F5" : "#1F2420";
   const textSecondary = isDark ? "#C3CDC8" : "#55665E";
@@ -256,13 +285,14 @@ function generateRandomTheme(): BranchThemeFormValues {
     secondary: hslToHex(secondaryHue, isDark ? 0.36 : 0.3, isDark ? 0.32 : 0.34),
     accent: hslToHex(accentHue, isDark ? 0.58 : 0.5, isDark ? 0.5 : 0.45),
     success: hslToHex(successHue, isDark ? 0.5 : 0.48, isDark ? 0.48 : 0.4),
-    alert: hslToHex(alertHue, 0.6, isDark ? 0.48 : 0.5),
+    alert,
     background,
     surface,
     card,
     cardForeground: textPrimary,
     inputBackground,
     orderQty: hslToHex(orderQtyHue, isDark ? 0.64 : 0.58, isDark ? 0.54 : 0.46),
+    orderCardHighlight: adjustLightness(alert, 0.12),
     clientOrderPending: hslToHex(clientOrderPendingHue, 0.65, isDark ? 0.5 : 0.45),
     clientOrderSaved: hslToHex(clientOrderSavedHue, 0.6, isDark ? 0.48 : 0.44),
     nav,
@@ -298,12 +328,19 @@ const withPresetValues = (values: Partial<BranchThemeFormValues>): BranchThemeFo
   const background = sanitizeHexColor(values.background ?? DEFAULT_BRANCH_THEME.background, DEFAULT_BRANCH_THEME.background);
   const inputBackground = values.inputBackground
     ?? (isDarkHexColor(background) ? PRESET_DARK_INPUT_BACKGROUND : PRESET_LIGHT_INPUT_BACKGROUND);
+  const alert = sanitizeHexColor(values.alert ?? DEFAULT_BRANCH_THEME.alert, DEFAULT_BRANCH_THEME.alert);
+  const orderCardHighlight = sanitizeHexColor(
+    values.orderCardHighlight ?? adjustLightness(alert, 0.12),
+    DEFAULT_BRANCH_THEME.orderCardHighlight,
+  );
 
   return {
     ...DEFAULT_BRANCH_THEME,
     ...values,
     background,
     inputBackground,
+    alert,
+    orderCardHighlight,
   };
 };
 
@@ -926,6 +963,7 @@ export default function ConfiguracionPageClient() {
   const cardForeground = previewVars["--card-foreground"] || DEFAULT_BRANCH_THEME.cardForeground;
   const accentColor = previewVars["--accent"] || DEFAULT_BRANCH_THEME.accent;
   const orderQtyColor = sanitizeHexColor(formValues.orderQty, DEFAULT_BRANCH_THEME.orderQty);
+  const orderCardHighlightColor = sanitizeHexColor(formValues.orderCardHighlight, DEFAULT_BRANCH_THEME.orderCardHighlight);
   const textPrimaryColor = previewVars["--foreground"] || DEFAULT_BRANCH_THEME.textPrimary;
   const textSecondaryColor = previewVars["--muted-foreground"] || DEFAULT_BRANCH_THEME.textSecondary;
   const primaryForeground = previewVars["--primary-foreground"] || DEFAULT_BRANCH_THEME.textPrimary;
@@ -950,6 +988,18 @@ export default function ConfiguracionPageClient() {
   const orderQtyBorder = previewVars["--order-card-qty-border"] || borderColor;
   const navBorder = previewVars["--sidebar-border"] || borderColor;
   const navSoftSurface = previewVars["--surface-nav-soft"] || "rgba(44, 58, 51, 0.75)";
+  const orderCardHighlightTint = previewVars["--order-card-highlight"] || hexToRgba(orderCardHighlightColor, 0.45);
+  const orderCardPreviewBackground = previewVars["--order-card-background"] || cardBackground;
+  const orderCardPreviewBorder = previewVars["--order-card-border"] || borderColor;
+  const orderCardPreviewInnerBackground =
+    previewVars["--order-card-inner-background"] || previewVars["--surface-action-primary-soft"] || cardBackground;
+  const orderCardPreviewInnerBorder =
+    previewVars["--order-card-inner-border"] || previewVars["--border"] || orderCardPreviewBorder;
+  const orderCardPreviewPillBackground =
+    previewVars["--order-card-pill-background"] || previewVars["--surface-action-primary-soft"] || secondarySoftSurface;
+  const orderCardPreviewPillBorder =
+    previewVars["--order-card-pill-border"] || previewVars["--border"] || orderCardPreviewBorder;
+  const orderCardAccentColor = previewVars["--order-card-accent"] || textPrimaryColor;
   const hiddenPresetIdSet = React.useMemo(() => new Set(hiddenPresetIds), [hiddenPresetIds]);
 
   const renderColorUsageExample = React.useCallback(
@@ -1070,6 +1120,24 @@ export default function ConfiguracionPageClient() {
                 </button>
               </div>
               <p className="mt-2 text-[11px] text-muted-foreground">Stepper del pedido y contadores rápidos.</p>
+            </div>
+          );
+        case "orderCardHighlight":
+          return (
+            <div className="space-y-2">
+              <div
+                className="rounded-2xl border px-3 py-2 text-xs shadow-sm transition-all"
+                style={{
+                  borderColor: value,
+                  boxShadow: `0 8px 22px ${hexToRgba(value, 0.35)}`,
+                }}
+              >
+                <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: value }}>
+                  Producto completo
+                </p>
+                <p style={{ color: textPrimaryColor }}>Borde y brillo al marcarlo como cargado.</p>
+              </div>
+              <p className="text-[11px] text-muted-foreground">Se aplica a toda la tarjeta del pedido.</p>
             </div>
           );
         case "clientOrderPending":
@@ -2074,6 +2142,100 @@ export default function ConfiguracionPageClient() {
                           Este color se refleja en los botones suma/resta del pedido y resaltos numéricos.
                         </p>
                       </div>
+                    </div>
+
+                    <div className="rounded-xl border border-border/60 bg-card/60 p-4 shadow-sm transition-colors">
+                      <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: textSecondaryColor }}>
+                        Tarjetas de pedido
+                      </p>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div
+                          className="space-y-3 rounded-[22px] border px-4 py-4 text-sm transition-colors"
+                          style={{ background: orderCardPreviewBackground, borderColor: orderCardPreviewBorder }}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[11px] uppercase tracking-wide" style={{ color: textSecondaryColor }}>
+                                Pendiente
+                              </p>
+                              <p className="text-base font-semibold" style={{ color: cardForeground }}>
+                                Semillas mix
+                              </p>
+                            </div>
+                            <span
+                              className="rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-wide"
+                              style={{
+                                background: orderCardPreviewPillBackground,
+                                border: `1px solid ${orderCardPreviewPillBorder}`,
+                                color: orderCardAccentColor,
+                              }}
+                            >
+                              Pendiente
+                            </span>
+                          </div>
+                          <div
+                            className="rounded-2xl border px-3 py-2"
+                            style={{
+                              background: orderCardPreviewInnerBackground,
+                              borderColor: orderCardPreviewInnerBorder,
+                            }}
+                          >
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ color: textSecondaryColor }}>
+                              Stock actual
+                            </p>
+                            <p className="text-lg font-semibold" style={{ color: orderCardAccentColor }}>
+                              32 u
+                            </p>
+                          </div>
+                        </div>
+                        <div
+                          className="space-y-3 rounded-[22px] border px-4 py-4 text-sm transition-all"
+                          style={{
+                            background: orderCardPreviewBackground,
+                            borderColor: orderCardHighlightColor,
+                            boxShadow: `0 12px 28px ${orderCardHighlightTint}`,
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[11px] uppercase tracking-wide" style={{ color: textSecondaryColor }}>
+                                Completo
+                              </p>
+                              <p className="text-base font-semibold" style={{ color: cardForeground }}>
+                                Almendras
+                              </p>
+                            </div>
+                            <span
+                              className="rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-wide"
+                              style={{
+                                background: orderCardHighlightTint,
+                                border: `1px solid ${orderCardHighlightColor}`,
+                                color: "#FFFFFF",
+                              }}
+                            >
+                              Completo
+                            </span>
+                          </div>
+                          <div
+                            className="rounded-2xl border px-3 py-2"
+                            style={{
+                              background: orderCardPreviewInnerBackground,
+                              borderColor: orderCardHighlightColor,
+                              boxShadow: `0 4px 12px ${orderCardHighlightTint}`,
+                            }}
+                          >
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ color: textSecondaryColor }}>
+                              Stock actual
+                            </p>
+                            <p className="text-lg font-semibold" style={{ color: orderCardAccentColor }}>
+                              12 u
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <p className="mt-3 text-xs" style={{ color: textSecondaryColor }}>
+                        Ajustá este color para resaltar mejor los productos marcados como completos.
+                      </p>
                     </div>
 
                     <div className="rounded-xl border border-border/60 bg-card/60 p-4 shadow-sm transition-colors">

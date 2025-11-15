@@ -15,6 +15,7 @@ export type BranchThemeFormValues = {
   cardForeground: string;
   inputBackground: string;
   orderQty: string;
+  orderCardHighlight: string;
   clientOrderPending: string;
   clientOrderSaved: string;
   nav: string;
@@ -47,6 +48,7 @@ export const DEFAULT_BRANCH_THEME: BranchThemeFormValues = {
   cardForeground: TEXT_PRIMARY_FALLBACK,
   inputBackground: "#FFFFFF",
   orderQty: "#D6815A",
+  orderCardHighlight: "#D6815A",
   clientOrderPending: "#1F6FEB",
   clientOrderSaved: "#22C55E",
   nav: "#2C3A33",
@@ -66,6 +68,7 @@ export const BRANCH_THEME_FIELDS: Array<keyof BranchThemeFormValues> = [
   "cardForeground",
   "inputBackground",
   "orderQty",
+  "orderCardHighlight",
   "clientOrderPending",
   "clientOrderSaved",
   "nav",
@@ -73,8 +76,9 @@ export const BRANCH_THEME_FIELDS: Array<keyof BranchThemeFormValues> = [
   "textSecondary",
 ];
 
-export function sanitizeHexColor(input: unknown, fallback: string): string {
-  if (typeof input !== "string") return normalizeHex(fallback);
+export function sanitizeHexColor(input: unknown, fallback?: string): string {
+  const safeFallback = typeof fallback === "string" && fallback.trim().length > 0 ? fallback : DEFAULT_BRANCH_THEME.primary;
+  if (typeof input !== "string") return normalizeHex(safeFallback);
   const trimmed = input.trim();
   if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
     const r = trimmed[1];
@@ -85,10 +89,11 @@ export function sanitizeHexColor(input: unknown, fallback: string): string {
   if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
     return normalizeHex(trimmed);
   }
-  return normalizeHex(fallback);
+  return normalizeHex(safeFallback);
 }
 
-function normalizeHex(value: string): string {
+function normalizeHex(value?: string): string {
+  if (typeof value !== "string") return DEFAULT_BRANCH_THEME.primary;
   return value.toUpperCase();
 }
 
@@ -98,6 +103,12 @@ export function sanitizeStoredTheme(raw: RawThemeValue): BranchThemeFormValues {
   for (const key of BRANCH_THEME_FIELDS) {
     sanitized[key] = sanitizeHexColor(base[key], DEFAULT_BRANCH_THEME[key]);
   }
+  const customHighlight = base.orderCardHighlight;
+  const derivedHighlightSource =
+    typeof customHighlight === "string" && customHighlight.trim().length > 0
+      ? customHighlight
+      : adjustLightness(sanitized.alert, 0.12);
+  sanitized.orderCardHighlight = sanitizeHexColor(derivedHighlightSource, DEFAULT_BRANCH_THEME.orderCardHighlight);
   return sanitized;
 }
 
@@ -214,6 +225,7 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const navSoftSurface = withAlpha(nav, 0.75);
   const navHoverSurface = withAlpha(nav, 0.88);
   const navStrongSurface = withAlpha(nav, 0.95);
+  const orderCardHighlightBase = sanitizeHexColor(theme.orderCardHighlight, DEFAULT_BRANCH_THEME.orderCardHighlight);
   const clientOrderPendingSurface = withAlpha(clientOrderPending, 0.18);
   const clientOrderSavedSurface = withAlpha(clientOrderSaved, 0.18);
 
@@ -232,7 +244,7 @@ export function buildCssVariableMap(theme: BranchThemeFormValues): Record<string
   const orderCardPillBorder = withAlpha(adjustLightness(primary, 0.45), 0.6);
   const orderCardAccent = adjustLightness(primary, -0.28);
   const orderCardDivider = withAlpha(adjustLightness(primary, 0.4), 0.38);
-  const orderCardHighlight = withAlpha(adjustLightness(alert, 0.12), 0.45);
+  const orderCardHighlight = withAlpha(orderCardHighlightBase, 0.45);
   const orderCardQtyBackground = withAlpha(adjustLightness(orderQty, 0.55), 0.72);
   const orderCardQtyBorder = withAlpha(adjustLightness(orderQty, 0.25), 0.65);
   const orderCardQtyForeground = adjustLightness(orderQty, -0.42);

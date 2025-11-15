@@ -23,9 +23,15 @@ export default function BranchSelector({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const isProviderOrderPage = pathname?.includes("/proveedores/") && pathname?.includes("/pedido");
 
+  if (!mounted) return null;
   if (isProviderOrderPage) return null;
 
   if (error) {

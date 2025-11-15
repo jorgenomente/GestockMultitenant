@@ -1,4 +1,4 @@
-import { DEFAULT_BRANCH_THEME, type BranchThemeFormValues } from "@/lib/theme/branchTheme";
+import { DEFAULT_BRANCH_THEME, sanitizeStoredTheme, type BranchThemeFormValues } from "@/lib/theme/branchTheme";
 
 export type DemoThemePreset = {
   id: string;
@@ -19,7 +19,7 @@ const makePreset = (
   name,
   description,
   palette,
-  values: { ...DEFAULT_BRANCH_THEME, ...values },
+  values: sanitizeStoredTheme({ ...DEFAULT_BRANCH_THEME, ...values }),
 });
 
 export const DEMO_THEME_PRESETS: DemoThemePreset[] = [
