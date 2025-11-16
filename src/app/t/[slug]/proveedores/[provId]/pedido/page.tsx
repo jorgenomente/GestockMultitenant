@@ -2,10 +2,14 @@
 
 import React from "react";
 import clsx from "clsx";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams, usePathname } from "next/navigation";
 import { createPortal } from "react-dom";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
-import type { PostgrestError, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import type {
+  PostgrestError,
+  RealtimePostgresChangesPayload,
+  User as SupabaseUser,
+} from "@supabase/supabase-js";
 import type { StorageError } from "@supabase/storage-js";
 import type { CellObject, WorkSheet } from "xlsx";
 import { SALES_STORAGE_BUCKET, SALES_STORAGE_DIR } from "@/lib/salesStorage";
@@ -21,6 +25,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { CheckedState } from "@radix-ui/react-checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Accordion, AccordionItem, AccordionTrigger, AccordionContent,
 } from "@/components/ui/accordion";
@@ -48,7 +53,7 @@ import {
   Plus, Minus, Search, Download, Upload, Trash2, ArrowLeft,
   History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package, Loader2, Save,
   CalendarDays, FileText, RefreshCw, BookOpen, TrendingUp, TrendingDown, GripVertical, BarChart3,
-  Sparkles,
+  Sparkles, CheckCircle2, Circle,
 } from "lucide-react";
 import { useVisualViewportBottomOffset, isStandaloneDisplayMode } from "@/lib/useVisualViewportBottomOffset";
 
@@ -58,6 +63,10 @@ const TABLE_SNAPSHOTS = "order_snapshots";
 const TABLE_ORDER_SUMMARIES = "order_summaries";
 const TABLE_ORDER_SUMMARIES_WEEK = "order_summaries_week";
 const TABLE_STOCK_LOGS = "stock_logs";
+const TABLE_PROVIDER_WEEKS = "provider_weeks";
+const WEEK_STORAGE_PREFIX = "gestock:provider-order-week";
+const AUTO_BUFFER_EXTRA_DAYS = 3;
+const LEGACY_WEEK_VALUE = "__legacy__";
 
 const ORDERS_TABLE_ENV = process.env.NEXT_PUBLIC_PROVIDER_ORDERS_TABLE?.trim();
 const ITEMS_TABLE_ENV = process.env.NEXT_PUBLIC_PROVIDER_ORDER_ITEMS_TABLE?.trim();
@@ -188,49 +197,51 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel, disabled = f
   const snap  = (n: number) => clamp(Math.round(n / s) * s);
 
   return (
-    <div className="inline-flex items-center gap-2">
+    <div className="inline-flex flex-col items-start gap-1">
       {suffixLabel && (
         <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--order-card-accent)]/70">
           {suffixLabel}
         </span>
       )}
 
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-9 w-9 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)]"
-        aria-label="Restar"
-        disabled={disabled}
-        onClick={() => onChange(clamp((value || 0) - s))}
-      >
-        <Minus className="h-3 w-3" />
-      </Button>
+      <div className="inline-flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-9 w-9 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)]"
+          aria-label="Restar"
+          disabled={disabled}
+          onClick={() => onChange(clamp((value || 0) - s))}
+        >
+          <Minus className="h-3 w-3" />
+        </Button>
 
-      <Input
-        className="h-9 w-16 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] px-0 text-center text-sm font-semibold text-[color:var(--order-card-qty-foreground)] focus-visible:ring-0"
-        inputMode="numeric"
-        value={value ?? 0}
-        disabled={disabled}
-        onChange={(e) => {
-          const n = parseInt(e.target.value || "0", 10) || 0;
-          onChange(snap(n));
-        }}
-        onBlur={(e) => {
-          const n = parseInt(e.target.value || "0", 10) || 0;
-          if (n !== value) onChange(snap(n));
-        }}
-      />
+        <Input
+          className="h-9 w-16 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] px-0 text-center text-sm font-semibold text-[color:var(--order-card-qty-foreground)] focus-visible:ring-0"
+          inputMode="numeric"
+          value={value ?? 0}
+          disabled={disabled}
+          onChange={(e) => {
+            const n = parseInt(e.target.value || "0", 10) || 0;
+            onChange(snap(n));
+          }}
+          onBlur={(e) => {
+            const n = parseInt(e.target.value || "0", 10) || 0;
+            if (n !== value) onChange(snap(n));
+          }}
+        />
 
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-9 w-9 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)]"
-        aria-label="Sumar"
-        disabled={disabled}
-        onClick={() => onChange(clamp((value || 0) + s))}
-      >
-        <Plus className="h-3 w-3" />
-      </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-9 w-9 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)]"
+          aria-label="Sumar"
+          disabled={disabled}
+          onClick={() => onChange(clamp((value || 0) + s))}
+        >
+          <Plus className="h-3 w-3" />
+        </Button>
+      </div>
     </div>
   );
 }
@@ -406,6 +417,7 @@ type OrderRow = {
   id: string; provider_id: string; status: Status; notes: string | null;
   total: number | null; created_at?: string; updated_at?: string;
   tenant_id?: string | null; branch_id?: string | null;
+  week_id?: string | null;
 };
 type OrderNoteEntry = {
   id: string;
@@ -450,6 +462,7 @@ type ProviderFrequency = "SEMANAL" | "QUINCENAL" | "MENSUAL";
 type SalesRow = { product: string; qty: number; subtotal?: number; date: number; category?: string; };
 type Stats = {
   avg4w: number;
+  sum3d: number;
   sum7d: number;
   sum2w: number;
   sum30d: number;
@@ -472,6 +485,7 @@ type PendingTotals = {
   qty: number;
   updatedAt: string;
 };
+type FinalizeContext = "new-week" | "close-only";
 type XlsxModule = typeof import("xlsx");
 type StyledCell = CellObject & { s?: NonNullable<CellObject["s"]> };
 type CssVars = React.CSSProperties & Record<`--${string}`, string>;
@@ -511,7 +525,58 @@ type BulkItemsHandler = (...args: [string[], string]) => Promise<void>;
 type RenameItemHandler = (...args: [string, string]) => Promise<void> | void;
 type ComputeSalesSinceHandler = (...args: [string, number | null]) => number;
 type SetItemCheckedHandler = (...args: [string, boolean]) => void;
+type SetGroupCheckedHandler = (...args: [string, boolean]) => void;
 type ToggleStatsHandler = (...args: [string]) => void;
+type ProviderWeekRow = { id: string; week_start: string; label?: string | null };
+
+const addDaysUTC = (iso: string, days: number): string => {
+  if (!iso) return iso;
+  const base = new Date(`${iso}T00:00:00Z`);
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+};
+
+const formatARShort = (iso: string) => {
+  if (!iso) return "";
+  return new Intl.DateTimeFormat("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "UTC",
+  }).format(new Date(`${iso}T00:00:00Z`));
+};
+
+const getISOWeekFromISO = (iso: string): number => {
+  if (!iso) return 0;
+  const d = new Date(`${iso}T00:00:00Z`);
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = (target.getUTCDay() + 6) % 7;
+  target.setUTCDate(target.getUTCDate() - day + 3);
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const firstDay = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDay + 3);
+  return 1 + Math.round((target.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
+};
+
+const formatWeekDisplay = (weekStart: string, custom?: string | null) => {
+  if (custom?.trim()) return custom.trim();
+  const start = weekStart;
+  const end = addDaysUTC(start, 6);
+  const weekNo = getISOWeekFromISO(start);
+  return `Semana ${weekNo} · ${formatARShort(start)}–${formatARShort(end)}`;
+};
+
+const weekLabel = (row: ProviderWeekRow) => formatWeekDisplay(row.week_start, row.label);
+
+const startOfWeekISO = (date = new Date()): string => {
+  const utc = new Date(Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+  ));
+  const day = (utc.getUTCDay() + 6) % 7;
+  utc.setUTCDate(utc.getUTCDate() - day);
+  return utc.toISOString().slice(0, 10);
+};
 type UpdateUnitPriceHandler = (id: string, price: number) => Promise<void>;
 
 const createNoteId = () => {
@@ -657,6 +722,8 @@ type GroupSectionProps = {
   onMoveDown: () => void;
   checkedMap: Record<string, boolean>;
   setItemChecked: SetItemCheckedHandler;
+  groupCheckedMap: Record<string, boolean>;
+  setGroupChecked: SetGroupCheckedHandler;
   statsOpenMap: Record<string, boolean>;
   onToggleStats: ToggleStatsHandler;
   minStockMap: Record<string, MinStockState>;
@@ -692,11 +759,12 @@ const AUTO_FREQUENCY_OPTIONS: Array<{ value: ProviderFrequency; title: string; d
   { value: "MENSUAL", title: "Auto mensual", description: "Ventas últimos 30 días" },
 ];
 
-const UI_STATE_STORAGE_VERSION = 5;
+const UI_STATE_STORAGE_VERSION = 6;
 
 type StoredUiStatePayload = {
   version: number;
   checked?: Record<string, boolean>;
+  groupChecked?: Record<string, boolean>;
   sortMode?: SortMode;
   openGroup?: string | null;
   statsOpen?: string[];
@@ -707,6 +775,7 @@ type StoredUiStatePayload = {
 
 type ParsedUiState = {
   checked: Record<string, boolean>;
+  groupCheckedMap: Record<string, boolean>;
   sortMode?: SortMode;
   openGroup?: string | null;
   statsOpenIds: string[];
@@ -886,6 +955,24 @@ const serializeAutoQtyMap = (
   return Object.fromEntries(entries.map(([id, value]) => [id, Boolean(value)]));
 };
 
+const sanitizeGroupCheckedMap = (raw: unknown): Record<string, boolean> => {
+  if (!isRecord(raw)) return {};
+  return Object.entries(raw).reduce<Record<string, boolean>>((acc, [key, value]) => {
+    if (typeof value !== "boolean") return acc;
+    const normKey = normalizeGroupKey(key);
+    acc[normKey] = value;
+    return acc;
+  }, {});
+};
+
+const serializeGroupCheckedMap = (
+  map: Record<string, boolean>,
+): Record<string, boolean> | undefined => {
+  const entries = Object.entries(map);
+  if (!entries.length) return undefined;
+  return Object.fromEntries(entries.map(([key, value]) => [key, Boolean(value)]));
+};
+
 const statsOpenIdsToMap = (ids: string[]): Record<string, boolean> =>
   ids.reduce<Record<string, boolean>>((acc, id) => {
     if (typeof id === "string" && id) acc[id] = true;
@@ -946,6 +1033,7 @@ const applyManualOrder = (arr: ItemRow[], orderIds?: string[]): ItemRow[] => {
 const parseStoredUiState = (raw: unknown): ParsedUiState => {
   const base: ParsedUiState = {
     checked: {},
+    groupCheckedMap: {},
     sortMode: undefined,
     openGroup: undefined,
     statsOpenIds: [],
@@ -958,6 +1046,8 @@ const parseStoredUiState = (raw: unknown): ParsedUiState => {
   const looksStructured =
     typeof raw.version === "number" ||
     isRecord(raw.checked) ||
+    isRecord(raw.groupChecked) ||
+    isRecord(raw.group_checked) ||
     typeof raw.sortMode === "string" ||
     Array.isArray(raw.statsOpen) ||
     raw.openGroup === null ||
@@ -971,6 +1061,7 @@ const parseStoredUiState = (raw: unknown): ParsedUiState => {
     }, {});
     return {
       checked: legacyChecked,
+      groupCheckedMap: {},
       sortMode: undefined,
       openGroup: undefined,
       statsOpenIds: [],
@@ -1002,12 +1093,15 @@ const parseStoredUiState = (raw: unknown): ParsedUiState => {
   const minStockMap = sanitizeMinStockMap(minStockRaw);
   const autoQtyRaw = raw.autoQtyMap ?? raw.auto_qty_map;
   const autoQtyMap = sanitizeAutoQtyMap(autoQtyRaw);
+  const groupCheckedRaw = raw.groupChecked ?? raw.group_checked ?? raw.groupCheckedMap;
+  const groupCheckedMap = sanitizeGroupCheckedMap(groupCheckedRaw);
 
-  return { checked, sortMode, openGroup, statsOpenIds, itemOrderMap, minStockMap, autoQtyMap };
+  return { checked, groupCheckedMap, sortMode, openGroup, statsOpenIds, itemOrderMap, minStockMap, autoQtyMap };
 };
 
 const buildStoredUiStatePayload = (args: {
   checked: Record<string, boolean>;
+  groupCheckedMap: Record<string, boolean>;
   sortMode: SortMode;
   openGroup: string | null;
   statsOpenIds: string[];
@@ -1028,6 +1122,8 @@ const buildStoredUiStatePayload = (args: {
   if (minStockTargets) payload.minStockTargets = minStockTargets;
   const autoQtySerialized = serializeAutoQtyMap(args.autoQtyMap);
   if (autoQtySerialized) payload.autoQtyMap = autoQtySerialized;
+  const groupCheckedSerialized = serializeGroupCheckedMap(args.groupCheckedMap);
+  if (groupCheckedSerialized) payload.groupChecked = groupCheckedSerialized;
 
   return payload;
 };
@@ -1403,6 +1499,7 @@ function computeStatsFromRows(rows: SalesRow[], now = Date.now()): Stats {
   if (!rows.length) {
     return {
       avg4w: 0,
+      sum3d: 0,
       sum7d: 0,
       sum2w: 0,
       sum30d: 0,
@@ -1417,6 +1514,7 @@ function computeStatsFromRows(rows: SalesRow[], now = Date.now()): Stats {
   };
 
   const sum7d = sumIn(7);
+  const sum3d = sumIn(3);
   const sum2w = sumIn(14);
   const sum30d = sumIn(30);
   const sum4w = sumIn(28);
@@ -1435,6 +1533,7 @@ function computeStatsFromRows(rows: SalesRow[], now = Date.now()): Stats {
 
   return {
     avg4w: Math.round(avg4w) || 0,
+    sum3d: Math.round(sum3d) || 0,
     sum7d: Math.round(sum7d) || 0,
     sum2w: Math.round(sum2w) || 0,
     sum30d: Math.round(sum30d) || 0,
@@ -1496,6 +1595,7 @@ const normalizeSearchParam = (value: string | null) => {
 
 const EMPTY_STATS: Stats = {
   avg4w: 0,
+  sum3d: 0,
   sum7d: 0,
   sum2w: 0,
   sum30d: 0,
@@ -1505,6 +1605,7 @@ const EMPTY_STATS: Stats = {
 export default function ProviderOrderPage() {
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
   const router = useRouter();
+  const pathname = usePathname();
   const isDesktop = useMediaQuery("(min-width: 768px)");
   const [isStandalone, setIsStandalone] = React.useState(false);
   React.useEffect(() => {
@@ -1576,6 +1677,10 @@ export default function ProviderOrderPage() {
 
   const tenantId = contextIds.tenantId || undefined;
   const branchId = contextIds.branchId || undefined;
+  const weekStorageKey = React.useMemo(
+    () => `${WEEK_STORAGE_PREFIX}:${tenantId ?? "-"}:${branchId ?? "-"}`,
+    [tenantId, branchId],
+  );
 
   const [ordersTable, setOrdersTable] = React.useState<string>(ORDER_TABLE_CANDIDATES[0]);
   const [itemsTable, setItemsTable] = React.useState<string>(ITEM_TABLE_CANDIDATES[0]);
@@ -1586,6 +1691,7 @@ export default function ProviderOrderPage() {
   const [marginPct, setMarginPct] = React.useState(45);
   const [filter, setFilter] = React.useState("");
   const [isFilterOpen, setIsFilterOpen] = React.useState(false);
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = React.useState(false);
   const [sortMode, setSortMode] = React.useState<SortMode>("alpha_asc");
   const [groupOrder, setGroupOrder] = React.useState<string[]>([]);
   const [itemOrderMap, setItemOrderMap] = React.useState<Record<string, string[]>>({});
@@ -1598,9 +1704,30 @@ export default function ProviderOrderPage() {
   const [lastStockFromInput, setLastStockFromInput] = React.useState<string | null>(null);
   const [lastStockAppliedAt, setLastStockAppliedAt] = React.useState<string | null>(null);
   const [stockUndoSnapshot, setStockUndoSnapshot] = React.useState<StockUndoSnapshot | null>(null);
+  const [savingSnapshot, setSavingSnapshot] = React.useState(false);
+  const [finalizeDialogOpen, setFinalizeDialogOpen] = React.useState(false);
+  const [finalizeReceived, setFinalizeReceived] = React.useState<Record<string, number>>({});
+  const [finalizingOrder, setFinalizingOrder] = React.useState(false);
+  const [finalizeContext, setFinalizeContext] = React.useState<FinalizeContext | null>(null);
   const [statsOpenMap, setStatsOpenMap] = React.useState<Record<string, boolean>>({});
   const [minStockMap, setMinStockMap] = React.useState<Record<string, MinStockState>>({});
   const [autoQtyMap, setAutoQtyMap] = React.useState<Record<string, boolean>>({});
+  const [autoBufferDays, setAutoBufferDays] = React.useState<number>(AUTO_BUFFER_EXTRA_DAYS);
+  const [autoBufferDialogOpen, setAutoBufferDialogOpen] = React.useState(false);
+  const [autoBufferInput, setAutoBufferInput] = React.useState(String(AUTO_BUFFER_EXTRA_DAYS));
+  const [autoBufferError, setAutoBufferError] = React.useState<string | null>(null);
+  const autoBufferIndicatorText =
+    autoBufferDays > 0 ? `Margen +${autoBufferDays}d` : "Sin margen extra";
+  const handleStepAutoBufferInput = React.useCallback((delta: number) => {
+    setAutoBufferInput((prev) => {
+      const normalized = prev.replace(",", ".").trim();
+      const parsed = Number(normalized);
+      const base = Number.isFinite(parsed) ? parsed : 0;
+      const next = Math.max(0, Math.round(base + delta));
+      return String(next);
+    });
+    setAutoBufferError(null);
+  }, []);
   const [peMarginEnabled, setPeMarginEnabled] = React.useState(false);
   const [peApplying, setPeApplying] = React.useState(false);
   const [peSettingsOpen, setPeSettingsOpen] = React.useState(false);
@@ -1612,6 +1739,7 @@ export default function ProviderOrderPage() {
 
   const filterInputRef = React.useRef<HTMLInputElement | null>(null);
   const manualQtyBackupRef = React.useRef<Record<string, number>>({});
+  const autoSyncSuspendedRef = React.useRef(false);
   const rememberManualQty = React.useCallback((itemId: string, qty: number) => {
     const safe = Math.max(0, Math.round(Number.isFinite(qty) ? qty : 0));
     manualQtyBackupRef.current[itemId] = safe;
@@ -1651,6 +1779,24 @@ export default function ProviderOrderPage() {
   }, [order?.notes]);
 
   React.useEffect(() => {
+    setFinalizeDialogOpen(false);
+    setFinalizeReceived({});
+    setFinalizeContext(null);
+  }, [order?.id]);
+
+  React.useEffect(() => {
+    setFinalizeDialogOpen(false);
+    setFinalizeReceived({});
+    setFinalizeContext(null);
+  }, [selectedWeekId]);
+
+  React.useEffect(() => {
+    setOrder(null);
+    setItems([]);
+    setSnapshots([]);
+  }, [selectedWeekId]);
+
+  React.useEffect(() => {
     orderNotesRef.current = orderNotes;
   }, [orderNotes]);
 
@@ -1658,7 +1804,7 @@ export default function ProviderOrderPage() {
     let cancelled = false;
     supabase.auth
       .getUser()
-      .then(({ data }) => {
+      .then(({ data }: { data: { user: SupabaseUser | null } }) => {
         if (cancelled) return;
         const user = data?.user ?? null;
         if (!user) {
@@ -1671,7 +1817,7 @@ export default function ProviderOrderPage() {
         const fallbackName = typeof user.email === "string" ? user.email : "Equipo";
         setCurrentUserName(rawName?.trim() ? rawName.trim() : fallbackName);
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         console.warn("getUser for notes failed", err);
       });
     return () => {
@@ -1858,6 +2004,17 @@ export default function ProviderOrderPage() {
     () => items.filter((item) => item.product_name !== GROUP_PLACEHOLDER),
     [items]
   );
+  const finalizeConfirmDisabled = finalizingOrder || (actionableItems.length === 0 && finalizeContext !== "new-week");
+  const openFinalizeDialog = React.useCallback((context: FinalizeContext) => {
+    const defaults = actionableItems.reduce<Record<string, number>>((acc, item) => {
+      const planned = Math.max(0, Math.round(Number(item.qty ?? 0)));
+      acc[item.id] = planned;
+      return acc;
+    }, {});
+    setFinalizeContext(context);
+    setFinalizeReceived(defaults);
+    setFinalizeDialogOpen(true);
+  }, [actionableItems]);
   React.useEffect(() => {
     const map = manualPriceRef.current;
     const ids = new Set(actionableItems.map((item) => item.id));
@@ -2194,22 +2351,58 @@ export default function ProviderOrderPage() {
     void flushPendingTotals();
   }, [order?.id, flushPendingTotals]);
 
+  const computeLiveStock = React.useCallback(
+    (item: ItemRow) => {
+      const baselineStock = typeof item.stock_qty === "number" ? item.stock_qty : null;
+      if (baselineStock == null) return 0;
+      const productLabel = (item.display_name?.trim() || item.product_name).trim();
+      const lastStockTs =
+        item.stock_updated_at && baselineStock != null ? new Date(item.stock_updated_at).getTime() : null;
+      const pendingSales =
+        lastStockTs != null ? computeSalesSinceStock(productLabel, lastStockTs) : 0;
+      return Math.max(0, round2(baselineStock - pendingSales));
+    },
+    [computeSalesSinceStock],
+  );
+
   const computeAutoTarget = React.useCallback(
     (item: ItemRow) => {
-      const stats = computeStats(sales, item.product_name, latestDateForProduct(sales, item.product_name));
-      let target = 0;
-      if (providerFrequency === "QUINCENAL") target = stats.sum2w || 0;
-      else if (providerFrequency === "MENSUAL") target = stats.sum30d || 0;
-      else target = stats.sum7d || 0;
+      const statsEntry = statsByProduct.get(normKey(item.product_name));
+      const stats = statsEntry?.stats ?? EMPTY_STATS;
+      let baseTarget = 0;
+      let periodDays = 7;
+      if (providerFrequency === "QUINCENAL") {
+        baseTarget = stats.sum2w || 0;
+        periodDays = 14;
+      } else if (providerFrequency === "MENSUAL") {
+        baseTarget = stats.sum30d || 0;
+        periodDays = 30;
+      } else {
+        baseTarget = stats.sum7d || 0;
+        periodDays = 7;
+      }
+
       const minEntry = minStockMap[item.id];
-      if (minEntry?.enabled && minEntry.qty > 0) target = minEntry.qty;
-      return Math.max(0, target);
+      if (minEntry?.enabled && minEntry.qty > 0) {
+        return Math.max(0, minEntry.qty);
+      }
+
+      const avgPerDay = periodDays > 0 ? baseTarget / periodDays : 0;
+      const marginDays = Math.max(0, autoBufferDays);
+      const bufferQty = Math.ceil(avgPerDay * marginDays);
+      const targetWithBuffer = baseTarget + bufferQty;
+
+      return Math.max(0, targetWithBuffer);
     },
-    [sales, providerFrequency, minStockMap],
+    [statsByProduct, providerFrequency, minStockMap, autoBufferDays],
   );
 
   React.useEffect(() => {
     if (!items.length) return;
+    if (autoSyncSuspendedRef.current) {
+      autoSyncSuspendedRef.current = false;
+      return;
+    }
     const updates: Array<{ id: string; qty: number }> = [];
     const nextItems = items.map((item) => {
       if (item.product_name === GROUP_PLACEHOLDER) return item;
@@ -2218,14 +2411,7 @@ export default function ProviderOrderPage() {
       const autoEnabled = minActive || (autoQtyMap[item.id] ?? true);
       if (!autoEnabled) return item;
       const target = computeAutoTarget(item);
-      const productLabel = (item.display_name?.trim() || item.product_name).trim();
-      const baselineStock = typeof item.stock_qty === "number" ? item.stock_qty : null;
-      const lastStockTs =
-        baselineStock != null && item.stock_updated_at ? new Date(item.stock_updated_at).getTime() : null;
-      const pendingSales =
-        baselineStock != null && lastStockTs ? computeSalesSinceStock(productLabel, lastStockTs) : 0;
-      const liveStock =
-        baselineStock == null ? 0 : Math.max(0, round2(baselineStock - pendingSales));
+      const liveStock = computeLiveStock(item);
       const qty = snapToPack(Math.max(0, target - liveStock), item.pack_size);
       const currentQty = Math.max(0, Math.round(Number(item.qty ?? 0)));
       if (qty === currentQty) return item;
@@ -2241,7 +2427,7 @@ export default function ProviderOrderPage() {
     autoQtyMap,
     minStockMap,
     computeAutoTarget,
-    computeSalesSinceStock,
+    computeLiveStock,
     persistQtyPatch,
     recomputeOrderTotal,
   ]);
@@ -2467,6 +2653,7 @@ export default function ProviderOrderPage() {
 
   // UI persistente (Supabase)
   const [checkedMap, setCheckedMap] = React.useState<Record<string, boolean>>({});
+  const [groupCheckedMap, setGroupCheckedMap] = React.useState<Record<string, boolean>>({});
 
   // NUEVO: acordeón controlado (todos cerrados al entrar; uno abierto a la vez)
   const [openGroup, setOpenGroup] = React.useState<string>("");
@@ -2576,6 +2763,18 @@ export default function ProviderOrderPage() {
   const [exportDialogOpen, setExportDialogOpen] = React.useState(false);
   const [exportFormat, setExportFormat] = React.useState<OrderExportFormat>("xlsx");
   const [exportingOrder, setExportingOrder] = React.useState(false);
+  const [weekOptions, setWeekOptions] = React.useState<ProviderWeekRow[]>([]);
+  const [weeksLoading, setWeeksLoading] = React.useState(false);
+  const [creatingWeek, setCreatingWeek] = React.useState(false);
+  const currentWeekLabel = React.useMemo(() => {
+    if (selectedWeekId) {
+      const found = weekOptions.find((w) => w.id === selectedWeekId);
+      if (found) return weekLabel(found);
+      return "Semana seleccionada";
+    }
+    if (weeksLoading) return "Cargando semanas…";
+    return "Pedido actual (histórico)";
+  }, [selectedWeekId, weekOptions, weeksLoading]);
 
   React.useEffect(() => {
     if (!editingSnapshotId) return;
@@ -2585,6 +2784,336 @@ export default function ProviderOrderPage() {
     }, 20);
     return () => window.clearTimeout(timer);
   }, [editingSnapshotId]);
+
+  const updateWeekParam = React.useCallback((nextWeekId: string | null) => {
+    const params = new URLSearchParams(search.toString());
+    if (nextWeekId) params.set("week", nextWeekId);
+    else params.delete("week");
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname);
+  }, [router, pathname, search]);
+
+  const ensureWeekForDate = React.useCallback(async (date: Date) => {
+    if (!tenantId || !branchId) throw new Error("Falta la sucursal actual");
+    const weekStart = startOfWeekISO(date);
+    const { data, error } = await supabase
+      .from(TABLE_PROVIDER_WEEKS)
+      .select("id, week_start, label")
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId)
+      .eq("week_start", weekStart)
+      .maybeSingle();
+    if (error && error.code !== "PGRST116") throw error;
+    if (data) return data as ProviderWeekRow;
+    const label = formatWeekDisplay(weekStart, null);
+    const { data: inserted, error: insertError } = await supabase
+      .from(TABLE_PROVIDER_WEEKS)
+      .insert([{ tenant_id: tenantId, branch_id: branchId, week_start: weekStart, label }])
+      .select("id, week_start, label")
+      .single();
+    if (insertError) throw insertError;
+    return inserted as ProviderWeekRow;
+  }, [supabase, tenantId, branchId]);
+
+  const fetchWeekOptions = React.useCallback(async () => {
+    if (!tenantId || !branchId) {
+      setWeekOptions([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from(TABLE_PROVIDER_WEEKS)
+      .select("id, week_start, label")
+      .eq("tenant_id", tenantId)
+      .eq("branch_id", branchId)
+      .order("week_start", { ascending: false })
+      .limit(32);
+    if (error) {
+      console.warn("provider_weeks load error", error.message);
+      setWeekOptions([]);
+      return;
+    }
+    setWeekOptions((data as ProviderWeekRow[] | null) ?? []);
+  }, [supabase, tenantId, branchId]);
+
+  React.useEffect(() => {
+    let alive = true;
+    setWeeksLoading(true);
+    (async () => {
+      await fetchWeekOptions();
+      if (alive) setWeeksLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [fetchWeekOptions]);
+
+  React.useEffect(() => {
+    if (!selectedWeekId) {
+      if (typeof window !== "undefined") window.localStorage.removeItem(weekStorageKey);
+      return;
+    }
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(weekStorageKey, selectedWeekId);
+  }, [selectedWeekId, weekStorageKey]);
+
+  React.useEffect(() => {
+    if (selectedWeekId) return;
+    if (weeksLoading) return;
+    if (!weekOptions.length) return;
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(weekStorageKey);
+    if (stored && weekOptions.some((week) => week.id === stored)) {
+      updateWeekParam(stored);
+    }
+  }, [selectedWeekId, weeksLoading, weekOptions, weekStorageKey, updateWeekParam]);
+
+  const handleWeekChange = React.useCallback((nextWeekId: string) => {
+    if (nextWeekId === LEGACY_WEEK_VALUE) {
+      updateWeekParam(null);
+      return;
+    }
+    updateWeekParam(nextWeekId);
+  }, [updateWeekParam]);
+
+  const cloneOrderToNewWeek = React.useCallback(async () => {
+    if (!tenantId || !branchId) {
+      alert("Necesitás seleccionar una sucursal antes de crear el pedido.");
+      return;
+    }
+    if (!provId) {
+      alert("No se encontró el proveedor actual. Refrescá la página e intentá nuevamente.");
+      return;
+    }
+
+    const itemsSnapshot = items.map((item) => ({ ...item }));
+    const groupOrderSnapshot = [...groupOrder];
+    const checkedSnapshot = { ...checkedMap };
+    const groupCheckedSnapshot = { ...groupCheckedMap };
+    const statsOpenSnapshot = { ...statsOpenMap };
+    const itemOrderSnapshot = cloneItemOrderMap(itemOrderMap);
+    const minStockSnapshot = Object.entries(minStockMap).reduce<Record<string, MinStockState>>((acc, [key, value]) => {
+      acc[key] = { ...value };
+      return acc;
+    }, {});
+    const autoQtySnapshot = { ...autoQtyMap };
+    const sortSnapshot = sortMode;
+    const openGroupSnapshot = openGroup || null;
+
+    setCreatingWeek(true);
+    try {
+      const week = await ensureWeekForDate(new Date());
+
+      let targetOrder: OrderRow | null = null;
+      const { data: existingWeekOrder, error: existingWeekError } = await supabase
+        .from(ordersTable)
+        .select("*")
+        .eq("provider_id", provId)
+        .eq("week_id", week.id)
+        .maybeSingle();
+      if (existingWeekError && existingWeekError.code !== "PGRST116") throw existingWeekError;
+      if (existingWeekOrder) targetOrder = existingWeekOrder as OrderRow;
+
+      if (!targetOrder) {
+        type OrderInsertPayload = {
+          provider_id: string;
+          status: Status;
+          notes: string;
+          total: number;
+          week_id?: string;
+          tenant_id?: string;
+          branch_id?: string;
+        };
+        let insertPayload: OrderInsertPayload = {
+          provider_id: provId,
+          status: "PENDIENTE",
+          notes: `${providerName} - ${isoToday()}`,
+          total: 0,
+          week_id: week.id,
+        };
+        if (tenantId) insertPayload.tenant_id = tenantId;
+        if (branchId) insertPayload.branch_id = branchId;
+
+        let lastInsertError: PostgrestError | Error | null = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const { data, error } = await supabase
+            .from(ordersTable)
+            .insert([insertPayload])
+            .select("*")
+            .single();
+          if (error?.code === "42703" && (insertPayload.tenant_id || insertPayload.branch_id)) {
+            insertPayload = { ...insertPayload };
+            delete insertPayload.tenant_id;
+            delete insertPayload.branch_id;
+            continue;
+          }
+          if (error) {
+            lastInsertError = error;
+          } else {
+            targetOrder = data as OrderRow;
+          }
+          break;
+        }
+        if (!targetOrder) {
+          throw lastInsertError ?? new Error("No se pudo crear el pedido de la semana.");
+        }
+      }
+
+      if (targetOrder && itemsSnapshot.length) {
+        const { data: existingItems, error: itemsCheckError } = await supabase
+          .from(itemsTable)
+          .select("id")
+          .eq("order_id", targetOrder.id)
+          .limit(1);
+        if (itemsCheckError) throw itemsCheckError;
+        const hasItems = Array.isArray(existingItems) && existingItems.length > 0;
+        if (!hasItems) {
+          const idMap = new Map<string, string>();
+          const tenantForInsert = targetOrder.tenant_id ?? tenantId ?? null;
+          const branchForInsert = targetOrder.branch_id ?? branchId ?? null;
+          const insertRows: Array<ItemUpsertPayload & { id?: string }> = itemsSnapshot.map((item) => {
+            const newId =
+              typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID
+                ? globalThis.crypto.randomUUID()
+                : `item_${Math.random().toString(36).slice(2, 12)}`;
+            idMap.set(item.id, newId);
+            const payload: ItemUpsertPayload & { id?: string } = {
+              id: newId,
+              order_id: targetOrder!.id,
+              product_name: item.product_name,
+              qty: item.qty ?? 0,
+              unit_price: item.unit_price ?? 0,
+              group_name: item.group_name ?? null,
+            };
+            if (item.display_name != null) payload.display_name = item.display_name;
+            if (item.pack_size != null) payload.pack_size = item.pack_size;
+            if (item.stock_qty != null) payload.stock_qty = item.stock_qty;
+            if (item.stock_updated_at) payload.stock_updated_at = item.stock_updated_at;
+            if (item.previous_qty != null) payload.previous_qty = item.previous_qty;
+            if (item.previous_qty_updated_at) payload.previous_qty_updated_at = item.previous_qty_updated_at;
+            if (item.price_updated_at) payload.price_updated_at = item.price_updated_at;
+            const tenantValue = item.tenant_id ?? tenantForInsert;
+            if (tenantValue) payload.tenant_id = tenantValue;
+            const branchValue = item.branch_id ?? branchForInsert;
+            if (branchValue) payload.branch_id = branchValue;
+            return payload;
+          });
+
+          if (insertRows.length) {
+            const chunkSize = 80;
+            for (let start = 0; start < insertRows.length; start += chunkSize) {
+              const slice = insertRows.slice(start, start + chunkSize);
+              let { error } = await supabase.from(itemsTable).insert(slice);
+              if (error?.code === "42703") {
+                const fallbackSlice = slice.map(({ tenant_id, branch_id, ...rest }) => rest);
+                const fallback = await supabase.from(itemsTable).insert(fallbackSlice);
+                error = fallback.error;
+              }
+              if (error) throw error;
+            }
+          }
+
+          if (idMap.size) {
+            const nextChecked = Object.entries(checkedSnapshot).reduce<Record<string, boolean>>((acc, [oldId, value]) => {
+              const mapped = idMap.get(oldId);
+              if (mapped) acc[mapped] = value;
+              return acc;
+            }, {});
+            const nextStatsMap = Object.entries(statsOpenSnapshot).reduce<Record<string, boolean>>((acc, [oldId, value]) => {
+              const mapped = idMap.get(oldId);
+              if (mapped && value) acc[mapped] = true;
+              return acc;
+            }, {});
+            const nextMinStock = Object.entries(minStockSnapshot).reduce<Record<string, MinStockState>>(
+              (acc, [oldId, value]) => {
+                const mapped = idMap.get(oldId);
+                if (mapped) acc[mapped] = { ...value };
+                return acc;
+              },
+              {},
+            );
+            const nextAutoQty = Object.entries(autoQtySnapshot).reduce<Record<string, boolean>>((acc, [oldId, value]) => {
+              const mapped = idMap.get(oldId);
+              if (mapped) acc[mapped] = value;
+              return acc;
+            }, {});
+            const nextItemOrder = Object.entries(itemOrderSnapshot).reduce<Record<string, string[]>>((acc, [groupKey, ids]) => {
+              const mapped = ids.map((oldId) => idMap.get(oldId)).filter((id): id is string => Boolean(id));
+              if (mapped.length) acc[groupKey] = mapped;
+              return acc;
+            }, {});
+            const sanitizedGroupOrder = groupOrderSnapshot
+              .map((name) => name?.trim())
+              .filter((name): name is string => Boolean(name && name.length > 0));
+
+            const uiPayload = buildStoredUiStatePayload({
+              checked: nextChecked,
+              groupCheckedMap: groupCheckedSnapshot,
+              sortMode: sortSnapshot,
+              openGroup: openGroupSnapshot,
+              statsOpenIds: mapStatsOpenIds(nextStatsMap),
+              itemOrderMap: nextItemOrder,
+              minStockMap: nextMinStock,
+              autoQtyMap: nextAutoQty,
+            });
+
+            const uiRow: {
+              order_id: string;
+              updated_at: string;
+              group_order?: string[];
+              checked_map: StoredUiStatePayload;
+            } = {
+              order_id: targetOrder.id,
+              updated_at: new Date().toISOString(),
+              checked_map: uiPayload,
+            };
+            if (sanitizedGroupOrder.length) uiRow.group_order = sanitizedGroupOrder;
+            const { error: uiCloneError } = await supabase
+              .from(TABLE_UI_STATE)
+              .upsert(uiRow, { onConflict: "order_id" });
+            if (uiCloneError) console.error("week order ui clone error", uiCloneError);
+          }
+        }
+      }
+
+      await fetchWeekOptions();
+      updateWeekParam(week.id);
+    } catch (err) {
+      console.error("create week error", err);
+      alert("No se pudo crear el pedido de esta semana. Probá de nuevo.");
+    } finally {
+      setCreatingWeek(false);
+    }
+  }, [
+    tenantId,
+    branchId,
+    provId,
+    items,
+    groupOrder,
+    checkedMap,
+    statsOpenMap,
+    itemOrderMap,
+    minStockMap,
+    autoQtyMap,
+    sortMode,
+    openGroup,
+    ensureWeekForDate,
+    supabase,
+    ordersTable,
+    itemsTable,
+    providerName,
+    fetchWeekOptions,
+    updateWeekParam,
+  ]);
+
+  const handleCreateWeekOrder = React.useCallback(() => {
+    if (!tenantId || !branchId) {
+      alert("Necesitás seleccionar una sucursal antes de crear el pedido.");
+      return;
+    }
+    if (!provId) {
+      alert("No se encontró el proveedor actual. Refrescá la página e intentá nuevamente.");
+      return;
+    }
+    openFinalizeDialog("new-week");
+  }, [tenantId, branchId, provId, openFinalizeDialog]);
 
   /** NUEVO: cargar ventas desde la fuente activa en DB (o por defecto) */
   React.useEffect(() => {
@@ -2628,6 +3157,7 @@ export default function ProviderOrderPage() {
 
       const parsedUI = parseStoredUiState(data?.checked_map);
       setCheckedMap(parsedUI.checked);
+      setGroupCheckedMap(parsedUI.groupCheckedMap);
       if (parsedUI.sortMode) setSortMode(parsedUI.sortMode);
       if (parsedUI.openGroup !== undefined) setOpenGroup(parsedUI.openGroup ?? "");
       setStatsOpenMap(statsOpenIdsToMap(parsedUI.statsOpenIds));
@@ -2673,6 +3203,8 @@ React.useEffect(() => {
           .eq('provider_id', provId)
           .order('created_at', { ascending: false })
           .limit(1);
+        if (selectedWeekId) query = query.eq('week_id', selectedWeekId);
+        else query = query.is('week_id', null);
         if (variant.useTenant && tenantId) query = query.eq('tenant_id', tenantId);
         if (variant.useBranch && branchId) query = query.eq('branch_id', branchId);
 
@@ -2721,6 +3253,7 @@ React.useEffect(() => {
         total: number;
         tenant_id?: string;
         branch_id?: string;
+        week_id?: string;
       };
 
       const creationPayloadBase: OrderInsertPayload = {
@@ -2728,6 +3261,7 @@ React.useEffect(() => {
         status: 'PENDIENTE' as Status,
         notes: `${providerName} - ${isoToday()}`,
         total: 0,
+        week_id: selectedWeekId ?? undefined,
       };
 
       for (const table of orderCandidates) {
@@ -2941,7 +3475,7 @@ React.useEffect(() => {
     }
   })();
   return () => { mounted = false; };
-}, [supabase, provId, providerName, tenantId, branchId, ordersTable, itemsTable, loadUIState]);
+}, [supabase, provId, providerName, tenantId, branchId, ordersTable, itemsTable, loadUIState, selectedWeekId]);
 
 
   // Realtime (escucha cambios en items)
@@ -3127,6 +3661,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       itemOrderMap?: Record<string, string[]>;
       minStockMap?: Record<string, MinStockState>;
       autoQtyMap?: Record<string, boolean>;
+      groupCheckedMap?: Record<string, boolean>;
     }) => {
       if (!order?.id) return;
 
@@ -3137,6 +3672,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       const hasItemOrderOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "itemOrderMap") : false;
       const hasMinOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "minStockMap") : false;
       const hasAutoOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "autoQtyMap") : false;
+      const hasGroupCheckedOverride = overrides ? Object.prototype.hasOwnProperty.call(overrides, "groupCheckedMap") : false;
       const nextChecked = hasCheckedOverride ? overrides!.checked ?? {} : checkedMap;
       const nextSortMode = hasSortOverride ? overrides!.sortMode ?? sortMode : sortMode;
       const nextOpenGroup = hasOpenOverride ? overrides!.openGroup ?? null : openGroup || null;
@@ -3144,9 +3680,11 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       const nextItemOrderMap = hasItemOrderOverride ? overrides!.itemOrderMap ?? {} : itemOrderMap;
       const nextMinStockMap = hasMinOverride ? overrides!.minStockMap ?? {} : minStockMap;
       const nextAutoQtyMap = hasAutoOverride ? overrides!.autoQtyMap ?? {} : autoQtyMap;
+      const nextGroupCheckedMap = hasGroupCheckedOverride ? overrides!.groupCheckedMap ?? {} : groupCheckedMap;
 
       const payload = buildStoredUiStatePayload({
         checked: nextChecked,
+        groupCheckedMap: nextGroupCheckedMap,
         sortMode: nextSortMode,
         openGroup: nextOpenGroup,
         statsOpenIds: mapStatsOpenIds(nextStatsMap),
@@ -3157,8 +3695,90 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
 
       void saveUIState(order.id, { checked_map: payload });
     },
-    [order?.id, checkedMap, sortMode, openGroup, statsOpenMap, itemOrderMap, minStockMap, autoQtyMap, saveUIState]
+    [order?.id, checkedMap, groupCheckedMap, sortMode, openGroup, statsOpenMap, itemOrderMap, minStockMap, autoQtyMap, saveUIState]
   );
+
+  const hasItems = items.length > 0;
+
+  const autoAllEnabled = React.useMemo(() => {
+    if (!hasItems) return true;
+    return items.every((item) => {
+      const minState = minStockMap[item.id];
+      const minQty = Math.max(0, minState?.qty ?? 0);
+      const minActive = Boolean(minState?.enabled) && minQty > 0;
+      if (minActive) return true;
+      return autoQtyMap[item.id] !== false;
+    });
+  }, [hasItems, items, minStockMap, autoQtyMap]);
+
+  const applyAutoQtyToAll = React.useCallback(
+    (mode: "auto" | "manual") => {
+      if (mode === "auto") {
+        if (!Object.keys(autoQtyMap).length) return;
+        items.forEach((item) => {
+          if (autoQtyMap[item.id] === false) {
+            const safeQty = Math.max(0, Math.round(Number(item.qty ?? 0)));
+            rememberManualQty(item.id, safeQty);
+          }
+        });
+        setAutoQtyMap({});
+        persistUiState({ autoQtyMap: {} });
+        return;
+      }
+
+      const next: Record<string, boolean> = {};
+      const manualChanges: Array<{ id: string; qty: number }> = [];
+      items.forEach((item) => {
+        const minState = minStockMap[item.id];
+        const minQty = Math.max(0, minState?.qty ?? 0);
+        const minActive = Boolean(minState?.enabled) && minQty > 0;
+        if (!minActive) {
+          next[item.id] = false;
+          const manualQty = getManualQtyBackup(item.id);
+          const currentQty = Math.max(0, Math.round(Number(item.qty ?? 0)));
+          if (manualQty != null && manualQty !== currentQty) {
+            manualChanges.push({ id: item.id, qty: manualQty });
+          }
+        }
+      });
+      if (shallowEqualRecord(autoQtyMap, next)) return;
+      setAutoQtyMap(next);
+      persistUiState({ autoQtyMap: next });
+      manualChanges.forEach(({ id, qty }) => {
+        void updateQty(id, qty);
+      });
+    },
+    [autoQtyMap, items, minStockMap, persistUiState, rememberManualQty, getManualQtyBackup],
+  );
+
+  const handleConfirmAutoBuffer = React.useCallback(() => {
+    const normalized = autoBufferInput.replace(",", ".").trim();
+    if (!normalized) {
+      setAutoBufferError("Ingresá un número válido.");
+      return;
+    }
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) {
+      setAutoBufferError("Ingresá un número válido.");
+      return;
+    }
+    const safe = Math.max(0, Math.round(parsed));
+    setAutoBufferDays(safe);
+    setAutoBufferDialogOpen(false);
+    setAutoBufferError(null);
+    applyAutoQtyToAll("auto");
+  }, [autoBufferInput, applyAutoQtyToAll]);
+
+  const handleBulkAutoToggle = React.useCallback(() => {
+    if (!hasItems) return;
+    if (autoAllEnabled) {
+      applyAutoQtyToAll("manual");
+      return;
+    }
+    setAutoBufferInput(String(autoBufferDays));
+    setAutoBufferError(null);
+    setAutoBufferDialogOpen(true);
+  }, [hasItems, autoAllEnabled, applyAutoQtyToAll, autoBufferDays]);
 
   // Mantener coherencia: si el grupo abierto ya no existe (renombre/eliminación), cerramos
   React.useEffect(() => {
@@ -3205,6 +3825,17 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
   }, [items, checkedMap, statsOpenMap, minStockMap, autoQtyMap, persistUiState]);
 
   React.useEffect(() => {
+    const validGroups = new Set(groups.map(([name]) => normalizeGroupKey(name)));
+    const sanitized = Object.entries(groupCheckedMap).reduce<Record<string, boolean>>((acc, [key, value]) => {
+      if (validGroups.has(key)) acc[key] = Boolean(value);
+      return acc;
+    }, {});
+    if (shallowEqualRecord(groupCheckedMap, sanitized)) return;
+    setGroupCheckedMap(sanitized);
+    persistUiState({ groupCheckedMap: sanitized });
+  }, [groups, groupCheckedMap, persistUiState]);
+
+  React.useEffect(() => {
     let nextState: Record<string, string[]> | null = null;
     setItemOrderMap((prev) => {
       const groupsMap = new Map<string, string[]>();
@@ -3249,6 +3880,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
   function applyImportedUIState(opts: {
     groupOrder?: string[];
     checkedMap?: Record<string, boolean>;
+    groupCheckedMap?: Record<string, boolean>;
     sortMode?: SortMode;
     openGroup?: string | null;
     statsOpenIds?: string[];
@@ -3264,6 +3896,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
 
     const hasUiOverrides =
       opts.checkedMap !== undefined ||
+      opts.groupCheckedMap !== undefined ||
       opts.sortMode !== undefined ||
       opts.openGroup !== undefined ||
       opts.statsOpenIds !== undefined ||
@@ -3273,6 +3906,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
 
     if (hasUiOverrides) {
       const resolvedChecked = opts.checkedMap ?? checkedMap;
+      const resolvedGroupChecked = opts.groupCheckedMap ?? groupCheckedMap;
       const resolvedSortMode = opts.sortMode ?? sortMode;
       const resolvedOpenGroup = opts.openGroup !== undefined ? opts.openGroup : openGroup || null;
       const resolvedStatsMap = opts.statsOpenIds !== undefined ? statsOpenIdsToMap(opts.statsOpenIds) : statsOpenMap;
@@ -3281,6 +3915,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       const resolvedAutoQty = opts.autoQtyMap ?? autoQtyMap;
 
       if (opts.checkedMap !== undefined) setCheckedMap(resolvedChecked);
+      if (opts.groupCheckedMap !== undefined) setGroupCheckedMap(resolvedGroupChecked);
       if (opts.sortMode !== undefined) setSortMode(resolvedSortMode);
       if (opts.openGroup !== undefined) setOpenGroup(resolvedOpenGroup ?? "");
       if (opts.statsOpenIds !== undefined) setStatsOpenMap(resolvedStatsMap);
@@ -3290,6 +3925,7 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
 
       const payload = buildStoredUiStatePayload({
         checked: resolvedChecked,
+        groupCheckedMap: resolvedGroupChecked,
         sortMode: resolvedSortMode,
         openGroup: resolvedOpenGroup,
         statsOpenIds: mapStatsOpenIds(resolvedStatsMap),
@@ -3407,6 +4043,14 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       return next;
     });
   }
+  function setGroupChecked(name: string | null | undefined, val: boolean) {
+    const key = normalizeGroupKey(name);
+    setGroupCheckedMap((prev) => {
+      const next = { ...prev, [key]: val };
+      persistUiState({ groupCheckedMap: next });
+      return next;
+    });
+  }
 // ✅ Marcar / desmarcar todos los ítems visibles del pedido
 function setAllChecked(val: boolean) {
   setCheckedMap((prev) => {
@@ -3423,8 +4067,8 @@ function setAllChecked(val: boolean) {
 
   /* ===== CRUD (optimista) ===== */
 
-async function createGroup(groupName: string) {
-  if (!order) return;
+async function createGroup(groupName: string): Promise<boolean> {
+  if (!order) return false;
   const tenantForInsert = order?.tenant_id ?? tenantId ?? tenantIdFromQuery ?? null;
   const branchForInsert = order?.branch_id ?? branchId ?? branchIdFromQuery ?? null;
 
@@ -3458,9 +4102,10 @@ async function createGroup(groupName: string) {
     }
     if (table !== itemsTable) setItemsTable(table);
     setItems((prev) => [...prev, data as ItemRow]);
-    return;
+    return true;
   }
   alert('No se pudo crear el grupo.');
+  return false;
 }
 
   // Estado de trabajo del vaciado
@@ -3490,14 +4135,7 @@ async function applySuggested(mode: "week" | "2w" | "30d"): Promise<boolean> {
       else if (mode === "2w") n = st.sum2w || 0;
       else n = st.sum30d || 0;
 
-      const productLabel = (it.display_name?.trim() || it.product_name).trim();
-      const manualStock = typeof it.stock_qty === "number" ? it.stock_qty : null;
-      const lastStockTs =
-        manualStock != null && it.stock_updated_at ? new Date(it.stock_updated_at).getTime() : null;
-      const pendingSales =
-        manualStock != null && lastStockTs ? computeSalesSinceStock(productLabel, lastStockTs) : 0;
-      const currentStock =
-        manualStock == null ? 0 : Math.max(0, round2(manualStock - pendingSales));
+      const currentStock = computeLiveStock(it);
       const net = Math.max(0, (n || 0) - currentStock);
 
       return Math.max(0, snapToPack(net, it.pack_size));
@@ -3972,6 +4610,16 @@ async function updatePackSize(id: string, pack: number | null) {
     return next;
   });
   if (renamedOrder) persistUiState({ itemOrderMap: renamedOrder });
+  setGroupCheckedMap((prev) => {
+    const fromKey = normalizeGroupKey(oldName);
+    const toKey = normalizeGroupKey(newName);
+    if (fromKey === toKey || prev[fromKey] === undefined) return prev;
+    const next = { ...prev };
+    next[toKey] = prev[fromKey];
+    delete next[fromKey];
+    persistUiState({ groupCheckedMap: next });
+    return next;
+  });
 }
 
 
@@ -3997,6 +4645,14 @@ async function updatePackSize(id: string, pack: number | null) {
       return next;
     });
     if (prunedOrder) persistUiState({ itemOrderMap: prunedOrder });
+    setGroupCheckedMap((prev) => {
+      const key = normalizeGroupKey(name);
+      if (prev[key] === undefined) return prev;
+      const next = { ...prev };
+      delete next[key];
+      persistUiState({ groupCheckedMap: next });
+      return next;
+    });
     recomputeOrderTotal();
   }
 
@@ -4570,11 +5226,13 @@ async function exportOrderAsXlsx() {
     const uiPatch: {
       groupOrder?: string[];
       checkedMap?: Record<string, boolean>;
+      groupCheckedMap?: Record<string, boolean>;
       sortMode?: SortMode;
       openGroup?: string | null;
       statsOpenIds?: string[];
       itemOrderMap?: Record<string, string[]>;
       minStockMap?: Record<string, MinStockState>;
+      autoQtyMap?: Record<string, boolean>;
     } = {
       checkedMap: legacyChecked,
     };
@@ -4791,8 +5449,8 @@ async function exportOrderAsXlsx() {
     }
   }
 
-  async function saveSnapshot() {
-    if (!order) return;
+  async function saveSnapshot(): Promise<boolean> {
+    if (!order) return false;
     try {
       const snapshotItems: SnapshotItem[] = items
         .filter((it) => it.product_name !== GROUP_PLACEHOLDER)
@@ -4833,12 +5491,127 @@ async function exportOrderAsXlsx() {
 
       await loadSnapshots();
       setHistoryOpen(true);
+      return true;
     } catch (error: unknown) {
       console.error(error);
       const message = readErrorMessage(error) || (error instanceof Error ? error.message : "");
       alert(`No se pudo guardar en historial.\n${message}`);
+      return false;
     }
   }
+
+  const handleSaveDraft = React.useCallback(async () => {
+    if (savingSnapshot) return;
+    setSavingSnapshot(true);
+    try {
+      await saveSnapshot();
+    } finally {
+      setSavingSnapshot(false);
+    }
+  }, [saveSnapshot, savingSnapshot]);
+
+  const handleFinalizeOrder = React.useCallback(async () => {
+    if (!actionableItems.length && finalizeContext !== "new-week") {
+      alert("No hay productos para confirmar.");
+      return;
+    }
+    setFinalizingOrder(true);
+    let nextAction: FinalizeContext | null = null;
+    try {
+      const ok = await saveSnapshot();
+      if (!ok) return;
+      const relevantItems = actionableItems.length ? actionableItems : [];
+      const nowIso = new Date().toISOString();
+      const nowLocal = toLocalInputFromISO(nowIso);
+      const updates = relevantItems.map((item) => {
+        const receivedQty = Math.max(
+          0,
+          Math.round(Number(finalizeReceived[item.id] ?? item.qty ?? 0))
+        );
+        const liveStock = computeLiveStock(item);
+        return {
+          item,
+          receivedQty,
+          liveStock,
+          stockResult: liveStock + receivedQty,
+        };
+      });
+
+      for (const entry of updates) {
+        const payload = {
+          stock_qty: entry.stockResult,
+          stock_updated_at: nowIso,
+          previous_qty: entry.receivedQty,
+          previous_qty_updated_at: nowIso,
+        };
+        const { error } = await supabase.from(itemsTable).update(payload).eq("id", entry.item.id);
+        if (error) throw error;
+      }
+
+      if (updates.length) {
+        const logsPayload = updates.map((entry) => ({
+          order_item_id: entry.item.id,
+          stock_prev: entry.liveStock,
+          stock_in: entry.receivedQty,
+          stock_out: 0,
+          stock_applied: entry.stockResult,
+          sales_since: 0,
+          applied_at: nowIso,
+          tenant_id: entry.item.tenant_id ?? tenantId ?? null,
+          branch_id: entry.item.branch_id ?? branchId ?? null,
+        }));
+        const { error: logError } = await supabase.from(TABLE_STOCK_LOGS).insert(logsPayload);
+        if (logError && logError.code !== "42P01") {
+          console.warn("stock log finalize error", logError);
+        }
+      }
+
+      if (updates.length) {
+        setItems((prev) =>
+          prev.map((item) => {
+            const entry = updates.find((u) => u.item.id === item.id);
+            if (!entry) return item;
+            return {
+              ...item,
+              stock_qty: entry.stockResult,
+              stock_updated_at: nowIso,
+              previous_qty: entry.receivedQty,
+              previous_qty_updated_at: nowIso,
+            };
+          })
+        );
+        setLastStockAppliedAt(nowIso);
+        setLastStockFromInput(nowLocal);
+        setStockSalesInput(nowLocal);
+      }
+
+      nextAction = finalizeContext;
+      setFinalizeDialogOpen(false);
+      setFinalizeReceived({});
+      setFinalizeContext(null);
+    } catch (error) {
+      console.error("finalize order error", error);
+      const message = readErrorMessage(error) || (error instanceof Error ? error.message : "");
+      alert(`No se pudo confirmar el pedido.\n${message}`);
+    } finally {
+      setFinalizingOrder(false);
+    }
+    if (nextAction === "new-week") {
+      await cloneOrderToNewWeek();
+    }
+  }, [
+    actionableItems,
+    finalizeContext,
+    finalizeReceived,
+    saveSnapshot,
+    computeLiveStock,
+    supabase,
+    itemsTable,
+    tenantId,
+    branchId,
+    setItems,
+    cloneOrderToNewWeek,
+  ]);
 
   async function openSnapshot(snap: SnapshotRow) {
     if (!order) return;
@@ -4915,6 +5688,16 @@ async function exportOrderAsXlsx() {
     }
 
     const newItems = (inserted as ItemRow[]) ?? [];
+    const manualAutoMap = newItems.reduce<Record<string, boolean>>((acc, item) => {
+      if (item.product_name === GROUP_PLACEHOLDER) return acc;
+      acc[item.id] = false;
+      return acc;
+    }, {});
+
+    autoSyncSuspendedRef.current = true;
+    setAutoQtyMap(manualAutoMap);
+    persistUiState({ autoQtyMap: manualAutoMap });
+
     setItems(newItems);
     recomputeOrderTotal(newItems);
     setHistoryOpen(false);
@@ -4994,12 +5777,93 @@ async function exportOrderAsXlsx() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={finalizeDialogOpen}
+        onOpenChange={(open) => {
+          if (finalizingOrder) return;
+          setFinalizeDialogOpen(open);
+          if (!open) {
+            setFinalizeContext(null);
+            setFinalizeReceived({});
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl max-h-[calc(100vh-3rem)] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Cerrar pedido</DialogTitle>
+            <DialogDescription>
+              {finalizeContext === "new-week"
+                ? "Vamos a cerrar el pedido anterior y crear uno nuevo. Confirmá las cantidades recibidas para continuar."
+                : "Confirmá las cantidades que realmente esperás recibir. Ajustá la columna “Recibido” si algún producto llega incompleto o no lo envían."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-4 rounded-3xl border border-[var(--border)] bg-muted/40">
+            {actionableItems.length === 0 ? (
+              <p className="px-4 py-8 text-sm text-muted-foreground">
+                No hay productos en el pedido actual.
+              </p>
+            ) : (
+              <ScrollArea className="max-h-[60vh]">
+                <div className="divide-y divide-border/50">
+                  {actionableItems.map((item) => {
+                    const planned = Math.max(0, Math.round(Number(item.qty ?? 0)));
+                    const received = finalizeReceived[item.id] ?? planned;
+                    return (
+                      <div key={item.id} className="flex flex-wrap items-center gap-4 px-4 py-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-[var(--foreground)]">
+                            {item.display_name?.trim() || item.product_name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Pedido: {fmtInt(planned)} u
+                          </p>
+                        </div>
+                        <Stepper
+                          value={received}
+                          min={0}
+                          step={item.pack_size || 1}
+                          suffixLabel="Recibido"
+                          onChange={(n) => {
+                            setFinalizeReceived((prev) => ({ ...prev, [item.id]: Math.max(0, n) }));
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (finalizingOrder) return;
+                setFinalizeDialogOpen(false);
+                setFinalizeContext(null);
+                setFinalizeReceived({});
+              }}
+              disabled={finalizingOrder}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => void handleFinalizeOrder()}
+              disabled={finalizeConfirmDisabled}
+            >
+              {finalizingOrder ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {finalizeContext === "new-week" ? "Confirmar y crear pedido" : "Cerrar pedido"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div
         className="order-detail-redesign"
         style={rootStyle}
       >
         <div className="pointer-events-none rd-floating-filter z-50" style={floatingFilterStyle}>
-          <div className="pointer-events-auto">
+          <div className="pointer-events-auto flex flex-col items-end gap-3">
             <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
               <PopoverTrigger asChild>
                 <Button
@@ -5064,6 +5928,34 @@ async function exportOrderAsXlsx() {
                 </Button>
               </PopoverContent>
             </Popover>
+
+            <Dialog open={isCreateGroupOpen} onOpenChange={setIsCreateGroupOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon"
+                  className="h-12 w-12 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_10px_24px_rgba(32,56,44,0.32)] transition hover:bg-[var(--primary)]/90"
+                  aria-label="Crear nuevo grupo"
+                  title="Crear nuevo grupo"
+                >
+                  <Plus className="h-5 w-5" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Crear nuevo grupo</DialogTitle>
+                  <DialogDescription>Organizá tus productos en bloques personalizados.</DialogDescription>
+                </DialogHeader>
+                <GroupCreator
+                  autoFocus
+                  onCreate={async (name) => {
+                    const ok = await createGroup(name.trim());
+                    if (ok) setIsCreateGroupOpen(false);
+                    return ok;
+                  }}
+                />
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
 
@@ -5116,18 +6008,6 @@ async function exportOrderAsXlsx() {
                   </div>
                 </div>
               </div>
-              <Button
-                onClick={handleOpenStockModal}
-                disabled={stockProcessing || actionableItems.length === 0}
-                className="rd-stock-button"
-              >
-                {stockProcessing ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                )}
-                Stock
-              </Button>
             </div>
             <div className="rd-header-bottom">
               <div className="rd-header-links">
@@ -5298,6 +6178,42 @@ async function exportOrderAsXlsx() {
                     {importingSales ? "Importando…" : "Importar ventas"}
                   </button>
                 </div>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Semana
+                </div>
+                <Select
+                  value={selectedWeekId ?? LEGACY_WEEK_VALUE}
+                  onValueChange={handleWeekChange}
+                  disabled={weeksLoading}
+                >
+                  <SelectTrigger className="w-[260px] rounded-2xl border border-[var(--border)] bg-white/80 text-left text-sm font-medium text-[color:var(--foreground)]">
+                    <SelectValue placeholder={weeksLoading ? "Cargando..." : "Seleccioná semana"}>
+                      {currentWeekLabel}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[260px]">
+                    <SelectItem value={LEGACY_WEEK_VALUE}>
+                      Pedido actual (histórico)
+                    </SelectItem>
+                    {weekOptions.map((week) => (
+                      <SelectItem key={week.id} value={week.id}>
+                        {weekLabel(week)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void handleCreateWeekOrder()}
+                  disabled={creatingWeek}
+                  className="rounded-2xl border border-[var(--border)] bg-white/80 text-[color:var(--foreground)] shadow-none hover:bg-white"
+                >
+                  {creatingWeek ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                  Nuevo pedido
+                </Button>
               </div>
               <div className="rd-header-total">
                 <span>Total del pedido:</span>
@@ -5525,14 +6441,6 @@ async function exportOrderAsXlsx() {
               </div>
             </div>
 
-            <div className="rd-card">
-              <div className="rd-card-content space-y-3">
-                <div className="rd-card-header">
-                  <div className="rd-card-title">Crear nuevo grupo</div>
-                </div>
-                <GroupCreator onCreate={(name) => { if (name.trim()) void createGroup(name.trim()); }} />
-              </div>
-            </div>
           </div>
 
           <div className="rd-card mt-6">
@@ -5544,16 +6452,6 @@ async function exportOrderAsXlsx() {
                 </div>
               </div>
               <div className="rd-actions-grid">
-                <Button
-                  variant="secondary"
-                  size="lg"
-                  onClick={handleOpenStockModal}
-                  disabled={stockProcessing || actionableItems.length === 0}
-                  className="h-11 flex-1 rounded-full bg-[var(--primary)]/90 px-6 text-[var(--primary-foreground)] shadow-[0_8px_18px_var(--surface-action-primary-strong)] hover:bg-[var(--primary)]"
-                >
-                  {stockProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Obtener stock
-                </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button
@@ -5635,6 +6533,128 @@ async function exportOrderAsXlsx() {
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="lg"
+                  onClick={handleBulkAutoToggle}
+                  disabled={!hasItems}
+                  aria-pressed={autoAllEnabled}
+                  title={
+                    autoAllEnabled
+                      ? "Pasar todos los productos a modo manual"
+                      : "Aplicar sugerido automático a todos los productos"
+                  }
+                  className={clsx(
+                    "h-11 flex-1 rounded-full border px-6 text-left text-sm font-semibold shadow-none transition",
+                    autoAllEnabled
+                      ? "border-transparent bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/90"
+                      : "border border-[var(--border)] bg-white/80 text-[color:var(--foreground)] hover:bg-white"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    {autoAllEnabled ? (
+                      <CheckCircle2 className="h-5 w-5" />
+                    ) : (
+                      <Circle className="h-5 w-5 text-muted-foreground" />
+                    )}
+                    <div className="flex flex-col leading-tight">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-[0.2em]">
+                          Pedido auto
+                        </span>
+                        <span
+                          className={clsx(
+                            "rounded-full px-2 py-[2px] text-[10px] font-semibold uppercase tracking-[0.12em]",
+                            autoAllEnabled
+                              ? "bg-white/20 text-[var(--primary-foreground)]"
+                              : "bg-muted/80 text-muted-foreground",
+                          )}
+                        >
+                          {autoBufferIndicatorText}
+                        </span>
+                      </div>
+                      <span>
+                        {autoAllEnabled ? "Quitar a todos" : "Aplicar a todos"}
+                      </span>
+                    </div>
+                  </div>
+                </Button>
+                <Dialog
+                  open={autoBufferDialogOpen}
+                  onOpenChange={(open) => {
+                    setAutoBufferDialogOpen(open);
+                    if (!open) setAutoBufferError(null);
+                  }}
+                >
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Margen de seguridad</DialogTitle>
+                      <DialogDescription>
+                        Elegí cuántos días extra querés sumar para evitar que se vacíe la góndola.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-2">
+                      <Label htmlFor="auto-buffer-days" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Días adicionales
+                      </Label>
+                      <div className="flex items-center justify-center gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-11 w-11 rounded-full border-[var(--border)]"
+                          onClick={() => handleStepAutoBufferInput(-1)}
+                          aria-label="Restar día"
+                        >
+                          <Minus className="h-4 w-4" />
+                        </Button>
+                        <Input
+                          id="auto-buffer-days"
+                          type="number"
+                          min={0}
+                          inputMode="numeric"
+                          value={autoBufferInput}
+                          onChange={(event) => {
+                            setAutoBufferInput(event.target.value);
+                            setAutoBufferError(null);
+                          }}
+                          className="h-11 w-28 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 text-center text-base font-semibold"
+                          placeholder="Ej. 3"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-11 w-11 rounded-full border-[var(--border)]"
+                          onClick={() => handleStepAutoBufferInput(1)}
+                          aria-label="Sumar día"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Podés ingresar 0 si no querés sumar stock adicional.
+                      </p>
+                      {autoBufferError ? <p className="text-sm text-destructive">{autoBufferError}</p> : null}
+                    </div>
+                    <DialogFooter className="gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setAutoBufferDialogOpen(false);
+                          setAutoBufferError(null);
+                        }}
+                      >
+                        Cancelar
+                      </Button>
+                      <Button type="button" onClick={handleConfirmAutoBuffer}>
+                        Activar automático
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </div>
               {actionableItems.length === 0 && (
                 <p className="text-xs text-muted-foreground">
@@ -6091,8 +7111,10 @@ async function exportOrderAsXlsx() {
                 onMoveUp={() => moveGroup(groupName, "up")}
                 onMoveDown={() => moveGroup(groupName, "down")}
                 checkedMap={checkedMap}
+                groupCheckedMap={groupCheckedMap}
                 onRenameItemLabel={updateDisplayName}
                 setItemChecked={setItemChecked}
+                setGroupChecked={setGroupChecked}
                 onUpdateStock={updateStock}
                 computeSalesSinceStock={computeSalesSinceStock}
                 statsOpenMap={statsOpenMap}
@@ -6158,10 +7180,12 @@ async function exportOrderAsXlsx() {
                 onClick={() => fileRef.current?.click()}
                 disabled={importing}
                 aria-label="Importar pedido"
-                className="h-10 w-full rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted"
+                className="h-10 w-12 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted md:w-full"
               >
-                {importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                Importar
+                {importing
+                  ? <Loader2 className="h-4 w-4 animate-spin md:mr-2" />
+                  : <Upload className="h-4 w-4 md:mr-2" />}
+                <span className="hidden md:inline">Importar</span>
               </Button>
             </div>
 
@@ -6169,10 +7193,10 @@ async function exportOrderAsXlsx() {
               variant="outline"
               onClick={() => void handleCopySimpleList()}
               aria-label="Copiar pedido"
-              className="h-10 w-full rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted"
+              className="h-10 w-12 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted md:w-full"
             >
-              <Copy className="mr-2 h-4 w-4" />
-              Copiar
+              <Copy className="h-4 w-4 md:mr-2" />
+              <span className="hidden md:inline">Copiar</span>
             </Button>
 
             <Button
@@ -6182,19 +7206,20 @@ async function exportOrderAsXlsx() {
                 setExportDialogOpen(true);
               }}
               aria-label="Exportar pedido"
-              className="h-10 w-full rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted"
+              className="h-10 w-12 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted md:w-full"
             >
-              <Download className="mr-2 h-4 w-4" />
-              Exportar
+              <Download className="h-4 w-4 md:mr-2" />
+              <span className="hidden md:inline">Exportar</span>
             </Button>
 
             <Button
-              onClick={() => void saveSnapshot()}
+              onClick={() => void handleSaveDraft()}
+              disabled={savingSnapshot}
               aria-label="Guardar pedido"
-              className="h-10 w-full rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_16px_36px_-24px_rgba(34,60,48,0.55)] transition hover:bg-[var(--primary)]/90"
+              className="h-10 w-12 rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_16px_36px_-24px_rgba(34,60,48,0.55)] transition hover:bg-[var(--primary)]/90 disabled:opacity-70 md:w-full"
             >
-              <Save className="mr-2 h-4 w-4" />
-              Guardar
+              {savingSnapshot ? <Loader2 className="h-4 w-4 animate-spin md:mr-2" /> : <Save className="h-4 w-4 md:mr-2" />}
+              <span className="hidden md:inline">Guardar</span>
             </Button>
           </div>
         </div>
@@ -6618,6 +7643,7 @@ function GroupSection(props: GroupSectionProps) {
     onBulkAddItems, onBulkRemoveByNames, sortMode,
     manualOrder, manualSortActive, onMoveItem,
     onMoveUp, onMoveDown, checkedMap, setItemChecked,
+    groupCheckedMap, setGroupChecked,
     containerProps, onUpdatePackSize, onUpdateStock,
     onRenameItemLabel, computeSalesSinceStock,
     statsByProduct,
@@ -6631,6 +7657,8 @@ function GroupSection(props: GroupSectionProps) {
   } = props;
 
   const frequencyLabelText = React.useMemo(() => providerFrequencyLabel(frequency), [frequency]);
+  const normalizedGroupKey = normalizeGroupKey(groupName);
+  const groupChecked = Boolean(groupCheckedMap[normalizedGroupKey]);
 
   // === Estado del texto del buscador (queda ARRIBA del bloque nuevo)
   const [q, setQ] = React.useState("");
@@ -6775,6 +7803,11 @@ function GroupSection(props: GroupSectionProps) {
     };
   }, [showFullscreenSearch]);
 
+  const SUGGESTION_VISIBLE_ROWS = 6;
+  const SUGGESTION_ROW_HEIGHT = 64;
+  const SUGGESTION_HEADER_HEIGHT = 52;
+  const SUGGESTION_INLINE_MAX_HEIGHT = SUGGESTION_HEADER_HEIGHT + SUGGESTION_ROW_HEIGHT * SUGGESTION_VISIBLE_ROWS;
+
   const portalStyle: React.CSSProperties = React.useMemo(() => {
     if (!rect || showFullscreenSearch) return { display: "none" };
     const viewport = getVisualViewport();
@@ -6783,17 +7816,18 @@ function GroupSection(props: GroupSectionProps) {
 
     const top = rect.bottom + 8;
     const available = Math.max(160, Math.floor(viewportHeight - (rect.bottom - viewportOffsetTop) - 16));
+    const maxHeight = Math.min(available, SUGGESTION_INLINE_MAX_HEIGHT);
 
     return {
       position: "fixed",
       left: rect.left,
       top,
       width: rect.width,
-      maxHeight: available,
-      overflow: "auto",
+      maxHeight,
+      overflowY: "auto",
       zIndex: 60,
     } as React.CSSProperties;
-  }, [rect, showFullscreenSearch]);
+  }, [rect, showFullscreenSearch, SUGGESTION_INLINE_MAX_HEIGHT]);
 
   const [editing, setEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(groupName || "Sin grupo");
@@ -6845,24 +7879,23 @@ function GroupSection(props: GroupSectionProps) {
     const matches = productNames.filter((n) => tokenMatch(n, q));
     return matches;
   }, [productNames, q, tokenMatch]);
-  const inlineSuggestions = suggestions.slice(0, 6);
   const shouldRenderInlineDropdown =
-    !showFullscreenSearch && open && rect && portalTarget && inlineSuggestions.length > 0;
+    !showFullscreenSearch && open && rect && portalTarget && suggestions.length > 0;
+  const shouldScrollInlineDropdown = suggestions.length > SUGGESTION_VISIBLE_ROWS;
 
   const sortedVisible = React.useMemo(() => {
     let arr = [...arrVisible];
     const byNameAsc = (a: ItemRow, b: ItemRow) =>
       a.product_name.localeCompare(b.product_name, "es", { sensitivity: "base" });
     const byNameDesc = (a: ItemRow, b: ItemRow) => -byNameAsc(a, b);
-    const avg = (name: string) =>
-      computeStats(sales, name, latestDateForProduct(sales, name)).avg4w || 0;
+    const avg = (name: string) => statsByProduct.get(normKey(name))?.stats.avg4w || 0;
     if (sortMode === "manual") arr = applyManualOrder(arr, manualOrder);
     else if (sortMode === "alpha_asc") arr.sort(byNameAsc);
     else if (sortMode === "alpha_desc") arr.sort(byNameDesc);
     else if (sortMode === "avg_desc") arr.sort((a, b) => (avg(b.product_name) - avg(a.product_name)) || byNameAsc(a, b));
     else if (sortMode === "avg_asc") arr.sort((a, b) => (avg(a.product_name) - avg(b.product_name)) || byNameAsc(a, b));
     return arr;
-  }, [arrVisible, sortMode, sales, manualOrder]);
+  }, [arrVisible, sortMode, statsByProduct, manualOrder]);
 
   const visibleOrderIds = React.useMemo(
     () => sortedVisible.map((item) => item.id),
@@ -6951,7 +7984,7 @@ function GroupSection(props: GroupSectionProps) {
   ), [arrVisible, groupName, handleInputRef, onAddItem, open, q, readRect, scrollInputToTop, showFullscreenSearch]);
 
   const SuggestionsContent = ({ scrollable }: { scrollable?: boolean }) => {
-    const entries = scrollable ? suggestions : inlineSuggestions;
+    const entries = suggestions;
     const inner = (
       <>
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--border)] bg-muted/40 px-3 py-2">
@@ -7027,17 +8060,27 @@ function GroupSection(props: GroupSectionProps) {
 
 const mergedClassName = clsx(
   "mb-5 overflow-visible rounded-[28px] border border-[color:var(--border)] bg-[color:var(--order-group-background,var(--card))] shadow-[0_18px_40px_rgba(12,24,20,0.12)]",
+  groupChecked && "border-[color:var(--order-card-highlight)] ring-1 ring-[color:var(--order-card-highlight)]/40",
   containerProps?.className,
 );
+const groupHighlightStyle = groupChecked
+  ? { boxShadow: "0 18px 45px rgba(15,23,42,0.15), 0 18px 48px var(--order-card-highlight)" }
+  : undefined;
 type DragHandleProps = {
   draggable?: boolean;
-  onDragStart?: React.DragEventHandler<HTMLDivElement>;
-  onDragOver?: React.DragEventHandler<HTMLDivElement>;
-  onDrop?: React.DragEventHandler<HTMLDivElement>;
-  onDragEnd?: React.DragEventHandler<HTMLDivElement>;
+  onDragStart?: React.DragEventHandler<HTMLButtonElement>;
+  onDragOver?: React.DragEventHandler<HTMLButtonElement>;
+  onDrop?: React.DragEventHandler<HTMLButtonElement>;
+  onDragEnd?: React.DragEventHandler<HTMLButtonElement>;
 };
   const dragHandleProps = React.useMemo<DragHandleProps>(() => {
     if (!containerProps) return {};
+    const adaptHandler = (
+      handler?: React.DragEventHandler<HTMLDivElement>,
+    ): React.DragEventHandler<HTMLButtonElement> | undefined => {
+      if (!handler) return undefined;
+      return (event) => handler(event as unknown as React.DragEvent<HTMLDivElement>);
+    };
     const {
       className: _ignoredClassName,
       draggable,
@@ -7048,10 +8091,10 @@ type DragHandleProps = {
     } = containerProps;
     return {
       draggable: Boolean(draggable),
-      onDragStart,
-      onDragOver,
-      onDrop,
-      onDragEnd,
+      onDragStart: adaptHandler(onDragStart),
+      onDragOver: adaptHandler(onDragOver),
+      onDrop: adaptHandler(onDrop),
+      onDragEnd: adaptHandler(onDragEnd),
     };
   }, [containerProps]);
 
@@ -7059,6 +8102,7 @@ type DragHandleProps = {
   <AccordionItem
     value={groupName || "Sin grupo"}
     className={mergedClassName}
+    style={groupHighlightStyle}
   >
     {/* HEADER */}
     <AccordionTrigger
@@ -7068,12 +8112,42 @@ type DragHandleProps = {
       onDragOver={dragHandleProps.onDragOver}
       onDrop={dragHandleProps.onDrop}
       onDragEnd={dragHandleProps.onDragEnd}
-      className="group rounded-t-[28px] bg-[color:var(--order-group-header,var(--muted)/30)] px-6 py-5 text-left text-base font-semibold text-[var(--foreground)] transition-colors data-[state=open]:rounded-b-none"
+      className={clsx(
+        "group cursor-pointer select-none rounded-t-[28px] bg-[color:var(--order-group-header,var(--muted)/30)] px-6 py-5 text-left text-base font-semibold text-[var(--foreground)] transition-colors data-[state=open]:rounded-b-none",
+        groupChecked && "bg-[color:var(--order-card-highlight)]/10",
+      )}
     >
       <div className="flex w-full flex-wrap gap-4">
         <div className="flex min-w-0 flex-1 items-start gap-4">
-          <div className="hidden h-11 w-11 items-center justify-center rounded-2xl bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-inner group-data-[state=open]:rotate-0 sm:flex">
-            <Package className="h-5 w-5" />
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              setGroupChecked(groupName || "Sin grupo", !groupChecked);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                setGroupChecked(groupName || "Sin grupo", !groupChecked);
+              }
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={clsx(
+              "flex h-11 w-11 items-center justify-center rounded-2xl border-2 border-[color:var(--border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-inner transition-all duration-200 hover:border-[color:var(--order-card-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--order-card-highlight)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              groupChecked &&
+                "scale-105 border-transparent bg-[color:var(--order-card-highlight)] text-[var(--primary-foreground)] shadow-[0_14px_30px_rgba(15,23,42,0.35)] ring-4 ring-[color:var(--order-card-highlight)]/40"
+            )}
+            aria-label={groupChecked ? "Marcar grupo como pendiente" : "Marcar grupo como gestionado"}
+            aria-pressed={groupChecked}
+            title={groupChecked ? "Marcar grupo como pendiente" : "Marcar grupo como gestionado"}
+          >
+            {groupChecked ? (
+              <Check className="h-5 w-5 text-[#0f172a]" />
+            ) : (
+              <Circle className="h-5 w-5" />
+            )}
           </div>
           <div className="min-w-0 flex-1 space-y-2">
             <div className="flex flex-wrap items-center gap-3">
@@ -7116,7 +8190,7 @@ type DragHandleProps = {
                 className={clsx(
                   "shrink-0 rounded-full px-3 py-1 text-[11px]",
                   confirmedCount > 0
-                    ? "border border-[var(--surface-success-strong)] bg-[var(--surface-success-soft)] text-[var(--success)]"
+                    ? "border border-[var(--surface-success-strong)] bg-[var(--surface-success-soft)] text-[color:var(--success)]"
                     : "border border-[var(--border)] bg-muted/60 text-muted-foreground"
                 )}
                 title="Productos confirmados"
@@ -7131,10 +8205,6 @@ type DragHandleProps = {
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
               <div className="inline-flex items-center gap-1 font-medium text-[color:var(--foreground)]">
                 {fmtInt(groupUnits)} unidades
-              </div>
-              <span className="hidden text-muted-foreground sm:inline">•</span>
-              <div className="inline-flex items-center gap-1">
-                Promedio: <span className="font-semibold text-[color:var(--foreground)]">{fmtMoney(groupAvgPrice)}</span>
               </div>
               <span className="hidden text-muted-foreground sm:inline">•</span>
               <div
@@ -7176,7 +8246,6 @@ type DragHandleProps = {
           <span className="inline-flex items-center gap-2 rounded-full border border-dashed border-[var(--border)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
             Gestión
           </span>
-          <span>Reordená o eliminá el grupo sin perder los productos.</span>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -7237,7 +8306,12 @@ type DragHandleProps = {
 
       {/* CONTENIDO */}
       {/* CONTENIDO */}
-      <AccordionContent className="!overflow-visible rounded-b-3xl bg-card/70 px-5 pb-6">
+      <AccordionContent
+        className={clsx(
+          "!overflow-visible rounded-b-3xl bg-card/70 px-5 pb-6",
+          groupChecked && "ring-1 ring-[color:var(--order-card-highlight)]/20",
+        )}
+      >
           <div className="space-y-5">
           {/* Buscador */}
           {!showFullscreenSearch && renderSearchInput()}
@@ -7251,7 +8325,7 @@ type DragHandleProps = {
               className="rounded-md border bg-popover text-popover-foreground shadow"
               role="listbox"
             >
-              <SuggestionsContent />
+              <SuggestionsContent scrollable={shouldScrollInlineDropdown} />
               {q && !suggestions.find((s) => s.toLowerCase() === q.toLowerCase()) && (
                 <button
                   className="w-full border-t px-3 py-2 text-left hover:bg-accent"
@@ -7354,13 +8428,14 @@ type DragHandleProps = {
                 : `Sugerido auto ${frequencyLabelText.toLowerCase()}`
               : "Modo manual: podés editar la cantidad";
             const autoControlClasses = clsx(
-              "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors",
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-colors",
               autoEnabled
                 ? "border-[color:var(--order-card-highlight)] bg-[color:var(--order-card-highlight)]/10 text-[color:var(--order-card-highlight)]"
                 : "border-[color:var(--order-card-pill-border)] bg-white text-[color:var(--order-card-accent)]",
               minActive && "opacity-70"
             );
-            const autoSelectLabel = `Auto ${frequencyLabelText.toLowerCase()}`;
+            const autoSelectLabel = "Auto";
+            const autoSelectAriaLabel = `Auto ${frequencyLabelText.toLowerCase()}`;
 
             return (
               <Card
@@ -7388,34 +8463,36 @@ type DragHandleProps = {
                     <div className="flex flex-wrap items-start gap-4">
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex flex-wrap items-start gap-3">
-                          <div className="min-w-0 flex-1">
+                          <div className="order-2 min-w-0 flex-1 md:order-1">
                             <ItemTitle
                               name={it.display_name || it.product_name}
                               canonical={it.product_name}
                               onCommit={(label) => onRenameItemLabel(it.id, label)}
                             />
                           </div>
-                          <PackSizeEditor value={it.pack_size} onCommit={(n) => onUpdatePackSize(it.id, n)} />
+                          <div className="order-1 flex w-full flex-wrap items-center gap-3 md:order-2 md:w-auto md:flex-nowrap">
+                            <PackSizeEditor value={it.pack_size} onCommit={(n) => onUpdatePackSize(it.id, n)} />
+                            <div className="flex items-center gap-2 md:ml-auto">
+                              <Badge className={clsx("rounded-full px-4 py-1 text-[11px] font-semibold", statusBadgeClass)}>
+                                {isChecked ? "Completo" : "Pendiente"}
+                              </Badge>
+                              <Checkbox
+                                id={`item-check-${it.id}`}
+                                checked={isChecked}
+                                onCheckedChange={(v) => setItemChecked(it.id, v === true)}
+                                className={clsx(
+                                  "size-6 rounded-full border-2 border-[color:var(--border)] bg-white shadow-none transition-colors",
+                                  isChecked &&
+                                    "data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)]"
+                                )}
+                                aria-label="Marcar como cargado"
+                              />
+                            </div>
+                          </div>
                         </div>
                         {it.display_name && it.display_name.trim() !== it.product_name ? (
                           <p className="text-[11px] text-muted-foreground">{it.product_name}</p>
                         ) : null}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge className={clsx("rounded-full px-4 py-1 text-[11px] font-semibold", statusBadgeClass)}>
-                          {isChecked ? "Completo" : "Pendiente"}
-                        </Badge>
-                        <Checkbox
-                          id={`item-check-${it.id}`}
-                          checked={isChecked}
-                          onCheckedChange={(v) => setItemChecked(it.id, v === true)}
-                          className={clsx(
-                            "size-6 rounded-full border-2 border-[color:var(--border)] bg-white shadow-none transition-colors",
-                            isChecked &&
-                              "data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)]"
-                          )}
-                          aria-label="Marcar como cargado"
-                        />
                       </div>
                     </div>
 
@@ -7434,27 +8511,17 @@ type DragHandleProps = {
                         <div className="inline-flex min-w-[170px] items-center gap-3 rounded-2xl border border-[color:var(--surface-success-strong)] bg-[color:var(--surface-success-soft)] px-4 py-3 text-[color:var(--success)]">
                           <div className="flex flex-col">
                             <div className="text-[10px] font-semibold uppercase tracking-[0.2em] opacity-70">Stock proyectado</div>
-                            <div className="text-2xl font-semibold tabular-nums">{fmtInt(projectedStock)}</div>
-                          </div>
-                          <div className="text-sm font-semibold">
-                            {orderDelta === 0 ? "—" : orderDelta > 0 ? `+${fmtInt(orderDelta)}` : `-${fmtInt(Math.abs(orderDelta))}`}
+                            <div className="flex items-baseline gap-2">
+                              <div className="text-2xl font-semibold tabular-nums">{fmtInt(projectedStock)}</div>
+                              <div className="text-xs font-semibold text-[color:var(--order-card-highlight)]">
+                                {orderDelta === 0 ? "—" : orderDelta > 0 ? `+${fmtInt(orderDelta)}` : `-${fmtInt(Math.abs(orderDelta))}`}
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <Stepper
-                            value={it.qty}
-                            min={0}
-                            step={it.pack_size || 1}
-                            suffixLabel="pedido"
-                            disabled={autoEnabled}
-                            onChange={(n: number) => {
-                              onToggleAutoQty(it.id, false);
-                              onRememberManualQty(it.id, n);
-                              void onUpdateQty(it.id, n);
-                            }}
-                          />
                           <div className={autoControlClasses}>
                             <Checkbox
                               checked={autoEnabled}
@@ -7474,18 +8541,18 @@ type DragHandleProps = {
                                 }
                               }}
                               disabled={minActive}
-                              className="size-5 rounded-full border-2 border-[color:var(--order-card-pill-border)] bg-white text-white data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)]"
+                              className="size-4 rounded-full border-2 border-[color:var(--order-card-pill-border)] bg-white text-white data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)]"
                               aria-label="Activar pedido sugerido automático"
                             />
                             <Select value={frequency} onValueChange={(value) => onChangeFrequency(value as ProviderFrequency)}>
                               <SelectTrigger
-                                className="h-auto border-none bg-transparent px-0 py-0 text-xs font-semibold text-current shadow-none hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
-                                aria-label="Cambiar auto sugerido"
-                                title="Cambiar periodo para todos los productos"
+                                className="h-auto border-none bg-transparent px-0 py-0 text-current shadow-none hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+                                aria-label={autoSelectAriaLabel}
+                                title={`Cambiar periodo: ${autoSelectAriaLabel}`}
                               >
                                 <span className="inline-flex items-center gap-1">
-                                  <Sparkles className="h-3.5 w-3.5" />
-                                  <span className="capitalize">{autoSelectLabel}</span>
+                                  <Sparkles className="h-3 w-3" />
+                                  <span className="leading-none">{autoSelectLabel}</span>
                                 </span>
                               </SelectTrigger>
                               <SelectContent className="min-w-[220px]">
@@ -7498,6 +8565,18 @@ type DragHandleProps = {
                               </SelectContent>
                             </Select>
                           </div>
+                          <Stepper
+                            value={it.qty}
+                            min={0}
+                            step={it.pack_size || 1}
+                            suffixLabel="pedido"
+                            disabled={autoEnabled}
+                            onChange={(n: number) => {
+                              onToggleAutoQty(it.id, false);
+                              onRememberManualQty(it.id, n);
+                              void onUpdateQty(it.id, n);
+                            }}
+                          />
                         </div>
                         <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                           {autoHelperText}
@@ -7677,25 +8756,37 @@ type DragHandleProps = {
 }
 
 /* ---------- Crear grupo ---------- */
-type GroupCreatorProps = { onCreate: (...args: [string]) => void };
+type GroupCreatorProps = {
+  onCreate: (name: string) => Promise<boolean> | boolean;
+  autoFocus?: boolean;
+};
 /* eslint-enable no-unused-vars */
 
-function GroupCreator({ onCreate }: GroupCreatorProps) {
+function GroupCreator({ onCreate, autoFocus = false }: GroupCreatorProps) {
   const [name, setName] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
 
-  function handleCreate() {
+  const handleCreate = React.useCallback(async () => {
     const n = name.trim();
-    if (!n) return;
-    onCreate(n);
-    setName("");
-  }
+    if (!n || submitting) return;
+    setSubmitting(true);
+    try {
+      const ok = await onCreate(n);
+      if (ok !== false) {
+        setName("");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }, [name, onCreate, submitting]);
 
   return (
     <form
       className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center"
       onSubmit={(e) => {
         e.preventDefault();
-        handleCreate();
+        e.stopPropagation();
+        void handleCreate();
       }}
     >
       <Input
@@ -7707,14 +8798,21 @@ function GroupCreator({ onCreate }: GroupCreatorProps) {
         onKeyDown={(e) => {
           if (e.key === "Enter") e.stopPropagation();
         }}
+        autoFocus={autoFocus}
+        disabled={submitting}
         className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 shadow-inner"
       />
       <Button
         type="submit"
-        onClick={handleCreate}
+        disabled={submitting}
         className="h-11 rounded-full bg-[var(--primary)] px-6 text-[var(--primary-foreground)] shadow-[0_8px_18px_var(--surface-action-primary-strong)] hover:bg-[var(--primary)]/90"
       >
-        <Plus className="mr-2 h-4 w-4" /> Crear
+        {submitting ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <Plus className="mr-2 h-4 w-4" />
+        )}
+        {submitting ? "Creando" : "Crear"}
       </Button>
     </form>
   );

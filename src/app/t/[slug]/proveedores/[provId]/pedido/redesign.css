@@ -504,12 +504,31 @@
 
 .order-sticky-bar .rd-sticky-actions {
   margin-top: 1rem;
-  display: grid;
-  gap: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+.order-sticky-bar .rd-sticky-actions > * {
+  flex-shrink: 0;
+}
+
+@media (max-width: 639px) {
+  .order-sticky-bar .rd-sticky-metrics {
+    flex-wrap: nowrap;
+  }
+
+  .order-sticky-bar .rd-sticky-metrics > div {
+    min-width: 0;
+  }
 }
 
 @media (min-width: 640px) {
   .order-sticky-bar .rd-sticky-actions {
+    display: grid;
+    gap: 0.75rem;
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }

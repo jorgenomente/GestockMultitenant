@@ -9,3 +9,4 @@
 
   Run `npm run dev` to start the development server.
   
+  Queremos rediseñar la pagina de proveedores. El rediseno debe ser lo mas similar posible a este, pero no podemos olvidar nuestra propia logica y nuestros botones y acciones, no debe quedar nada por fuera, todos lo que tenemos ahora debe ser visible solo son cambios visuales, puedes agregar funciones nuevas si el diseño lo requiere pero no quitar o modificar la logica actual
