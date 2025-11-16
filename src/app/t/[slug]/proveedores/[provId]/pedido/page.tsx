@@ -92,7 +92,7 @@ const STORAGE_BUCKET = SALES_STORAGE_BUCKET;
 const STORAGE_DIR_SALES = SALES_STORAGE_DIR;
 const TABLE_SETTINGS = "app_settings";
 const TABLE_UI_STATE = "order_ui_state";
-
+const MIN_GROUP_SEARCH_CHARS = 3;
 const GROUP_PLACEHOLDER = "__group__placeholder__";
 
 let ensureSalesBucketPromise: Promise<boolean> | null = null;
@@ -461,7 +461,22 @@ type MinStockState = {
 type ProviderFrequency = "SEMANAL" | "QUINCENAL" | "MENSUAL";
 
 
-type SalesRow = { product: string; qty: number; subtotal?: number; date: number; category?: string; };
+type SalesRow = {
+  product: string;
+  qty: number;
+  subtotal?: number;
+  date: number;
+  category?: string;
+  code?: string | null;
+};
+type PriceCatalogItem = {
+  id: string;
+  name: string;
+  code?: string | null;
+};
+type CatalogApiResponse = {
+  items?: PriceCatalogItem[] | unknown;
+};
 type Stats = {
   avg4w: number;
   sum3d: number;
@@ -740,9 +755,8 @@ type GroupSectionProps = {
   groupName: string;
   items: ItemRow[];
   productNames: string[];
-  sales: SalesRow[];
-  salesByProductMap: Map<string, SalesRow[]>;
-  statsByProduct: Map<string, ProductStatsEntry>;
+  getSalesRowsForProduct: (productName: string) => SalesRow[];
+  getStatsForProduct: (productName: string) => ProductStatsEntry | null;
   margin: number;
   tokenMatch: (...args: [string, string]) => boolean;
   placeholder: string;
@@ -1369,6 +1383,44 @@ const NBSP_RX = /[\u00A0\u202F]/g;
 const DIAC_RX = /\p{Diacritic}/gu;
 const normText = (s: string) => s.replace(NBSP_RX, " ").trim();
 const normKey = (s: string) => normText(s).normalize("NFD").replace(DIAC_RX, "").toLowerCase();
+const normalizeCodeValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.round(value).toLocaleString("en-US", { useGrouping: false });
+  }
+  const raw = typeof value === "string" ? value : String(value);
+  const trimmed = raw.replace(NBSP_RX, " ").trim();
+  if (!trimmed) return null;
+  const compact = trimmed.replace(/\s+/g, "");
+  if (/^\d+(?:[.,]\d+)?$/.test(compact)) {
+    const normalized = compact.replace(/\./g, "").replace(",", ".");
+    const num = Number(normalized);
+    if (Number.isFinite(num)) {
+      return Math.round(num).toLocaleString("en-US", { useGrouping: false });
+    }
+  }
+  return trimmed.replace(/\s+/g, " ");
+};
+const normCodeKey = (code?: string | null) => {
+  if (!code) return "";
+  return code.replace(/\s+/g, "").toLowerCase();
+};
+const normalizeCatalogItem = (raw: unknown): PriceCatalogItem | null => {
+  if (!raw || typeof raw !== "object") return null;
+  const item = raw as Partial<PriceCatalogItem> & Record<string, unknown>;
+  const name = typeof item.name === "string" ? item.name.trim() : "";
+  if (!name) return null;
+  const code = normalizeCodeValue(item.code);
+  const id =
+    typeof item.id === "string" && item.id.trim()
+      ? item.id.trim()
+      : code || name;
+  return {
+    id,
+    name,
+    code: code ?? null,
+  };
+};
 const nowLocalIso = () => {
   const now = new Date();
   const offsetMs = now.getTimezoneOffset() * 60000;
@@ -1478,6 +1530,7 @@ async function parseSalesArrayBuffer(ab: ArrayBuffer): Promise<SalesRow[]> {
   const qtyKeys  = ["cantidad", "qty", "venta", "ventas"];
   const subKeys  = ["subtotal", "importe", "total", "monto"];
   const catKeys  = ["subfamilia", "categoría", "categoria", "rubro", "grupo", "familia"];
+  const codeKeys = ["codigo", "código", "cod", "sku", "cod articulo", "codigo articulo", "cod. articulo"];
 
   const out: SalesRow[] = [];
   for (const r of candidates) {
@@ -1486,13 +1539,15 @@ async function parseSalesArrayBuffer(ab: ArrayBuffer): Promise<SalesRow[]> {
     const qk = qtyKeys.find((k) => r[k] != null);
     const sk = subKeys.find((k) => r[k] != null);
     const ck = catKeys.find((k) => r[k] != null);
+    const codeKey = codeKeys.find((k) => r[k] != null);
     const product  = nk ? String(r[nk]).trim() : "";
     const date     = dk ? parseDateCell(r[dk]) : null;
     const qty      = qk ? Number(r[qk] ?? 0) || 0 : 0;
     const subtotal = sk ? Number(r[sk]) : undefined;
     const category = ck ? String(r[ck]) : undefined;
+    const code = codeKey ? normalizeCodeValue(r[codeKey]) : null;
     if (!product || !date) continue;
-    out.push({ product, qty, subtotal, date, category });
+    out.push({ product, qty, subtotal, date, category, code });
   }
   return out;
 }
@@ -1595,12 +1650,6 @@ function computeStatsFromRows(rows: SalesRow[], now = Date.now()): Stats {
   };
 }
 
-function computeStats(sales: SalesRow[], product: string, now = Date.now()): Stats {
-  const key = normKey(product);
-  const rows = sales.filter((s) => normKey(s.product) === key);
-  return computeStatsFromRows(rows, now);
-}
-
 function buildSalesTrendSeries(rows: SalesRow[], days = 14, anchor = Date.now()): SalesTrendPoint[] {
   if (days <= 0) return [];
   const dayMs = 24 * 3600 * 1000;
@@ -1628,13 +1677,6 @@ function latestDateForRows(rows: SalesRow[]): number {
   if (!rows.length) return Date.now();
   const latest = rows.reduce((max, row) => (row.date > max ? row.date : max), rows[0].date);
   return startOfDayUTC(latest);
-}
-
-/** Devuelve la última fecha registrada para un producto; si no hay, usa “hoy”. */
-function latestDateForProduct(sales: SalesRow[], product: string): number {
-  const key = normKey(product);
-  const rows = sales.filter((s) => normKey(s.product) === key);
-  return latestDateForRows(rows);
 }
 
 const normalizeSearchParam = (value: string | null) => {
@@ -1739,6 +1781,7 @@ export default function ProviderOrderPage() {
   const [order, setOrder]   = React.useState<OrderRow | null>(null);
   const [items, setItems]   = React.useState<ItemRow[]>([]);
   const [sales, setSales]   = React.useState<SalesRow[]>([]);
+  const [priceCatalog, setPriceCatalog] = React.useState<PriceCatalogItem[]>([]);
   const [marginPct, setMarginPct] = React.useState(45);
   const [filter, setFilter] = React.useState("");
   const [isFilterOpen, setIsFilterOpen] = React.useState(false);
@@ -1791,6 +1834,29 @@ export default function ProviderOrderPage() {
     });
     setSuggestedMarginError(null);
   }, []);
+
+  React.useEffect(() => {
+    if (!tenantSlug) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/t/${tenantSlug}/precios`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = (await res.json()) as CatalogApiResponse;
+        const rawItems = Array.isArray(body.items) ? body.items : [];
+        const normalized = rawItems
+          .map((item) => normalizeCatalogItem(item))
+          .filter((item): item is PriceCatalogItem => Boolean(item));
+        if (!cancelled) setPriceCatalog(normalized);
+      } catch (err) {
+        console.warn("price catalog fetch failed", err);
+        if (!cancelled) setPriceCatalog([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantSlug]);
   const [peMarginEnabled, setPeMarginEnabled] = React.useState(false);
   const [peApplying, setPeApplying] = React.useState(false);
   const [peSettingsOpen, setPeSettingsOpen] = React.useState(false);
@@ -2028,12 +2094,33 @@ export default function ProviderOrderPage() {
     setStockUndoSnapshot(null);
   }, [order?.id]);
 
+  const priceCodeByName = React.useMemo(() => {
+    const map = new Map<string, string>();
+    priceCatalog.forEach((item) => {
+      if (!item.code) return;
+      const key = normKey(item.name);
+      if (!map.has(key)) map.set(key, item.code);
+    });
+    return map;
+  }, [priceCatalog]);
+
   const salesByProduct = React.useMemo(() => {
     const map = new Map<string, SalesRow[]>();
     sales.forEach((row) => {
       const key = normKey(row.product);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(row);
+    });
+    return map;
+  }, [sales]);
+
+  const salesByCode = React.useMemo(() => {
+    const map = new Map<string, SalesRow[]>();
+    sales.forEach((row) => {
+      const codeKey = normCodeKey(row.code ?? null);
+      if (!codeKey) return;
+      if (!map.has(codeKey)) map.set(codeKey, []);
+      map.get(codeKey)!.push(row);
     });
     return map;
   }, [sales]);
@@ -2050,6 +2137,9 @@ export default function ProviderOrderPage() {
     salesByProduct.forEach((_rows, key) => {
       keys.add(key);
     });
+    priceCatalog.forEach((item) => {
+      keys.add(normKey(item.name));
+    });
 
     keys.forEach((key) => {
       const rows = salesByProduct.get(key) ?? [];
@@ -2061,7 +2151,70 @@ export default function ProviderOrderPage() {
     });
 
     return map;
-  }, [items, salesByProduct]);
+  }, [items, priceCatalog, salesByProduct]);
+
+  const statsByCode = React.useMemo(() => {
+    const map = new Map<string, ProductStatsEntry>();
+    const keys = new Set<string>();
+    salesByCode.forEach((_rows, key) => {
+      if (key) keys.add(key);
+    });
+    priceCatalog.forEach((item) => {
+      const codeKey = normCodeKey(item.code ?? null);
+      if (codeKey) keys.add(codeKey);
+    });
+    keys.forEach((key) => {
+      const rows = key ? salesByCode.get(key) ?? [] : [];
+      const anchor = latestDateForRows(rows);
+      map.set(key, {
+        stats: computeStatsFromRows(rows, anchor),
+        anchor,
+      });
+    });
+    return map;
+  }, [priceCatalog, salesByCode]);
+
+  const getSalesRowsForProduct = React.useCallback(
+    (productName: string) => {
+      const key = normKey(productName);
+      const byName = salesByProduct.get(key);
+      if (byName && byName.length) return byName;
+      const code = priceCodeByName.get(key);
+      if (code) {
+        const codeKey = normCodeKey(code);
+        if (codeKey) {
+          const byCode = salesByCode.get(codeKey);
+          if (byCode && byCode.length) return byCode;
+        }
+      }
+      return byName ?? [];
+    },
+    [priceCodeByName, salesByCode, salesByProduct],
+  );
+
+  const getStatsForProduct = React.useCallback(
+    (productName?: string | null): ProductStatsEntry | null => {
+      if (!productName) return null;
+      const key = normKey(productName);
+      const rowsByName = salesByProduct.get(key);
+      if (rowsByName && rowsByName.length) {
+        return statsByProduct.get(key) ?? null;
+      }
+      const code = priceCodeByName.get(key);
+      if (code) {
+        const codeKey = normCodeKey(code);
+        if (codeKey) {
+          const byCode = salesByCode.get(codeKey);
+          if (byCode && byCode.length) {
+            return statsByCode.get(codeKey) ?? null;
+          }
+          return statsByCode.get(codeKey) ?? statsByProduct.get(key) ?? null;
+        }
+      }
+      return statsByProduct.get(key) ?? null;
+    },
+    [priceCodeByName, salesByCode, salesByProduct, statsByCode, statsByProduct],
+  );
 
   const actionableItems = React.useMemo(
     () => items.filter((item) => item.product_name !== GROUP_PLACEHOLDER),
@@ -2091,7 +2244,7 @@ export default function ProviderOrderPage() {
     const updates: Array<{ id: string; price: number }> = [];
 
     actionableItems.forEach((item) => {
-      const statsEntry = statsByProduct.get(normKey(item.product_name));
+      const statsEntry = getStatsForProduct(item.product_name);
       const retail = statsEntry?.stats.lastUnitRetail ?? statsEntry?.stats.avgUnitRetail30d;
       if (!retail || !Number.isFinite(retail) || retail <= 0) return;
       const predicted = Math.max(0, Math.round(retail * (1 - marginPct / 100)));
@@ -2103,7 +2256,7 @@ export default function ProviderOrderPage() {
     for (const entry of updates) {
       await updater(entry.id, entry.price);
     }
-  }, [actionableItems, marginPct, statsByProduct]);
+  }, [actionableItems, getStatsForProduct, marginPct]);
 
   const waitForPeApply = React.useCallback(async () => {
     const pending = peApplyPromiseRef.current;
@@ -2219,7 +2372,7 @@ export default function ProviderOrderPage() {
       a.product_name.localeCompare(b.product_name, "es", { sensitivity: "base" });
     const byNameDesc = (a: ItemRow, b: ItemRow) => -byNameAsc(a, b);
     const avg = (name: string) => {
-      const entry = statsByProduct.get(normKey(name));
+      const entry = getStatsForProduct(name);
       return entry?.stats.avg4w || 0;
     };
 
@@ -2239,12 +2392,12 @@ export default function ProviderOrderPage() {
     }
 
     return ordered;
-  }, [actionableItems, groupOrder, sortMode, statsByProduct, itemOrderMap]);
+  }, [actionableItems, getStatsForProduct, groupOrder, itemOrderMap, sortMode]);
 
   const computeSalesSinceStock = React.useCallback(
     (productName: string, fromTs: number | null) => {
       if (fromTs == null) return 0;
-      const rows = salesByProduct.get(normKey(productName));
+      const rows = getSalesRowsForProduct(productName);
       if (!rows || !rows.length) return 0;
       const now = Date.now();
       const from = Math.min(fromTs, now);
@@ -2252,7 +2405,7 @@ export default function ProviderOrderPage() {
         .filter((row) => row.date >= from && row.date <= now)
         .reduce((acc, row) => acc + (row.qty || 0), 0);
     },
-    [salesByProduct]
+    [getSalesRowsForProduct]
   );
 
   const applyTimestampMs = React.useMemo(() => {
@@ -2430,7 +2583,7 @@ export default function ProviderOrderPage() {
 
   const computeAutoTarget = React.useCallback(
     (item: ItemRow) => {
-      const statsEntry = statsByProduct.get(normKey(item.product_name));
+      const statsEntry = getStatsForProduct(item.product_name);
       const stats = statsEntry?.stats ?? EMPTY_STATS;
       let baseTarget = 0;
       let periodDays = 7;
@@ -2457,7 +2610,7 @@ export default function ProviderOrderPage() {
 
       return Math.max(0, targetWithBuffer);
     },
-    [statsByProduct, providerFrequency, minStockMap, autoBufferDays],
+    [autoBufferDays, getStatsForProduct, minStockMap, providerFrequency],
   );
 
   React.useEffect(() => {
@@ -3576,9 +3729,19 @@ React.useEffect(() => {
 
   /* ===== Helpers ===== */
   const productNames = React.useMemo(() => {
-    const set = new Set<string>(); for (const r of sales) if (r.product) set.add(r.product);
+    const set = new Set<string>();
+    priceCatalog.forEach((item) => {
+      if (item.name) set.add(item.name);
+    });
+    sales.forEach((r) => {
+      if (r.product) set.add(r.product);
+    });
+    items.forEach((it) => {
+      if (it.product_name && it.product_name !== GROUP_PLACEHOLDER) set.add(it.product_name);
+      if (it.display_name) set.add(it.display_name);
+    });
     return Array.from(set.values());
-  }, [sales]);
+  }, [items, priceCatalog, sales]);
 
   const tokenMatch = (name: string, q: string) =>
     q.toLowerCase().trim().split(/\s+/).filter(Boolean).every((t) => name.toLowerCase().includes(t));
@@ -4256,7 +4419,8 @@ async function handlePickSuggested(mode: "week" | "2w" | "30d") {
 async function applySuggested(mode: "week" | "2w" | "30d", bufferDays = 0): Promise<boolean> {
   try {
     const qtyFor = (it: ItemRow) => {
-      const st = computeStats(sales, it.product_name, latestDateForProduct(sales, it.product_name));
+      const statsEntry = getStatsForProduct(it.product_name);
+      const st = statsEntry?.stats ?? EMPTY_STATS;
       let n = 0;
       let periodDays = 7;
       const minConfig = minStockMap[it.id];
@@ -4392,7 +4556,8 @@ async function addItem(product: string, groupName: string) {
   if (!order) return;
   const tenantForInsert = order?.tenant_id ?? tenantId ?? tenantIdFromQuery ?? null;
   const branchForInsert = order?.branch_id ?? branchId ?? branchIdFromQuery ?? null;
-  const st = computeStats(sales, product, latestDateForProduct(sales, product));
+  const statsEntry = getStatsForProduct(product);
+  const st = statsEntry?.stats ?? EMPTY_STATS;
   const unit = estCost(st, marginPct);
 
   const candidates = [itemsTable, ...ITEM_TABLE_CANDIDATES.filter((t) => t !== itemsTable)];
@@ -4437,7 +4602,8 @@ async function bulkAddItems(names: string[], groupName: string) {
   const branchForInsert = order?.branch_id ?? branchId ?? branchIdFromQuery ?? null;
 
   const rows = names.map((name) => {
-    const st = computeStats(sales, name, latestDateForProduct(sales, name));
+    const statsEntry = getStatsForProduct(name);
+    const st = statsEntry?.stats ?? EMPTY_STATS;
     const payload: ItemUpsertPayload = {
       order_id: order.id,
       product_name: name,
@@ -4812,8 +4978,7 @@ async function handleCopySimpleList() {
           .localeCompare(b.display_name || b.product_name, "es", { sensitivity: "base" });
       const byNameDesc = (a: ItemRow, b: ItemRow) => -byNameAsc(a, b);
 
-      const avg4w = (name: string) =>
-        computeStats(sales, name, latestDateForProduct(sales, name)).avg4w || 0;
+      const avg4w = (name: string) => getStatsForProduct(name)?.stats.avg4w || 0;
 
       let list = [...arr];
       if (sortMode === "manual") list = applyManualOrder(list, itemOrderMap[groupName]);
@@ -4995,8 +5160,9 @@ async function exportOrderAsXlsx() {
     const row0 = r - 1;
 
     // Métricas (idéntico a tu versión que funcionaba)
-    const anchor = latestDateForProduct(sales, it.product_name);
-    const st = computeStats(sales, it.product_name, anchor);
+    const statsEntry = getStatsForProduct(it.product_name);
+    const anchor = statsEntry?.anchor ?? 0;
+    const st = statsEntry?.stats ?? EMPTY_STATS;
 
     // A: Grupo
     setCell(row0, 0, { t: "s", v: it.group_name || "Sin grupo" });
@@ -7305,9 +7471,8 @@ async function exportOrderAsXlsx() {
                   groupName={groupName}
                   items={arr}
                   productNames={productNames}
-                  sales={sales}
-                  statsByProduct={statsByProduct}
-                  salesByProductMap={salesByProduct}
+                  getSalesRowsForProduct={getSalesRowsForProduct}
+                  getStatsForProduct={getStatsForProduct}
                   margin={marginPct}
                   tokenMatch={tokenMatch}
                   placeholder={GROUP_PLACEHOLDER}
@@ -7864,7 +8029,7 @@ function StockEditor({
 /* =================== GroupSection =================== */
 function GroupSection(props: GroupSectionProps) {
   const {
-    groupName, items, productNames, sales, salesByProductMap, margin, tokenMatch, placeholder,
+    groupName, items, productNames, getSalesRowsForProduct, getStatsForProduct, margin, tokenMatch, placeholder,
     onAddItem, onRemoveItem, onUpdateQty, onUpdateUnitPrice, onRenameGroup, onDeleteGroup,
     onBulkAddItems, onBulkRemoveByNames, sortMode,
     manualOrder, manualSortActive, onMoveItem, onReorderItem,
@@ -7872,7 +8037,6 @@ function GroupSection(props: GroupSectionProps) {
     groupCheckedMap, setGroupChecked,
     containerProps, onUpdatePackSize, onUpdateStock,
     onRenameItemLabel, computeSalesSinceStock,
-    statsByProduct,
     statsOpenMap, onToggleStats,
     minStockMap, onUpdateMinStock, onToggleMinStock,
     autoQtyMap, onToggleAutoQty, onRememberManualQty, getManualQtyBackup,
@@ -8124,11 +8288,13 @@ function GroupSection(props: GroupSectionProps) {
   const groupUnits = groupStats.units;
   const groupAvgPrice = groupUnits > 0 ? groupSubtotal / groupUnits : 0;
   const groupStockBalance = groupStats.stockBalance;
+  const trimmedQuery = q.trim();
+  const meetsSearchThreshold = trimmedQuery.length >= MIN_GROUP_SEARCH_CHARS;
   const suggestions = React.useMemo(() => {
-    if (!q) return [] as string[];
-    const matches = productNames.filter((n) => tokenMatch(n, q));
+    if (!meetsSearchThreshold) return [] as string[];
+    const matches = productNames.filter((n) => tokenMatch(n, trimmedQuery));
     return matches;
-  }, [productNames, q, tokenMatch]);
+  }, [meetsSearchThreshold, productNames, trimmedQuery, tokenMatch]);
   const shouldRenderInlineDropdown =
     !showFullscreenSearch && open && rect && portalTarget && suggestions.length > 0;
   const shouldScrollInlineDropdown = suggestions.length > SUGGESTION_VISIBLE_ROWS;
@@ -8138,14 +8304,14 @@ function GroupSection(props: GroupSectionProps) {
     const byNameAsc = (a: ItemRow, b: ItemRow) =>
       a.product_name.localeCompare(b.product_name, "es", { sensitivity: "base" });
     const byNameDesc = (a: ItemRow, b: ItemRow) => -byNameAsc(a, b);
-    const avg = (name: string) => statsByProduct.get(normKey(name))?.stats.avg4w || 0;
+    const avg = (name: string) => getStatsForProduct(name)?.stats.avg4w || 0;
     if (sortMode === "manual") arr = applyManualOrder(arr, manualOrder);
     else if (sortMode === "alpha_asc") arr.sort(byNameAsc);
     else if (sortMode === "alpha_desc") arr.sort(byNameDesc);
     else if (sortMode === "avg_desc") arr.sort((a, b) => (avg(b.product_name) - avg(a.product_name)) || byNameAsc(a, b));
     else if (sortMode === "avg_asc") arr.sort((a, b) => (avg(a.product_name) - avg(b.product_name)) || byNameAsc(a, b));
     return arr;
-  }, [arrVisible, sortMode, statsByProduct, manualOrder]);
+  }, [arrVisible, getStatsForProduct, manualOrder, sortMode]);
 
   const visibleOrderIds = React.useMemo(
     () => sortedVisible.map((item) => item.id),
@@ -8271,7 +8437,9 @@ function GroupSection(props: GroupSectionProps) {
     const inner = (
       <>
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--border)] bg-muted/40 px-3 py-2">
-          <div className="text-xs text-muted-foreground">{suggestions.length} resultados</div>
+          <div className="text-xs text-muted-foreground">
+            {meetsSearchThreshold ? `${suggestions.length} resultados` : `Escribí al menos ${MIN_GROUP_SEARCH_CHARS} letras`}
+          </div>
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" onClick={async () => {
               if (onBulkAddItems) {
@@ -8292,9 +8460,14 @@ function GroupSection(props: GroupSectionProps) {
         </div>
 
         <div className="py-1">
+          {!meetsSearchThreshold && (
+            <p className="px-3 py-2 text-xs text-muted-foreground">
+              Para acelerar el buscador, mostramos resultados cuando cargas al menos {MIN_GROUP_SEARCH_CHARS} letras.
+            </p>
+          )}
           {entries.map((name, idx) => {
             const checked = arrVisible.some((it) => it.product_name === name);
-            const statsEntry = statsByProduct.get(normKey(name));
+            const statsEntry = getStatsForProduct(name);
             const stats = statsEntry?.stats ?? EMPTY_STATS;
             const pv = stats.lastUnitRetail ?? stats.avgUnitRetail30d ?? 0;
             const pe = Math.round(pv * (1 - marginPct / 100));
@@ -8704,8 +8877,8 @@ type DragHandleProps = {
           {sortedVisible.map((it, idx) => {
             const subtotal = (it.unit_price || 0) * (it.qty || 0);
             const key = normKey(it.product_name);
-            const entry = statsByProduct.get(key);
-            const anchor = entry?.anchor ?? latestDateForProduct(sales, it.product_name);
+            const entry = getStatsForProduct(it.product_name);
+            const anchor = entry?.anchor ?? 0;
             const st = entry?.stats ?? EMPTY_STATS;
             const productLabel = (it.display_name?.trim() || it.product_name).trim();
             const lastStockTs = it.stock_updated_at ? new Date(it.stock_updated_at).getTime() : null;
@@ -8724,7 +8897,7 @@ type DragHandleProps = {
               : "border border-[var(--border)] bg-white text-muted-foreground";
             const metricChipClass =
               "rounded-2xl border border-[var(--border)] bg-white/70 px-3 py-2 text-[11px] text-muted-foreground";
-            const salesRows = salesByProductMap.get(key) ?? [];
+            const salesRows = getSalesRowsForProduct(it.product_name);
             const sparklineSeries = buildSalesTrendSeries(salesRows, 14, anchor);
             const latestTrend = sparklineSeries.length ? sparklineSeries[sparklineSeries.length - 1]?.qty ?? 0 : 0;
             const statsOpen = !!statsOpenMap[it.id];
