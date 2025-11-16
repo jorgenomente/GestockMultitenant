@@ -52,7 +52,7 @@ import {
 import {
   Plus, Minus, Search, Download, Upload, Trash2, ArrowLeft,
   History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package, Loader2, Save,
-  CalendarDays, FileText, RefreshCw, BookOpen, TrendingUp, TrendingDown, GripVertical, BarChart3,
+  CalendarDays, FileText, BookOpen, TrendingUp, TrendingDown, GripVertical, BarChart3,
   Sparkles, CheckCircle2, Circle,
 } from "lucide-react";
 import { useVisualViewportBottomOffset, isStandaloneDisplayMode } from "@/lib/useVisualViewportBottomOffset";
@@ -172,6 +172,7 @@ type StockUndoSnapshot = {
     id: string;
     stock_qty: number | null;
     stock_updated_at: string | null;
+    stock_signature_at: string | null;
     previous_qty: number | null;
     previous_qty_updated_at: string | null;
   }>;
@@ -445,6 +446,7 @@ type ItemRow = {
   /* NUEVO: stock multi-dispositivo */
   stock_qty?: number | null;
   stock_updated_at?: string | null;
+  stock_signature_at?: string | null;
 
   /* NUEVO: pedido anterior */
   previous_qty?: number | null;
@@ -499,6 +501,7 @@ type ItemUpsertPayload = {
   pack_size?: number | null;
   stock_qty?: number | null;
   stock_updated_at?: string | null;
+  stock_signature_at?: string | null;
   previous_qty?: number | null;
   previous_qty_updated_at?: string | null;
   price_updated_at?: string | null;
@@ -506,12 +509,53 @@ type ItemUpsertPayload = {
   branch_id?: string | null;
 };
 type GroupRenderFn = (
-  ...args: [string, ItemRow[], React.HTMLAttributes<HTMLDivElement>]
+  ...args: [
+    string,
+    ItemRow[],
+    React.HTMLAttributes<HTMLDivElement>,
+    { index: number; total: number },
+  ]
 ) => React.ReactNode;
 type DraggableGroupListProps = {
   groups: Array<[string, ItemRow[]]>;
   renderGroup: GroupRenderFn;
   onReorder: (...args: [string[]]) => void;
+};
+const buildGroupOrderSnapshot = (
+  currentNames: string[],
+  persistedOrder: string[],
+) => {
+  const snapshot = persistedOrder.length ? [...persistedOrder] : [...currentNames];
+  for (const name of currentNames) {
+    if (!snapshot.includes(name)) snapshot.push(name);
+  }
+  return snapshot;
+};
+const buildGroupItemOrderSnapshot = (
+  items: ItemRow[],
+  orderMap: Record<string, string[]>,
+  groupName: string,
+  visibleOrder?: string[],
+) => {
+  const key = normalizeGroupKey(groupName);
+  const groupItems = items.filter(
+    (it) => it.product_name !== GROUP_PLACEHOLDER && normalizeGroupKey(it.group_name) === key,
+  );
+  const fallbackOrder = groupItems.map((it) => it.id);
+  const allowed = new Set(fallbackOrder);
+  if (!fallbackOrder.length) return { key, order: [] as string[] };
+
+  const visibleBase = Array.isArray(visibleOrder)
+    ? visibleOrder.filter((id) => allowed.has(id))
+    : [];
+  const savedOrder = (orderMap[key] ?? []).filter((id) => allowed.has(id));
+  let workingOrderBase = visibleBase.length ? visibleBase : savedOrder;
+  if (!workingOrderBase.length) workingOrderBase = fallbackOrder;
+  const workingOrder = [...workingOrderBase];
+  fallbackOrder.forEach((id) => {
+    if (!workingOrder.includes(id)) workingOrder.push(id);
+  });
+  return { key, order: workingOrder };
 };
 type AddItemHandler = (...args: [string, string]) => Promise<void>;
 type RemoveItemHandler = (id: string) => Promise<void>;
@@ -718,6 +762,7 @@ type GroupSectionProps = {
   manualOrder: string[];
   manualSortActive: boolean;
   onMoveItem: (itemId: string, dir: "up" | "down", visibleOrder: string[]) => void;
+  onReorderItem?: (itemId: string, position: number, visibleOrder: string[]) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
   checkedMap: Record<string, boolean>;
@@ -735,6 +780,9 @@ type GroupSectionProps = {
   getManualQtyBackup: (itemId: string) => number | null;
   frequency: ProviderFrequency;
   onChangeFrequency: (freq: ProviderFrequency) => void;
+  position: number;
+  totalGroups: number;
+  onSetPosition: (nextPosition: number) => void;
   containerProps?: React.HTMLAttributes<HTMLDivElement>;
   bottomViewportOffset: number;
   floatingActionBottomOffset: string;
@@ -793,6 +841,7 @@ type SnapshotItem = {
   pack_size?: number | null;
   stock_qty?: number | null;
   stock_updated_at?: string | null;
+  stock_signature_at?: string | null;
   stock_signature_label?: string | null;
   previous_qty?: number | null;
   previous_qty_updated_at?: string | null;
@@ -824,6 +873,7 @@ type OrderExportJsonItem = {
   packSize: number | null;
   stockQty: number | null;
   stockUpdatedAt: string | null;
+  stockSignatureAt: string | null;
   previousQty: number | null;
   previousQtyUpdatedAt: string | null;
   priceUpdatedAt: string | null;
@@ -1227,6 +1277,7 @@ function DraggableGroupList({ groups, renderGroup, onReorder }: DraggableGroupLi
     setOverIndex(null);
   }
 
+  const total = groups.length;
   return (
     <>
       {groups.map(([groupName, arr], idx) => {
@@ -1248,7 +1299,7 @@ function DraggableGroupList({ groups, renderGroup, onReorder }: DraggableGroupLi
 
         return (
           <React.Fragment key={groupName}>
-            {renderGroup(groupName, arr, containerProps)}
+            {renderGroup(groupName, arr, containerProps, { index: idx, total })}
           </React.Fragment>
         );
       })}
@@ -1716,8 +1767,10 @@ export default function ProviderOrderPage() {
   const [autoBufferDialogOpen, setAutoBufferDialogOpen] = React.useState(false);
   const [autoBufferInput, setAutoBufferInput] = React.useState(String(AUTO_BUFFER_EXTRA_DAYS));
   const [autoBufferError, setAutoBufferError] = React.useState<string | null>(null);
-  const autoBufferIndicatorText =
-    autoBufferDays > 0 ? `Margen +${autoBufferDays}d` : "Sin margen extra";
+  const [autoBufferDialogMode, setAutoBufferDialogMode] = React.useState<"apply" | "edit">("apply");
+  const [suggestedMarginInput, setSuggestedMarginInput] = React.useState("0");
+  const [suggestedMarginError, setSuggestedMarginError] = React.useState<string | null>(null);
+  const autoBufferIndicatorText = `Margen: ${Math.max(0, autoBufferDays)}D`;
   const handleStepAutoBufferInput = React.useCallback((delta: number) => {
     setAutoBufferInput((prev) => {
       const normalized = prev.replace(",", ".").trim();
@@ -1727,6 +1780,16 @@ export default function ProviderOrderPage() {
       return String(next);
     });
     setAutoBufferError(null);
+  }, []);
+  const handleStepSuggestedMargin = React.useCallback((delta: number) => {
+    setSuggestedMarginInput((prev) => {
+      const normalized = prev.replace(",", ".").trim();
+      const parsed = Number(normalized);
+      const base = Number.isFinite(parsed) ? parsed : 0;
+      const next = Math.max(0, Math.round(base + delta));
+      return String(next);
+    });
+    setSuggestedMarginError(null);
   }, []);
   const [peMarginEnabled, setPeMarginEnabled] = React.useState(false);
   const [peApplying, setPeApplying] = React.useState(false);
@@ -2489,6 +2552,7 @@ export default function ProviderOrderPage() {
         id: row.item.id,
         stock_qty: row.item.stock_qty ?? null,
         stock_updated_at: row.item.stock_updated_at ?? null,
+        stock_signature_at: row.item.stock_signature_at ?? null,
         previous_qty: row.item.previous_qty ?? null,
         previous_qty_updated_at: row.item.previous_qty_updated_at ?? null,
       })),
@@ -2510,6 +2574,7 @@ export default function ProviderOrderPage() {
         const payload = {
           stock_qty: row.stockResult,
           stock_updated_at: nowIso,
+          stock_signature_at: fromIso,
           previous_qty: previousQty,
           previous_qty_updated_at: nowIso,
         };
@@ -2544,6 +2609,7 @@ export default function ProviderOrderPage() {
             ...item,
             stock_qty: match.stockResult,
             stock_updated_at: nowIso,
+            stock_signature_at: fromIso,
             previous_qty: match.qtyOrdered,
             previous_qty_updated_at: nowIso,
           };
@@ -2593,6 +2659,7 @@ export default function ProviderOrderPage() {
         const payload = {
           stock_qty: row.stock_qty,
           stock_updated_at: row.stock_updated_at,
+          stock_signature_at: row.stock_signature_at,
           previous_qty: row.previous_qty,
           previous_qty_updated_at: row.previous_qty_updated_at,
         };
@@ -2608,6 +2675,7 @@ export default function ProviderOrderPage() {
             ...item,
             stock_qty: match.stock_qty,
             stock_updated_at: match.stock_updated_at ?? null,
+            stock_signature_at: match.stock_signature_at ?? null,
             previous_qty: match.previous_qty,
             previous_qty_updated_at: match.previous_qty_updated_at ?? null,
           };
@@ -2873,7 +2941,7 @@ export default function ProviderOrderPage() {
     updateWeekParam(nextWeekId);
   }, [updateWeekParam]);
 
-  const cloneOrderToNewWeek = React.useCallback(async () => {
+  const cloneOrderToNewWeek = React.useCallback(async (options?: { itemsSnapshot?: ItemRow[] }) => {
     if (!tenantId || !branchId) {
       alert("Necesitás seleccionar una sucursal antes de crear el pedido.");
       return;
@@ -2883,7 +2951,8 @@ export default function ProviderOrderPage() {
       return;
     }
 
-    const itemsSnapshot = items.map((item) => ({ ...item }));
+    const sourceItems = options?.itemsSnapshot ?? items;
+    const itemsSnapshot = sourceItems.map((item) => ({ ...item }));
     const groupOrderSnapshot = [...groupOrder];
     const checkedSnapshot = { ...checkedMap };
     const groupCheckedSnapshot = { ...groupCheckedMap };
@@ -2986,6 +3055,7 @@ export default function ProviderOrderPage() {
             if (item.pack_size != null) payload.pack_size = item.pack_size;
             if (item.stock_qty != null) payload.stock_qty = item.stock_qty;
             if (item.stock_updated_at) payload.stock_updated_at = item.stock_updated_at;
+            if (item.stock_signature_at) payload.stock_signature_at = item.stock_signature_at;
             if (item.previous_qty != null) payload.previous_qty = item.previous_qty;
             if (item.previous_qty_updated_at) payload.previous_qty_updated_at = item.previous_qty_updated_at;
             if (item.price_updated_at) payload.price_updated_at = item.price_updated_at;
@@ -3421,7 +3491,7 @@ React.useEffect(() => {
 
     if (rows.length) {
       const latestFromTs = rows.reduce<number | null>((acc, row) => {
-        const raw = row.previous_qty_updated_at;
+        const raw = row.stock_signature_at ?? row.previous_qty_updated_at ?? row.stock_updated_at;
         if (!raw) return acc;
         const ts = Date.parse(raw);
         if (Number.isNaN(ts)) return acc;
@@ -3561,6 +3631,15 @@ React.useEffect(() => {
   const grandTotal = React.useMemo(() => items.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0), [items]);
   const grandQty   = React.useMemo(() => items.reduce((a, it) => a + (it.qty || 0), 0), [items]);
   const visibleGroupNames = React.useMemo(() => groups.map(([name]) => name || "Sin grupo"), [groups]);
+  const uniqueGroupNames = React.useMemo(
+    () => Array.from(new Set(items.map((it) => (it.group_name || "Sin grupo").trim()))),
+    [items],
+  );
+  const orderedExistingGroupNames = React.useMemo(() => {
+    const snapshot = buildGroupOrderSnapshot(uniqueGroupNames, groupOrder);
+    const existing = new Set(uniqueGroupNames);
+    return snapshot.filter((name) => existing.has(name));
+  }, [uniqueGroupNames, groupOrder]);
 
   const formatDateTime = React.useCallback((value?: string | null) => {
     if (!value) return "—";
@@ -3751,6 +3830,16 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
     [autoQtyMap, items, minStockMap, persistUiState, rememberManualQty, getManualQtyBackup],
   );
 
+  const openAutoBufferDialog = React.useCallback(
+    (mode: "apply" | "edit") => {
+      setAutoBufferDialogMode(mode);
+      setAutoBufferInput(String(autoBufferDays));
+      setAutoBufferError(null);
+      setAutoBufferDialogOpen(true);
+    },
+    [autoBufferDays],
+  );
+
   const handleConfirmAutoBuffer = React.useCallback(() => {
     const normalized = autoBufferInput.replace(",", ".").trim();
     if (!normalized) {
@@ -3766,8 +3855,10 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
     setAutoBufferDays(safe);
     setAutoBufferDialogOpen(false);
     setAutoBufferError(null);
-    applyAutoQtyToAll("auto");
-  }, [autoBufferInput, applyAutoQtyToAll]);
+    if (autoBufferDialogMode === "apply") {
+      applyAutoQtyToAll("auto");
+    }
+  }, [autoBufferInput, applyAutoQtyToAll, autoBufferDialogMode]);
 
   const handleBulkAutoToggle = React.useCallback(() => {
     if (!hasItems) return;
@@ -3775,10 +3866,13 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       applyAutoQtyToAll("manual");
       return;
     }
-    setAutoBufferInput(String(autoBufferDays));
-    setAutoBufferError(null);
-    setAutoBufferDialogOpen(true);
-  }, [hasItems, autoAllEnabled, applyAutoQtyToAll, autoBufferDays]);
+    openAutoBufferDialog("apply");
+  }, [hasItems, autoAllEnabled, applyAutoQtyToAll, openAutoBufferDialog]);
+
+  const handleEditAutoBuffer = React.useCallback(() => {
+    if (!hasItems) return;
+    openAutoBufferDialog("edit");
+  }, [hasItems, openAutoBufferDialog]);
 
   // Mantener coherencia: si el grupo abierto ya no existe (renombre/eliminación), cerramos
   React.useEffect(() => {
@@ -3962,33 +4056,46 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
 
   // Mover grupo ↑/↓ y guardar
   function moveGroup(name: string, dir: "up" | "down") {
-  // Todos los grupos visibles actuales
-  const currentNames = Array.from(
-    new Set(items.map((it) => (it.group_name || "Sin grupo").trim()))
-  );
+    const base = buildGroupOrderSnapshot(uniqueGroupNames, groupOrder);
 
-  // Semilla: lo guardado, o lo visible si aún no hay guardado
-  const base = (groupOrder.length ? [...groupOrder] : [...currentNames]);
+    const idx = base.indexOf(name);
+    if (idx === -1) {
+      base.push(name);
+      persistGroupOrder(base);
+      return;
+    }
 
-  // Asegurar que no falte ninguno (p. ej. grupos nuevos o renombrados)
-  for (const n of currentNames) {
-    if (!base.includes(n)) base.push(n);
-  }
+    const swapWith = dir === "up" ? idx - 1 : idx + 1;
+    if (swapWith < 0 || swapWith >= base.length) return;
 
-  const idx = base.indexOf(name);
-  if (idx === -1) {
-    // Si por algún motivo aún no está, lo agregamos al final y persistimos
-    base.push(name);
+    [base[idx], base[swapWith]] = [base[swapWith], base[idx]];
     persistGroupOrder(base);
-    return;
   }
 
-  const swapWith = dir === "up" ? idx - 1 : idx + 1;
-  if (swapWith < 0 || swapWith >= base.length) return;
+  function moveGroupToPosition(name: string, targetPosition: number) {
+    const base = buildGroupOrderSnapshot(uniqueGroupNames, groupOrder);
+    if (!base.length) return;
 
-  [base[idx], base[swapWith]] = [base[swapWith], base[idx]];
-  persistGroupOrder(base);
-}
+    let idx = base.indexOf(name);
+    if (idx === -1) {
+      base.push(name);
+      idx = base.length - 1;
+    }
+
+    if (base.length === 0) return;
+
+    const maxPosition = base.length;
+    const desired = Math.min(Math.max(Math.round(targetPosition), 1), maxPosition);
+    const zeroBasedTarget = desired - 1;
+    if (zeroBasedTarget === idx) {
+      persistGroupOrder(base);
+      return;
+    }
+
+    const [moved] = base.splice(idx, 1);
+    base.splice(zeroBasedTarget, 0, moved);
+    persistGroupOrder(base);
+  }
 
   function moveItemWithinGroup(
     groupName: string,
@@ -3996,36 +4103,46 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
     dir: "up" | "down",
     visibleOrder?: string[],
   ) {
-    const key = normalizeGroupKey(groupName);
-    const groupItems = items.filter(
-      (it) => it.product_name !== GROUP_PLACEHOLDER && normalizeGroupKey(it.group_name) === key,
-    );
-    if (groupItems.length < 2) return;
+    const { key, order } = buildGroupItemOrderSnapshot(items, itemOrderMap, groupName, visibleOrder);
+    if (order.length < 2) return;
 
-    const fallbackOrder = groupItems.map((it) => it.id);
-    const visibleBase = visibleOrder ? visibleOrder.filter((id) => fallbackOrder.includes(id)) : [];
-    const savedOrder = (itemOrderMap[key] ?? []).filter((id) => fallbackOrder.includes(id));
-    let workingOrderBase = visibleBase.length ? visibleBase : savedOrder;
-    if (!workingOrderBase.length) workingOrderBase = fallbackOrder;
-    const workingOrder = [...workingOrderBase];
-    fallbackOrder.forEach((id) => {
-      if (!workingOrder.includes(id)) workingOrder.push(id);
-    });
-
-    const fromIdx = workingOrder.indexOf(itemId);
+    const fromIdx = order.indexOf(itemId);
     if (fromIdx === -1) return;
     const toIdx = dir === "up"
       ? Math.max(0, fromIdx - 1)
-      : Math.min(workingOrder.length - 1, fromIdx + 1);
+      : Math.min(order.length - 1, fromIdx + 1);
     if (fromIdx === toIdx) return;
 
-    const nextGroupOrder = [...workingOrder];
+    const nextGroupOrder = [...order];
     const [moved] = nextGroupOrder.splice(fromIdx, 1);
     nextGroupOrder.splice(toIdx, 0, moved);
 
-    const nextMap = { ...itemOrderMap, [key]: nextGroupOrder };
-    setItemOrderMap(nextMap);
+    persistGroupItemOrder(key, nextGroupOrder);
+  }
 
+  function moveItemToPosition(
+    groupName: string,
+    itemId: string,
+    targetPosition: number,
+    visibleOrder?: string[],
+  ) {
+    const { key, order } = buildGroupItemOrderSnapshot(items, itemOrderMap, groupName, visibleOrder);
+    if (order.length < 2) return;
+    const fromIdx = order.indexOf(itemId);
+    if (fromIdx === -1) return;
+    const maxIndex = order.length - 1;
+    const desiredIndex = Math.min(Math.max(Math.round(targetPosition) - 1, 0), maxIndex);
+    if (desiredIndex === fromIdx) return;
+    const nextGroupOrder = [...order];
+    const [moved] = nextGroupOrder.splice(fromIdx, 1);
+    nextGroupOrder.splice(desiredIndex, 0, moved);
+    persistGroupItemOrder(key, nextGroupOrder);
+  }
+
+  function persistGroupItemOrder(groupKey: string, nextGroupOrder: string[]) {
+    const sanitizedOrder = nextGroupOrder.filter((id) => typeof id === "string" && id.length > 0);
+    const nextMap = { ...itemOrderMap, [groupKey]: sanitizedOrder };
+    setItemOrderMap(nextMap);
     const overrides: { itemOrderMap: Record<string, string[]>; sortMode?: SortMode } = { itemOrderMap: nextMap };
     if (sortMode !== "manual") {
       setSortMode("manual");
@@ -4114,8 +4231,21 @@ const [zeroing, setZeroing] = React.useState(false);
 const [suggesting, setSuggesting] = React.useState(false);
 
 async function handlePickSuggested(mode: "week" | "2w" | "30d") {
+  const normalized = suggestedMarginInput.replace(",", ".").trim();
+  if (!normalized) {
+    setSuggestedMarginError("Ingresá un número válido.");
+    return;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) {
+    setSuggestedMarginError("Ingresá un número válido.");
+    return;
+  }
+  const bufferDays = Math.max(0, Math.round(parsed));
+  setSuggestedMarginInput(String(bufferDays));
+  setSuggestedMarginError(null);
   setSuggesting(true);
-  const ok = await applySuggested(mode);
+  const ok = await applySuggested(mode, bufferDays);
   if (!ok) {
     alert("No se pudieron aplicar las cantidades sugeridas. Probá de nuevo.");
   }
@@ -4123,20 +4253,35 @@ async function handlePickSuggested(mode: "week" | "2w" | "30d") {
 }
 
 /** Aplica cantidades sugeridas a TODOS los ítems del pedido */
-async function applySuggested(mode: "week" | "2w" | "30d"): Promise<boolean> {
+async function applySuggested(mode: "week" | "2w" | "30d", bufferDays = 0): Promise<boolean> {
   try {
     const qtyFor = (it: ItemRow) => {
       const st = computeStats(sales, it.product_name, latestDateForProduct(sales, it.product_name));
       let n = 0;
+      let periodDays = 7;
       const minConfig = minStockMap[it.id];
       if (minConfig?.enabled && minConfig.qty > 0) {
         n = minConfig.qty;
-      } else if (mode === "week") n = st.avg4w || 0;
-      else if (mode === "2w") n = st.sum2w || 0;
-      else n = st.sum30d || 0;
+        periodDays = 0;
+      } else if (mode === "week") {
+        n = st.sum7d || 0;
+        periodDays = 7;
+      } else if (mode === "2w") {
+        n = st.sum2w || 0;
+        periodDays = 14;
+      } else {
+        n = st.sum30d || 0;
+        periodDays = 30;
+      }
 
       const currentStock = computeLiveStock(it);
-      const net = Math.max(0, (n || 0) - currentStock);
+      let target = Math.max(0, n || 0);
+      if (!minConfig?.enabled && periodDays > 0 && bufferDays > 0) {
+        const avgPerDay = periodDays > 0 ? target / periodDays : 0;
+        const bufferQty = Math.ceil(avgPerDay * Math.max(0, bufferDays));
+        target += bufferQty;
+      }
+      const net = Math.max(0, target - currentStock);
 
       return Math.max(0, snapToPack(net, it.pack_size));
     };
@@ -4380,9 +4525,9 @@ async function bulkAddItems(names: string[], groupName: string) {
     }
   }
 
-  async function updateStock(id: string, stock: number | null) {
+async function updateStock(id: string, stock: number | null) {
   const nowIso = new Date().toISOString();
-  const payload = { stock_qty: stock, stock_updated_at: nowIso };
+  const payload = { stock_qty: stock, stock_updated_at: nowIso, stock_signature_at: nowIso };
 
   const { error } = await supabase
     .from(itemsTable)
@@ -4962,6 +5107,7 @@ async function exportOrderAsXlsx() {
         packSize: it.pack_size ?? null,
         stockQty: it.stock_qty ?? null,
         stockUpdatedAt: it.stock_updated_at ?? null,
+        stockSignatureAt: it.stock_signature_at ?? it.stock_updated_at ?? null,
         previousQty: it.previous_qty ?? null,
         previousQtyUpdatedAt: it.previous_qty_updated_at ?? null,
         priceUpdatedAt: it.price_updated_at ?? null,
@@ -5150,6 +5296,9 @@ async function exportOrderAsXlsx() {
           pack_size: toNullableNumber(entry.packSize ?? entry.pack_size),
           stock_qty: toNullableNumber(entry.stockQty ?? entry.stock_qty),
           stock_updated_at: toNullableString(entry.stockUpdatedAt ?? entry.stock_updated_at),
+          stock_signature_at: toNullableString(
+            entry.stockSignatureAt ?? entry.stock_signature_at ?? entry.stockUpdatedAt ?? entry.stock_updated_at,
+          ),
           previous_qty: toNullableNumber(entry.previousQty ?? entry.previous_qty),
           previous_qty_updated_at: toNullableString(entry.previousQtyUpdatedAt ?? entry.previous_qty_updated_at),
           price_updated_at: toNullableString(entry.priceUpdatedAt ?? entry.price_updated_at),
@@ -5463,7 +5612,8 @@ async function exportOrderAsXlsx() {
           pack_size: it.pack_size ?? null,
           stock_qty: it.stock_qty ?? null,
           stock_updated_at: it.stock_updated_at ?? null,
-          stock_signature_label: formatStockSignatureLabel(it.stock_updated_at),
+          stock_signature_at: it.stock_signature_at ?? it.stock_updated_at ?? null,
+          stock_signature_label: formatStockSignatureLabel(it.stock_signature_at ?? it.stock_updated_at),
           previous_qty: it.previous_qty ?? null,
           previous_qty_updated_at: it.previous_qty_updated_at ?? null,
           price_updated_at: it.price_updated_at ?? null,
@@ -5517,12 +5667,12 @@ async function exportOrderAsXlsx() {
     }
     setFinalizingOrder(true);
     let nextAction: FinalizeContext | null = null;
+    let updatedItemsSnapshot: ItemRow[] | null = null;
     try {
       const ok = await saveSnapshot();
       if (!ok) return;
       const relevantItems = actionableItems.length ? actionableItems : [];
       const nowIso = new Date().toISOString();
-      const nowLocal = toLocalInputFromISO(nowIso);
       const updates = relevantItems.map((item) => {
         const receivedQty = Math.max(
           0,
@@ -5567,8 +5717,8 @@ async function exportOrderAsXlsx() {
       }
 
       if (updates.length) {
-        setItems((prev) =>
-          prev.map((item) => {
+        setItems((prev) => {
+          const next = prev.map((item) => {
             const entry = updates.find((u) => u.item.id === item.id);
             if (!entry) return item;
             return {
@@ -5578,11 +5728,11 @@ async function exportOrderAsXlsx() {
               previous_qty: entry.receivedQty,
               previous_qty_updated_at: nowIso,
             };
-          })
-        );
+          });
+          updatedItemsSnapshot = next;
+          return next;
+        });
         setLastStockAppliedAt(nowIso);
-        setLastStockFromInput(nowLocal);
-        setStockSalesInput(nowLocal);
       }
 
       nextAction = finalizeContext;
@@ -5597,7 +5747,9 @@ async function exportOrderAsXlsx() {
       setFinalizingOrder(false);
     }
     if (nextAction === "new-week") {
-      await cloneOrderToNewWeek();
+      await cloneOrderToNewWeek({
+        itemsSnapshot: updatedItemsSnapshot ?? undefined,
+      });
     }
   }, [
     actionableItems,
@@ -5633,6 +5785,7 @@ async function exportOrderAsXlsx() {
       pack_size: number | null;
       stock_qty: number | null;
       stock_updated_at: string | null;
+      stock_signature_at: string | null;
       previous_qty: number | null;
       previous_qty_updated_at: string | null;
       price_updated_at: string | null;
@@ -5650,21 +5803,22 @@ async function exportOrderAsXlsx() {
       const productName = (item.product_name || "").trim();
       if (!productName || productName === GROUP_PLACEHOLDER) return acc;
 
-      acc.push({
-        order_id: order.id,
-        product_name: productName,
-        display_name: normalizeNullable(item.display_name),
-        qty: item.qty,
-        unit_price: item.unit_price,
-        group_name: normalizeNullable(item.group_name),
-        pack_size: item.pack_size ?? null,
-        stock_qty: item.stock_qty ?? null,
-        stock_updated_at: item.stock_updated_at ?? null,
-        previous_qty: item.previous_qty ?? null,
-        previous_qty_updated_at: item.previous_qty_updated_at ?? null,
-        price_updated_at: item.price_updated_at ?? null,
-        tenant_id: item.tenant_id ?? null,
-        branch_id: item.branch_id ?? null,
+        acc.push({
+          order_id: order.id,
+          product_name: productName,
+          display_name: normalizeNullable(item.display_name),
+          qty: item.qty,
+          unit_price: item.unit_price,
+          group_name: normalizeNullable(item.group_name),
+          pack_size: item.pack_size ?? null,
+          stock_qty: item.stock_qty ?? null,
+          stock_updated_at: item.stock_updated_at ?? null,
+          stock_signature_at: item.stock_signature_at ?? item.stock_updated_at ?? null,
+          previous_qty: item.previous_qty ?? null,
+          previous_qty_updated_at: item.previous_qty_updated_at ?? null,
+          price_updated_at: item.price_updated_at ?? null,
+          tenant_id: item.tenant_id ?? null,
+          branch_id: item.branch_id ?? null,
       });
       return acc;
     }, []);
@@ -5933,12 +6087,13 @@ async function exportOrderAsXlsx() {
               <DialogTrigger asChild>
                 <Button
                   type="button"
-                  size="icon"
-                  className="h-12 w-12 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_10px_24px_rgba(32,56,44,0.32)] transition hover:bg-[var(--primary)]/90"
+                  size="sm"
+                  className="h-12 rounded-full bg-[var(--primary)] px-5 text-base font-semibold text-[var(--primary-foreground)] shadow-[0_10px_24px_rgba(32,56,44,0.32)] transition hover:bg-[var(--primary)]/90"
                   aria-label="Crear nuevo grupo"
                   title="Crear nuevo grupo"
                 >
-                  <Plus className="h-5 w-5" />
+                  <Plus className="mr-2 h-5 w-5" />
+                  Nuevo grupo
                 </Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-md">
@@ -5947,7 +6102,7 @@ async function exportOrderAsXlsx() {
                   <DialogDescription>Organizá tus productos en bloques personalizados.</DialogDescription>
                 </DialogHeader>
                 <GroupCreator
-                  autoFocus
+                  autoFocusInput
                   onCreate={async (name) => {
                     const ok = await createGroup(name.trim());
                     if (ok) setIsCreateGroupOpen(false);
@@ -6452,29 +6607,86 @@ async function exportOrderAsXlsx() {
                 </div>
               </div>
               <div className="rd-actions-grid">
-                <AlertDialog>
+                <AlertDialog
+                  onOpenChange={(open) => {
+                    if (!open) setSuggestedMarginError(null);
+                  }}
+                >
                   <AlertDialogTrigger asChild>
                     <Button
                       variant="outline"
                       size="lg"
-                      className="h-11 flex-1 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] hover:bg-muted"
-                      title="Aplicar cantidades sugeridas"
-                      disabled={suggesting}
+                      className="h-11 flex-1 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] hover:bg-muted disabled:opacity-60"
+                      title={
+                        autoAllEnabled
+                          ? "Desactivá Pedido auto para usar las sugerencias manuales"
+                          : "Aplicar cantidades sugeridas"
+                      }
+                      disabled={suggesting || autoAllEnabled}
                     >
                       Sugerido
                     </Button>
                   </AlertDialogTrigger>
-                  <AlertDialogContent>
+                  <AlertDialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto z-[90]">
                     <AlertDialogHeader>
                       <AlertDialogTitle>¿Qué tipo de pedido vas a hacer?</AlertDialogTitle>
                       <AlertDialogDescription>
                         Elegí el período para calcular las cantidades:
-                        <br />• <b>Semanal</b>: promedio semanal (últimas 4 semanas)
+                        <br />• <b>Semanal</b>: ventas de los últimos 7 días
                         <br />• <b>Quincenal</b>: ventas de las últimas 2 semanas
                         <br />• <b>Mensual</b>: ventas de los últimos 30 días
                         <br />Si un producto tiene “paquete”, se ajusta al múltiplo del pack.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
+                    <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-muted/40 p-4">
+                      <Label
+                        htmlFor="suggested-margin-days"
+                        className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground"
+                      >
+                        Margen adicional (días)
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Se suma un extra proporcional antes de aplicar las cantidades sugeridas.
+                      </p>
+                      <div className="flex items-center justify-center gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-10 w-10 rounded-full border-[var(--border)]"
+                          onClick={() => handleStepSuggestedMargin(-1)}
+                          aria-label="Restar día"
+                        >
+                          <Minus className="h-4 w-4" />
+                        </Button>
+                        <Input
+                          id="suggested-margin-days"
+                          type="number"
+                          min={0}
+                          inputMode="numeric"
+                          value={suggestedMarginInput}
+                          onChange={(event) => {
+                            setSuggestedMarginInput(event.target.value);
+                            setSuggestedMarginError(null);
+                          }}
+                          className="h-10 w-28 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 text-center text-base font-semibold"
+                          placeholder="Ej. 2"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-10 w-10 rounded-full border-[var(--border)]"
+                          onClick={() => handleStepSuggestedMargin(1)}
+                          aria-label="Sumar día"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      {suggestedMarginError ? (
+                        <p className="text-sm text-destructive">{suggestedMarginError}</p>
+                      ) : null}
+                    </div>
                     <div className="flex justify-end gap-2 pt-2">
                       <AlertDialogCancel asChild>
                         <Button variant="outline">Cancelar</Button>
@@ -6533,53 +6745,53 @@ async function exportOrderAsXlsx() {
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="lg"
-                  onClick={handleBulkAutoToggle}
-                  disabled={!hasItems}
-                  aria-pressed={autoAllEnabled}
-                  title={
-                    autoAllEnabled
-                      ? "Pasar todos los productos a modo manual"
-                      : "Aplicar sugerido automático a todos los productos"
-                  }
-                  className={clsx(
-                    "h-11 flex-1 rounded-full border px-6 text-left text-sm font-semibold shadow-none transition",
-                    autoAllEnabled
-                      ? "border-transparent bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/90"
-                      : "border border-[var(--border)] bg-white/80 text-[color:var(--foreground)] hover:bg-white"
-                  )}
-                >
-                  <div className="flex items-center gap-3">
-                    {autoAllEnabled ? (
-                      <CheckCircle2 className="h-5 w-5" />
-                    ) : (
-                      <Circle className="h-5 w-5 text-muted-foreground" />
+                <div className="flex min-w-[240px] flex-1 flex-col gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="lg"
+                    onClick={handleBulkAutoToggle}
+                    disabled={!hasItems}
+                    aria-pressed={autoAllEnabled}
+                    title={
+                      autoAllEnabled
+                        ? "Pasar todos los productos a modo manual"
+                        : "Aplicar sugerido automático a todos los productos"
+                    }
+                    className={clsx(
+                      "h-11 w-full rounded-full border px-6 text-left text-sm font-semibold shadow-none transition",
+                      autoAllEnabled
+                        ? "border-transparent bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/90"
+                        : "border border-[var(--border)] bg-white/80 text-[color:var(--foreground)] hover:bg-white"
                     )}
-                    <div className="flex flex-col leading-tight">
-                      <div className="flex items-center gap-2">
+                  >
+                    <div className="flex items-center gap-3">
+                      {autoAllEnabled ? (
+                        <CheckCircle2 className="h-5 w-5" />
+                      ) : (
+                        <Circle className="h-5 w-5 text-muted-foreground" />
+                      )}
+                      <div className="flex flex-col leading-tight">
                         <span className="text-xs font-semibold uppercase tracking-[0.2em]">
                           Pedido auto
                         </span>
-                        <span
-                          className={clsx(
-                            "rounded-full px-2 py-[2px] text-[10px] font-semibold uppercase tracking-[0.12em]",
-                            autoAllEnabled
-                              ? "bg-white/20 text-[var(--primary-foreground)]"
-                              : "bg-muted/80 text-muted-foreground",
-                          )}
-                        >
-                          {autoBufferIndicatorText}
+                        <span>
+                          {autoAllEnabled ? "Quitar a todos" : "Aplicar a todos"}
                         </span>
                       </div>
-                      <span>
-                        {autoAllEnabled ? "Quitar a todos" : "Aplicar a todos"}
-                      </span>
                     </div>
-                  </div>
-                </Button>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleEditAutoBuffer}
+                    disabled={!hasItems}
+                    className="h-8 w-full justify-center rounded-full border border-dashed border-[var(--border)] px-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground hover:text-[var(--foreground)]"
+                  >
+                    {autoBufferIndicatorText}
+                  </Button>
+                </div>
                 <Dialog
                   open={autoBufferDialogOpen}
                   onOpenChange={(open) => {
@@ -6650,7 +6862,7 @@ async function exportOrderAsXlsx() {
                         Cancelar
                       </Button>
                       <Button type="button" onClick={handleConfirmAutoBuffer}>
-                        Activar automático
+                        {autoBufferDialogMode === "apply" ? "Activar automático" : "Guardar margen"}
                       </Button>
                     </DialogFooter>
                   </DialogContent>
@@ -7084,55 +7296,66 @@ async function exportOrderAsXlsx() {
               // Persistimos nuevo orden en Supabase (multidispositivo)
               persistGroupOrder(nextNames);
             }}
-            renderGroup={(groupName, arr, containerProps) => (
-              <GroupSection
-                groupName={groupName}
-                items={arr}
-                productNames={productNames}
-                sales={sales}
-                statsByProduct={statsByProduct}
-                salesByProductMap={salesByProduct}
-                margin={marginPct}
-                tokenMatch={tokenMatch}
-                placeholder={GROUP_PLACEHOLDER}
-                onAddItem={addItem}
-                onBulkAddItems={bulkAddItems}
-                onBulkRemoveByNames={bulkRemoveByNames}
-                onRemoveItem={removeItem}
-                onUpdateQty={updateQty}
-                onUpdateUnitPrice={updateUnitPrice}
-                onRenameGroup={updateGroupName}
-                onDeleteGroup={deleteGroup}
-                onUpdatePackSize={updatePackSize}
+            renderGroup={(groupName, arr, containerProps, meta) => {
+              const orderedIndex = orderedExistingGroupNames.indexOf(groupName);
+              const position = orderedIndex === -1 ? meta.index + 1 : orderedIndex + 1;
+              const totalGroups = orderedExistingGroupNames.length || Math.max(meta.total, 1);
+              return (
+                <GroupSection
+                  groupName={groupName}
+                  items={arr}
+                  productNames={productNames}
+                  sales={sales}
+                  statsByProduct={statsByProduct}
+                  salesByProductMap={salesByProduct}
+                  margin={marginPct}
+                  tokenMatch={tokenMatch}
+                  placeholder={GROUP_PLACEHOLDER}
+                  onAddItem={addItem}
+                  onBulkAddItems={bulkAddItems}
+                  onBulkRemoveByNames={bulkRemoveByNames}
+                  onRemoveItem={removeItem}
+                  onUpdateQty={updateQty}
+                  onUpdateUnitPrice={updateUnitPrice}
+                  onRenameGroup={updateGroupName}
+                  onDeleteGroup={deleteGroup}
+                  onUpdatePackSize={updatePackSize}
                 sortMode={sortMode}
                 manualOrder={itemOrderMap[groupName] ?? EMPTY_ITEM_ORDER}
                 manualSortActive={sortMode === "manual"}
                 onMoveItem={(itemId, dir, visibleOrder) => moveItemWithinGroup(groupName, itemId, dir, visibleOrder)}
+                onReorderItem={(itemId, position, visibleOrder) =>
+                  moveItemToPosition(groupName, itemId, position, visibleOrder)
+                }
                 onMoveUp={() => moveGroup(groupName, "up")}
                 onMoveDown={() => moveGroup(groupName, "down")}
-                checkedMap={checkedMap}
-                groupCheckedMap={groupCheckedMap}
-                onRenameItemLabel={updateDisplayName}
-                setItemChecked={setItemChecked}
-                setGroupChecked={setGroupChecked}
-                onUpdateStock={updateStock}
-                computeSalesSinceStock={computeSalesSinceStock}
-                statsOpenMap={statsOpenMap}
-                onToggleStats={toggleStats}
-                minStockMap={minStockMap}
-                onUpdateMinStock={updateMinStockValueForItem}
-                onToggleMinStock={toggleMinStockForItem}
-                autoQtyMap={autoQtyMap}
-                onToggleAutoQty={toggleAutoQtyForItem}
-                onRememberManualQty={rememberManualQty}
-                getManualQtyBackup={getManualQtyBackup}
-                frequency={providerFrequency}
-                onChangeFrequency={handleChangeAutoFrequency}
-                containerProps={containerProps} // <-- clave
-                bottomViewportOffset={effectiveViewportOffset}
-                floatingActionBottomOffset={floatingActionBottomOffset}
-              />
-            )}
+                  checkedMap={checkedMap}
+                  groupCheckedMap={groupCheckedMap}
+                  onRenameItemLabel={updateDisplayName}
+                  setItemChecked={setItemChecked}
+                  setGroupChecked={setGroupChecked}
+                  onUpdateStock={updateStock}
+                  computeSalesSinceStock={computeSalesSinceStock}
+                  statsOpenMap={statsOpenMap}
+                  onToggleStats={toggleStats}
+                  minStockMap={minStockMap}
+                  onUpdateMinStock={updateMinStockValueForItem}
+                  onToggleMinStock={toggleMinStockForItem}
+                  autoQtyMap={autoQtyMap}
+                  onToggleAutoQty={toggleAutoQtyForItem}
+                  onRememberManualQty={rememberManualQty}
+                  getManualQtyBackup={getManualQtyBackup}
+                  frequency={providerFrequency}
+                  onChangeFrequency={handleChangeAutoFrequency}
+                  position={position}
+                  totalGroups={totalGroups}
+                  onSetPosition={(nextPosition) => moveGroupToPosition(groupName, nextPosition)}
+                  containerProps={containerProps} // <-- clave
+                  bottomViewportOffset={effectiveViewportOffset}
+                  floatingActionBottomOffset={floatingActionBottomOffset}
+                />
+              );
+            }}
           />
         </Accordion>
       </div>
@@ -7483,6 +7706,7 @@ type StockEditorProps = {
   value?: number | null;
   updatedAt?: string | null;
   previousUpdatedAt?: string | null;
+  signatureAt?: string | null;
   onCommit: (...args: [number | null]) => Promise<void> | void;
   salesSince?: number;
   onInputMount?: (el: HTMLInputElement | null) => void;
@@ -7492,6 +7716,7 @@ function StockEditor({
   value,
   updatedAt,
   previousUpdatedAt,
+  signatureAt,
   onCommit,
   salesSince,
   onInputMount,
@@ -7549,8 +7774,9 @@ function StockEditor({
   }
 
   const since = sinceText(updatedAt);
-  const signatureLabel = formatStockSignatureLabel(updatedAt);
-  const hasSalesSinceSignature = typeof salesSince === "number" && !!updatedAt;
+  const signatureSource = signatureAt ?? updatedAt;
+  const signatureLabel = formatStockSignatureLabel(signatureSource);
+  const hasSalesSinceSignature = typeof salesSince === "number" && !!signatureSource;
   let appliedFrom: { absolute: string; relative: string; title: string } | null = null;
   if (previousUpdatedAt) {
     const date = new Date(previousUpdatedAt);
@@ -7641,7 +7867,7 @@ function GroupSection(props: GroupSectionProps) {
     groupName, items, productNames, sales, salesByProductMap, margin, tokenMatch, placeholder,
     onAddItem, onRemoveItem, onUpdateQty, onUpdateUnitPrice, onRenameGroup, onDeleteGroup,
     onBulkAddItems, onBulkRemoveByNames, sortMode,
-    manualOrder, manualSortActive, onMoveItem,
+    manualOrder, manualSortActive, onMoveItem, onReorderItem,
     onMoveUp, onMoveDown, checkedMap, setItemChecked,
     groupCheckedMap, setGroupChecked,
     containerProps, onUpdatePackSize, onUpdateStock,
@@ -7651,6 +7877,7 @@ function GroupSection(props: GroupSectionProps) {
     minStockMap, onUpdateMinStock, onToggleMinStock,
     autoQtyMap, onToggleAutoQty, onRememberManualQty, getManualQtyBackup,
     frequency, onChangeFrequency,
+    position, totalGroups, onSetPosition,
     margin: marginPct,
     bottomViewportOffset,
     floatingActionBottomOffset,
@@ -7835,6 +8062,29 @@ function GroupSection(props: GroupSectionProps) {
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const groupNameInputRef = React.useRef<HTMLInputElement | null>(null);
   React.useEffect(() => setEditValue(groupName || "Sin grupo"), [groupName]);
+  const [positionInput, setPositionInput] = React.useState(String(position));
+  React.useEffect(() => setPositionInput(String(position)), [position]);
+
+  const commitPositionChange = React.useCallback(() => {
+    const normalized = (positionInput || "").replace(",", ".").trim();
+    if (!normalized) {
+      setPositionInput(String(position));
+      return;
+    }
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) {
+      setPositionInput(String(position));
+      return;
+    }
+    const maxPosition = Math.max(totalGroups, 1);
+    const desired = Math.min(Math.max(Math.round(parsed), 1), maxPosition);
+    if (desired === position) {
+      setPositionInput(String(position));
+      return;
+    }
+    setPositionInput(String(desired));
+    onSetPosition(desired);
+  }, [positionInput, position, totalGroups, onSetPosition]);
 
   React.useEffect(() => {
     if (editing) groupNameInputRef.current?.focus();
@@ -7909,6 +8159,39 @@ function GroupSection(props: GroupSectionProps) {
     }
     return visibleOrderIds;
   }, [sortMode, manualOrder, arrVisible, visibleOrderIds]);
+  const totalItemsInGroup = sortedVisible.length;
+  const [positionEditing, setPositionEditing] = React.useState<{ id: string | null; value: string }>({
+    id: null,
+    value: "",
+  });
+  const resetPositionEditing = React.useCallback(() => setPositionEditing({ id: null, value: "" }), []);
+  React.useEffect(() => {
+    setPositionEditing((prev) => {
+      if (!prev.id) return prev;
+      const stillExists = arrVisible.some((item) => item.id === prev.id);
+      return stillExists ? prev : { id: null, value: "" };
+    });
+  }, [arrVisible]);
+  const commitItemPosition = React.useCallback(
+    (itemId: string, rawValue: string, currentPosition: number, total: number, visibleOrder: string[]) => {
+      const normalized = (rawValue || "").replace(",", ".").trim();
+      if (!normalized) {
+        resetPositionEditing();
+        return;
+      }
+      const parsed = Number(normalized);
+      if (!Number.isFinite(parsed)) {
+        resetPositionEditing();
+        return;
+      }
+      const limit = Math.max(total, 1);
+      const desired = Math.min(Math.max(Math.round(parsed), 1), limit);
+      resetPositionEditing();
+      if (!onReorderItem || desired === currentPosition) return;
+      onReorderItem(itemId, desired, visibleOrder);
+    },
+    [onReorderItem, resetPositionEditing],
+  );
 
   const stockInputRefs = React.useRef<Record<string, HTMLInputElement | null>>({});
   const setStockInputRef = React.useCallback((itemId: string, node: HTMLInputElement | null) => {
@@ -8119,35 +8402,68 @@ type DragHandleProps = {
     >
       <div className="flex w-full flex-wrap gap-4">
         <div className="flex min-w-0 flex-1 items-start gap-4">
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={(e) => {
-              e.stopPropagation();
-              setGroupChecked(groupName || "Sin grupo", !groupChecked);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
+          <div className="flex flex-col items-center gap-2">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
                 e.stopPropagation();
                 setGroupChecked(groupName || "Sin grupo", !groupChecked);
-              }
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            className={clsx(
-              "flex h-11 w-11 items-center justify-center rounded-2xl border-2 border-[color:var(--border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-inner transition-all duration-200 hover:border-[color:var(--order-card-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--order-card-highlight)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-              groupChecked &&
-                "scale-105 border-transparent bg-[color:var(--order-card-highlight)] text-[var(--primary-foreground)] shadow-[0_14px_30px_rgba(15,23,42,0.35)] ring-4 ring-[color:var(--order-card-highlight)]/40"
-            )}
-            aria-label={groupChecked ? "Marcar grupo como pendiente" : "Marcar grupo como gestionado"}
-            aria-pressed={groupChecked}
-            title={groupChecked ? "Marcar grupo como pendiente" : "Marcar grupo como gestionado"}
-          >
-            {groupChecked ? (
-              <Check className="h-5 w-5 text-[#0f172a]" />
-            ) : (
-              <Circle className="h-5 w-5" />
-            )}
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setGroupChecked(groupName || "Sin grupo", !groupChecked);
+                }
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className={clsx(
+                "flex h-11 w-11 items-center justify-center rounded-2xl border-2 border-[color:var(--border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-inner transition-all duration-200 hover:border-[color:var(--order-card-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--order-card-highlight)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                groupChecked &&
+                  "scale-105 border-transparent bg-[color:var(--order-card-highlight)] text-[var(--primary-foreground)] shadow-[0_14px_30px_rgba(15,23,42,0.35)] ring-4 ring-[color:var(--order-card-highlight)]/40"
+              )}
+              aria-label={groupChecked ? "Marcar grupo como pendiente" : "Marcar grupo como gestionado"}
+              aria-pressed={groupChecked}
+              title={groupChecked ? "Marcar grupo como pendiente" : "Marcar grupo como gestionado"}
+            >
+              {groupChecked ? (
+                <Check className="h-5 w-5 text-[#0f172a]" />
+              ) : (
+                <Circle className="h-5 w-5" />
+              )}
+            </div>
+            <div className="flex flex-col items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="text-[9px] font-semibold uppercase tracking-[0.2em]">Orden</span>
+              <div className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={Math.max(totalGroups, 1)}
+                  value={positionInput}
+                  className="h-8 w-14 rounded-xl text-center text-sm"
+                  aria-label="Posición del grupo"
+                  title="Editar posición del grupo"
+                  onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onChange={(e) => setPositionInput(e.target.value.replace(/[^0-9]/g, ""))}
+                  onBlur={() => { void commitPositionChange(); }}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void commitPositionChange();
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setPositionInput(String(position));
+                    }
+                  }}
+                />
+                <span className="text-[11px] text-muted-foreground">/ {Math.max(totalGroups, 1)}</span>
+              </div>
+            </div>
           </div>
           <div className="min-w-0 flex-1 space-y-2">
             <div className="flex flex-wrap items-center gap-3">
@@ -8242,34 +8558,7 @@ type DragHandleProps = {
 
       {/* TOOLBAR */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[color:var(--order-group-toolbar,var(--background))] px-6 py-3 text-sm text-muted-foreground">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="inline-flex items-center gap-2 rounded-full border border-dashed border-[var(--border)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-            Gestión
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            size="icon"
-            variant="secondary"
-            className="h-9 w-9 rounded-2xl border border-[var(--border)] bg-card/80 text-[var(--foreground)] hover:bg-muted/60"
-            aria-label="Mover grupo arriba"
-            onClick={() => onMoveUp()}
-            title="Mover hacia arriba"
-          >
-            <ChevronUp className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="secondary"
-            className="h-9 w-9 rounded-2xl border border-[var(--border)] bg-card/80 text-[var(--foreground)] hover:bg-muted/60"
-            aria-label="Mover grupo abajo"
-            onClick={() => onMoveDown()}
-            title="Mover hacia abajo"
-          >
-            <ChevronDown className="h-4 w-4" />
-          </Button>
+        <div className="flex flex-1 items-center justify-between gap-2">
           <Button
             variant="ghost"
             size="icon"
@@ -8280,6 +8569,30 @@ type DragHandleProps = {
           >
             <Trash2 className="h-4 w-4" />
           </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              className="h-9 w-9 rounded-2xl border border-[var(--border)] bg-card/80 text-[var(--foreground)] hover:bg-muted/60"
+              aria-label="Mover grupo arriba"
+              onClick={() => onMoveUp()}
+              title="Mover hacia arriba"
+            >
+              <ChevronUp className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              className="h-9 w-9 rounded-2xl border border-[var(--border)] bg-card/80 text-[var(--foreground)] hover:bg-muted/60"
+              aria-label="Mover grupo abajo"
+              onClick={() => onMoveDown()}
+              title="Mover hacia abajo"
+            >
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -8388,7 +8701,7 @@ type DragHandleProps = {
             <div className="text-sm text-muted-foreground">No hay productos aún. Busca arriba y tilda para agregar.</div>
           )}
 
-          {sortedVisible.map((it) => {
+          {sortedVisible.map((it, idx) => {
             const subtotal = (it.unit_price || 0) * (it.qty || 0);
             const key = normKey(it.product_name);
             const entry = statsByProduct.get(key);
@@ -8464,11 +8777,79 @@ type DragHandleProps = {
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex flex-wrap items-start gap-3">
                           <div className="order-2 min-w-0 flex-1 md:order-1">
-                            <ItemTitle
-                              name={it.display_name || it.product_name}
-                              canonical={it.product_name}
-                              onCommit={(label) => onRenameItemLabel(it.id, label)}
-                            />
+                            <div className="flex items-start gap-3">
+                              <div className="flex flex-col items-center gap-1 text-[10px] text-muted-foreground">
+                                <span className="text-[9px] font-semibold uppercase tracking-[0.2em]">Orden</span>
+                                <div className="flex items-center gap-1">
+                                  <Input
+                                    type="number"
+                                    inputMode="numeric"
+                                    min={1}
+                                    max={Math.max(totalItemsInGroup, 1)}
+                                    value={
+                                      positionEditing.id === it.id
+                                        ? positionEditing.value
+                                        : String(idx + 1)
+                                    }
+                                    className="h-8 w-14 rounded-xl text-center text-sm"
+                                    aria-label="Posición del producto dentro del grupo"
+                                    title="Editar posición del producto"
+                                    onClick={(e) => e.stopPropagation()}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onFocus={(e) => {
+                                      e.stopPropagation();
+                                      setPositionEditing((prev) =>
+                                        prev.id === it.id ? prev : { id: it.id, value: String(idx + 1) },
+                                      );
+                                    }}
+                                    onChange={(e) => {
+                                      const digits = e.target.value.replace(/[^0-9]/g, "");
+                                      setPositionEditing({ id: it.id, value: digits });
+                                    }}
+                                    onKeyDown={(e) => {
+                                      e.stopPropagation();
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        if (positionEditing.id === it.id) {
+                                          commitItemPosition(
+                                            it.id,
+                                            positionEditing.value,
+                                            idx + 1,
+                                            totalItemsInGroup,
+                                            visibleOrderIds,
+                                          );
+                                        }
+                                      }
+                                      if (e.key === "Escape") {
+                                        e.preventDefault();
+                                        resetPositionEditing();
+                                      }
+                                    }}
+                                    onBlur={() => {
+                                      if (positionEditing.id === it.id) {
+                                        commitItemPosition(
+                                          it.id,
+                                          positionEditing.value,
+                                          idx + 1,
+                                          totalItemsInGroup,
+                                          visibleOrderIds,
+                                        );
+                                      }
+                                    }}
+                                  />
+                                  <span className="text-[11px] text-muted-foreground">
+                                    / {Math.max(totalItemsInGroup, 1)}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <ItemTitle
+                                  name={it.display_name || it.product_name}
+                                  canonical={it.product_name}
+                                  onCommit={(label) => onRenameItemLabel(it.id, label)}
+                                />
+                              </div>
+                            </div>
                           </div>
                           <div className="order-1 flex w-full flex-wrap items-center gap-3 md:order-2 md:w-auto md:flex-nowrap">
                             <PackSizeEditor value={it.pack_size} onCommit={(n) => onUpdatePackSize(it.id, n)} />
@@ -8503,6 +8884,7 @@ type DragHandleProps = {
                             value={liveStock}
                             updatedAt={it.stock_updated_at}
                             previousUpdatedAt={it.previous_qty_updated_at}
+                            signatureAt={it.stock_signature_at}
                             onCommit={(n) => onUpdateStock(it.id, n)}
                             salesSince={pendingSales}
                             onInputMount={(node) => setStockInputRef(it.id, node)}
@@ -8758,13 +9140,20 @@ type DragHandleProps = {
 /* ---------- Crear grupo ---------- */
 type GroupCreatorProps = {
   onCreate: (name: string) => Promise<boolean> | boolean;
-  autoFocus?: boolean;
+  autoFocusInput?: boolean;
 };
 /* eslint-enable no-unused-vars */
 
-function GroupCreator({ onCreate, autoFocus = false }: GroupCreatorProps) {
+function GroupCreator({ onCreate, autoFocusInput = false }: GroupCreatorProps) {
   const [name, setName] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    if (!autoFocusInput) return;
+    const node = inputRef.current;
+    if (node) node.focus();
+  }, [autoFocusInput]);
 
   const handleCreate = React.useCallback(async () => {
     const n = name.trim();
@@ -8791,6 +9180,7 @@ function GroupCreator({ onCreate, autoFocus = false }: GroupCreatorProps) {
     >
       <Input
         id="new-group-name"
+        ref={inputRef}
         placeholder="Ej: Budines, Galletas..."
         value={name}
         onChange={(e) => setName(e.target.value)}
@@ -8798,7 +9188,6 @@ function GroupCreator({ onCreate, autoFocus = false }: GroupCreatorProps) {
         onKeyDown={(e) => {
           if (e.key === "Enter") e.stopPropagation();
         }}
-        autoFocus={autoFocus}
         disabled={submitting}
         className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 shadow-inner"
       />
