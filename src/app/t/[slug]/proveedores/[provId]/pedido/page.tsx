@@ -52,8 +52,8 @@ import {
 import {
   Plus, Minus, Search, Download, Upload, Trash2, ArrowLeft,
   History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package, Loader2, Save,
-  CalendarDays, FileText, BookOpen, TrendingUp, TrendingDown, GripVertical, BarChart3,
-  Sparkles, CheckCircle2, Circle,
+  CalendarDays, FileText, BookOpen, TrendingUp, TrendingDown, BarChart3,
+  Sparkles, CheckCircle2, Circle, Info, MoreHorizontal,
 } from "lucide-react";
 import { useVisualViewportBottomOffset, isStandaloneDisplayMode } from "@/lib/useVisualViewportBottomOffset";
 
@@ -205,11 +205,11 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel, disabled = f
         </span>
       )}
 
-      <div className="inline-flex items-center gap-2">
+      <div className="inline-flex items-center gap-1.5 sm:gap-2">
         <Button
           variant="outline"
           size="icon"
-          className="h-9 w-9 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)]"
+          className="h-8 w-8 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)] sm:h-9 sm:w-9"
           aria-label="Restar"
           disabled={disabled}
           onClick={() => onChange(clamp((value || 0) - s))}
@@ -218,7 +218,7 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel, disabled = f
         </Button>
 
         <Input
-          className="h-9 w-16 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] px-0 text-center text-sm font-semibold text-[color:var(--order-card-qty-foreground)] focus-visible:ring-0"
+          className="h-8 w-14 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] px-0 text-center text-sm font-semibold text-[color:var(--order-card-qty-foreground)] focus-visible:ring-0 sm:h-9 sm:w-16"
           inputMode="numeric"
           value={value ?? 0}
           disabled={disabled}
@@ -235,7 +235,7 @@ function Stepper({ value, onChange, min = 0, step = 1, suffixLabel, disabled = f
         <Button
           variant="outline"
           size="icon"
-          className="h-9 w-9 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)]"
+          className="h-8 w-8 rounded-full border border-[color:var(--order-card-qty-border)] bg-[color:var(--order-card-qty-background)] text-[color:var(--order-card-qty-foreground)] shadow-none transition-colors hover:border-[color:var(--order-card-qty-hover-border)] sm:h-9 sm:w-9"
           aria-label="Sumar"
           disabled={disabled}
           onClick={() => onChange(clamp((value || 0) + s))}
@@ -872,7 +872,7 @@ type SnapshotRow = {
   id: string; order_id: string; title: string; snapshot: SnapshotPayload; created_at: string;
 };
 
-type OrderExportFormat = "xlsx" | "json";
+type OrderExportFormat = "xlsx" | "json" | "json_xlsx";
 
 const ORDER_EXPORT_KIND = "gestock-order" as const;
 const ORDER_EXPORT_VERSION = 1;
@@ -1751,13 +1751,15 @@ export default function ProviderOrderPage() {
     router.push(`/t/${tenantSlug}/proveedores`);
   }, [router, tenantSlug]);
 
-  const [orderNotes, setOrderNotes] = React.useState<OrderNoteEntry[]>([]);
-  const orderNotesRef = React.useRef<OrderNoteEntry[]>([]);
-  const [noteInput, setNoteInput] = React.useState("");
-  const [editingNoteId, setEditingNoteId] = React.useState<string | null>(null);
-  const [editingContent, setEditingContent] = React.useState("");
-  const [notesExpanded, setNotesExpanded] = React.useState(true);
-  const [notesSubmitting, setNotesSubmitting] = React.useState(false);
+const [orderNotes, setOrderNotes] = React.useState<OrderNoteEntry[]>([]);
+const orderNotesRef = React.useRef<OrderNoteEntry[]>([]);
+const [noteInput, setNoteInput] = React.useState("");
+const [editingNoteId, setEditingNoteId] = React.useState<string | null>(null);
+const [editingContent, setEditingContent] = React.useState("");
+const [notesExpanded, setNotesExpanded] = React.useState(false);
+const [stockActionsExpanded, setStockActionsExpanded] = React.useState(false);
+const [productOrgExpanded, setProductOrgExpanded] = React.useState(false);
+const [notesSubmitting, setNotesSubmitting] = React.useState(false);
   const [noteActionState, setNoteActionState] = React.useState<{ id: string; type: "delete" | "toggle" | "edit" } | null>(null);
   const [currentUserName, setCurrentUserName] = React.useState("Equipo");
   const [currentUserId, setCurrentUserId] = React.useState<string | null>(null);
@@ -2980,6 +2982,7 @@ export default function ProviderOrderPage() {
   const [renamingSnapshotId, setRenamingSnapshotId] = React.useState<string | null>(null);
   const snapshotTitleInputRef = React.useRef<HTMLInputElement | null>(null);
   const fileRef = React.useRef<HTMLInputElement | null>(null);
+  const [footerActionsOpen, setFooterActionsOpen] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
   const [exportDialogOpen, setExportDialogOpen] = React.useState(false);
   const [exportFormat, setExportFormat] = React.useState<OrderExportFormat>("xlsx");
@@ -5315,6 +5318,11 @@ async function exportOrderAsXlsx() {
       await exportOrderAsJson();
       return;
     }
+    if (format === "json_xlsx") {
+      await exportOrderAsJson();
+      await exportOrderAsXlsx();
+      return;
+    }
     await exportOrderAsXlsx();
   }
 
@@ -6079,6 +6087,7 @@ async function exportOrderAsXlsx() {
                 <SelectContent>
                   <SelectItem value="xlsx">Excel (.xlsx)</SelectItem>
                   <SelectItem value="json">Backup (.json)</SelectItem>
+                  <SelectItem value="json_xlsx">Excel + backup (.xlsx + .json)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -6277,6 +6286,92 @@ async function exportOrderAsXlsx() {
                 />
               </DialogContent>
             </Dialog>
+
+            <div className="flex w-full justify-end">
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0];
+                  if (f) void handleImportFile(f);
+                }}
+              />
+              <Popover open={footerActionsOpen} onOpenChange={setFooterActionsOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    aria-label="Acciones del pedido"
+                    className="h-11 w-11 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_18px_32px_rgba(32,56,44,0.32)] transition hover:bg-[var(--primary)]/90 sm:h-12 sm:w-12"
+                  >
+                    <MoreHorizontal className="h-5 w-5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="bottom"
+                  align="end"
+                  sideOffset={12}
+                  className="w-[min(320px,90vw)] rounded-2xl border border-[var(--border)] bg-card p-3 shadow-2xl"
+                >
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setFooterActionsOpen(false);
+                        fileRef.current?.click();
+                      }}
+                      disabled={importing}
+                      aria-label="Importar pedido"
+                      className="h-11 w-full justify-start gap-3 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted"
+                    >
+                      {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                      <span>Importar</span>
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setFooterActionsOpen(false);
+                        void handleCopySimpleList();
+                      }}
+                      aria-label="Copiar pedido"
+                      className="h-11 w-full justify-start gap-3 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted"
+                    >
+                      <Copy className="h-4 w-4" />
+                      <span>Copiar</span>
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setFooterActionsOpen(false);
+                        setExportFormat("xlsx");
+                        setExportDialogOpen(true);
+                      }}
+                      aria-label="Exportar pedido"
+                      className="h-11 w-full justify-start gap-3 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted"
+                    >
+                      <Download className="h-4 w-4" />
+                      <span>Exportar</span>
+                    </Button>
+
+                    <Button
+                      onClick={() => {
+                        setFooterActionsOpen(false);
+                        void handleSaveDraft();
+                      }}
+                      disabled={savingSnapshot}
+                      aria-label="Guardar pedido"
+                      className="h-11 w-full justify-start gap-3 rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_16px_36px_-24px_rgba(34,60,48,0.55)] transition hover:bg-[var(--primary)]/90 disabled:opacity-70"
+                    >
+                      {savingSnapshot ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      <span>Guardar</span>
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
           </div>
         </div>
 
@@ -6500,16 +6595,13 @@ async function exportOrderAsXlsx() {
                   </button>
                 </div>
               </div>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                  Semana
-                </div>
+              <div className="mt-4 flex w-full flex-wrap items-center gap-2 sm:gap-3">
                 <Select
                   value={selectedWeekId ?? LEGACY_WEEK_VALUE}
                   onValueChange={handleWeekChange}
                   disabled={weeksLoading}
                 >
-                  <SelectTrigger className="w-[260px] rounded-2xl border border-[var(--border)] bg-white/80 text-left text-sm font-medium text-[color:var(--foreground)]">
+                  <SelectTrigger className="h-11 w-auto max-w-full rounded-2xl border border-[var(--border)] bg-white/80 px-3 text-left text-sm font-medium text-[color:var(--foreground)]">
                     <SelectValue placeholder={weeksLoading ? "Cargando..." : "Seleccioná semana"}>
                       {currentWeekLabel}
                     </SelectValue>
@@ -6530,13 +6622,13 @@ async function exportOrderAsXlsx() {
                   variant="secondary"
                   onClick={() => void handleCreateWeekOrder()}
                   disabled={creatingWeek}
-                  className="rounded-2xl border border-[var(--border)] bg-white/80 text-[color:var(--foreground)] shadow-none hover:bg-white"
+                  className="h-11 min-w-[130px] whitespace-nowrap rounded-2xl border border-[var(--border)] bg-white/80 px-4 text-sm font-semibold text-[color:var(--foreground)] shadow-none hover:bg-white"
                 >
-                  {creatingWeek ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                  {creatingWeek ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
                   Nuevo pedido
                 </Button>
               </div>
-              <div className="rd-header-total">
+              <div className="rd-header-total ml-auto w-full text-right sm:w-auto">
                 <span>Total del pedido:</span>
                 <strong>{fmtMoney(grandTotal)}</strong>
               </div>
@@ -6562,203 +6654,201 @@ async function exportOrderAsXlsx() {
           <div className="rd-summary-grid mt-6">
             <div className="rd-card rd-notes-card">
               <div className="rd-card-content space-y-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-                  <div className="flex flex-1 items-start gap-3">
-                    <span className="rounded-full bg-muted/70 p-2 text-muted-foreground">
-                      <BookOpen className="h-4 w-4" />
-                    </span>
-                    <div>
-                      <div className="rd-card-title">Notas del pedido ({orderNotes.length})</div>
-                      <p className="text-sm text-muted-foreground">
-                        Añadí recordatorios rápidos compartidos con todo el equipo.
-                      </p>
+                <button
+                  type="button"
+                  onClick={() => setNotesExpanded((prev) => !prev)}
+                  className="flex w-full items-start gap-3 rounded-2xl bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  aria-label={notesExpanded ? "Ocultar notas" : "Mostrar notas"}
+                  aria-expanded={notesExpanded}
+                >
+                  <span className="rounded-full bg-muted/70 p-2 text-muted-foreground">
+                    <BookOpen className="h-4 w-4" />
+                  </span>
+                  <div className="flex-1">
+                    <div className="flex w-full flex-wrap items-center gap-2">
+                      <span className="rd-card-title flex-1 text-left">Notas del pedido ({orderNotes.length})</span>
+                      <span className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent text-muted-foreground hover:bg-muted/60">
+                        <ChevronDown
+                          className={clsx("h-4 w-4 transition-transform", notesExpanded ? "rotate-180" : "rotate-0")}
+                        />
+                      </span>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Añadí recordatorios rápidos compartidos con todo el equipo.
+                    </p>
+                  </div>
+                </button>
+
+                {notesExpanded ? (
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        value={noteInput}
+                        onChange={(event) => setNoteInput(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void handleAddNote();
+                          }
+                        }}
+                        placeholder="Añade nota..."
+                        className="flex-1 rounded-2xl border border-[var(--border)] bg-muted/20 px-4 py-5"
+                      />
+                      <Button
+                        type="button"
+                        onClick={() => void handleAddNote()}
+                        disabled={notesSubmitting || !noteInput.trim() || !order?.id}
+                        className="h-12 rounded-2xl bg-emerald-500 text-sm font-semibold text-emerald-50 hover:bg-emerald-600 disabled:opacity-60"
+                      >
+                        {notesSubmitting ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <Plus className="mr-2 h-4 w-4" />
+                        )}
+                        Añadir
+                      </Button>
+                    </div>
+
+                    <div className="space-y-3">
+                      {orderNotes.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-[var(--border)] bg-muted/30 px-6 py-8 text-center text-sm text-muted-foreground">
+                          No hay notas registradas aún.
+                        </div>
+                      ) : (
+                        orderNotes.map((note) => (
+                          <div
+                            key={note.id}
+                            className={clsx(
+                              "rounded-2xl border p-4 shadow-sm transition",
+                              note.status === "resolved"
+                                ? "border-dashed border-[var(--border)] bg-muted/30"
+                                : "border-[var(--border)] bg-background"
+                            )}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="flex-1">
+                                {editingNoteId === note.id ? (
+                                  <>
+                                    <Textarea
+                                      value={editingContent}
+                                      onChange={(event) => setEditingContent(event.target.value)}
+                                      className="min-h-[88px] rounded-xl border border-[var(--border)] bg-background"
+                                    />
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      <Button
+                                        size="sm"
+                                        onClick={() => void handleSaveNoteEdit()}
+                                        disabled={noteActionState?.id === note.id && noteActionState?.type === "edit"}
+                                      >
+                                        {noteActionState?.id === note.id && noteActionState?.type === "edit" ? (
+                                          <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                          <Check className="mr-2 h-3.5 w-3.5" />
+                                        )}
+                                        Guardar
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={handleCancelEdit}
+                                        className="border-[var(--border)] text-muted-foreground"
+                                      >
+                                        Cancelar
+                                      </Button>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p
+                                      className={clsx(
+                                        "text-sm text-[var(--foreground)]",
+                                        note.status === "resolved" && "text-muted-foreground line-through"
+                                      )}
+                                    >
+                                      {note.content}
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                      {note.authorName ? (
+                                        <span className="font-medium text-foreground/80">{note.authorName}</span>
+                                      ) : null}
+                                      {note.authorName ? <span>•</span> : null}
+                                      <span>{relativeTimeFromNow(note.createdAt)}</span>
+                                      {note.updatedAt ? (
+                                        <>
+                                          <span>•</span>
+                                          <span>Editada {relativeTimeFromNow(note.updatedAt)}</span>
+                                        </>
+                                      ) : null}
+                                      {note.status === "resolved" ? (
+                                        <>
+                                          <span>•</span>
+                                          <Badge className="bg-emerald-500 text-[11px] font-semibold text-emerald-50">
+                                            Resuelta
+                                          </Badge>
+                                        </>
+                                      ) : null}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                              {editingNoteId !== note.id ? (
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => void handleToggleResolved(note.id)}
+                                    disabled={noteActionState?.id === note.id && noteActionState?.type === "toggle"}
+                                    className={clsx(
+                                      "h-8 w-8 rounded-full",
+                                      note.status === "resolved"
+                                        ? "text-muted-foreground hover:bg-muted hover:text-[var(--destructive)]"
+                                        : "text-emerald-600 hover:bg-emerald-50"
+                                    )}
+                                    title={note.status === "resolved" ? "Marcar como pendiente" : "Marcar como resuelta"}
+                                  >
+                                    {noteActionState?.id === note.id && noteActionState?.type === "toggle" ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : note.status === "resolved" ? (
+                                      <X className="h-4 w-4" />
+                                    ) : (
+                                      <Check className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleStartEdit(note)}
+                                    className="h-8 w-8 rounded-full text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                                    title="Editar nota"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => void handleDeleteNote(note.id)}
+                                    disabled={noteActionState?.id === note.id && noteActionState?.type === "delete"}
+                                    className="h-8 w-8 rounded-full text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
+                                    title="Eliminar nota"
+                                  >
+                                    {noteActionState?.id === note.id && noteActionState?.type === "delete" ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setNotesExpanded((prev) => !prev)}
-                    className="ml-auto h-9 w-9 rounded-full border border-transparent text-muted-foreground hover:bg-muted/60 sm:ml-0"
-                    aria-label={notesExpanded ? "Ocultar notas" : "Mostrar notas"}
-                  >
-                    <ChevronDown
-                      className={clsx("h-4 w-4 transition-transform", notesExpanded ? "rotate-180" : "rotate-0")}
-                    />
-                  </Button>
-                </div>
-
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Input
-                    value={noteInput}
-                    onChange={(event) => setNoteInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        void handleAddNote();
-                      }
-                    }}
-                    placeholder="Añade nota..."
-                    className="flex-1 rounded-2xl border border-[var(--border)] bg-muted/20 px-4 py-5"
-                  />
-                  <Button
-                    type="button"
-                    onClick={() => void handleAddNote()}
-                    disabled={notesSubmitting || !noteInput.trim() || !order?.id}
-                    className="h-12 rounded-2xl bg-emerald-500 text-sm font-semibold text-emerald-50 hover:bg-emerald-600 disabled:opacity-60"
-                  >
-                    {notesSubmitting ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Plus className="mr-2 h-4 w-4" />
-                    )}
-                    Añadir
-                  </Button>
-                </div>
-
-                <div
-                  className={clsx(
-                    "space-y-3 transition-all duration-300 ease-out",
-                    notesExpanded ? "max-h-[1200px] opacity-100" : "max-h-0 overflow-hidden opacity-0"
-                  )}
-                >
-                  {orderNotes.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-[var(--border)] bg-muted/30 px-6 py-8 text-center text-sm text-muted-foreground">
-                      No hay notas registradas aún.
-                    </div>
-                  ) : (
-                    orderNotes.map((note) => (
-                      <div
-                        key={note.id}
-                        className={clsx(
-                          "rounded-2xl border p-4 shadow-sm transition",
-                          note.status === "resolved"
-                            ? "border-dashed border-[var(--border)] bg-muted/30"
-                            : "border-[var(--border)] bg-background"
-                        )}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="flex-1">
-                            {editingNoteId === note.id ? (
-                              <>
-                                <Textarea
-                                  value={editingContent}
-                                  onChange={(event) => setEditingContent(event.target.value)}
-                                  className="min-h-[88px] rounded-xl border border-[var(--border)] bg-background"
-                                />
-                                <div className="mt-3 flex flex-wrap gap-2">
-                                  <Button
-                                    size="sm"
-                                    onClick={() => void handleSaveNoteEdit()}
-                                    disabled={noteActionState?.id === note.id && noteActionState?.type === "edit"}
-                                  >
-                                    {noteActionState?.id === note.id && noteActionState?.type === "edit" ? (
-                                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                                    ) : (
-                                      <Check className="mr-2 h-3.5 w-3.5" />
-                                    )}
-                                    Guardar
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={handleCancelEdit}
-                                    className="border-[var(--border)] text-muted-foreground"
-                                  >
-                                    Cancelar
-                                  </Button>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <p
-                                  className={clsx(
-                                    "text-sm text-[var(--foreground)]",
-                                    note.status === "resolved" && "text-muted-foreground line-through"
-                                  )}
-                                >
-                                  {note.content}
-                                </p>
-                                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                  {note.authorName ? (
-                                    <span className="font-medium text-foreground/80">{note.authorName}</span>
-                                  ) : null}
-                                  {note.authorName ? <span>•</span> : null}
-                                  <span>{relativeTimeFromNow(note.createdAt)}</span>
-                                  {note.updatedAt ? (
-                                    <>
-                                      <span>•</span>
-                                      <span>Editada {relativeTimeFromNow(note.updatedAt)}</span>
-                                    </>
-                                  ) : null}
-                                  {note.status === "resolved" ? (
-                                    <>
-                                      <span>•</span>
-                                      <Badge className="bg-emerald-500 text-[11px] font-semibold text-emerald-50">
-                                        Resuelta
-                                      </Badge>
-                                    </>
-                                  ) : null}
-                                </div>
-                              </>
-                            )}
-                          </div>
-                          {editingNoteId !== note.id ? (
-                            <div className="flex items-center gap-1">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => void handleToggleResolved(note.id)}
-                                disabled={noteActionState?.id === note.id && noteActionState?.type === "toggle"}
-                                className={clsx(
-                                  "h-8 w-8 rounded-full",
-                                  note.status === "resolved"
-                                    ? "text-muted-foreground hover:bg-muted hover:text-[var(--destructive)]"
-                                    : "text-emerald-600 hover:bg-emerald-50"
-                                )}
-                                title={note.status === "resolved" ? "Marcar como pendiente" : "Marcar como resuelta"}
-                              >
-                                {noteActionState?.id === note.id && noteActionState?.type === "toggle" ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : note.status === "resolved" ? (
-                                  <X className="h-4 w-4" />
-                                ) : (
-                                  <Check className="h-4 w-4" />
-                                )}
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleStartEdit(note)}
-                                className="h-8 w-8 rounded-full text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                                title="Editar nota"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => void handleDeleteNote(note.id)}
-                                disabled={noteActionState?.id === note.id && noteActionState?.type === "delete"}
-                                className="h-8 w-8 rounded-full text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
-                                title="Eliminar nota"
-                              >
-                                {noteActionState?.id === note.id && noteActionState?.type === "delete" ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Trash2 className="h-4 w-4" />
-                                )}
-                              </Button>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
+                ) : null}
               </div>
             </div>
 
@@ -6768,10 +6858,25 @@ async function exportOrderAsXlsx() {
             <div className="rd-card-content space-y-4">
               <div className="rd-card-header">
                 <div>
-                  <div className="rd-card-title">Acciones de stock</div>
+                  <button
+                    type="button"
+                    onClick={() => setStockActionsExpanded((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-2 rounded-2xl bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    aria-label={stockActionsExpanded ? "Ocultar acciones de stock" : "Mostrar acciones de stock"}
+                    aria-expanded={stockActionsExpanded}
+                  >
+                    <span className="rd-card-title flex-1 text-left">Acciones de stock</span>
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent text-muted-foreground hover:bg-muted/60">
+                      <ChevronDown
+                        className={clsx("h-4 w-4 transition-transform", stockActionsExpanded ? "rotate-180" : "rotate-0")}
+                      />
+                    </span>
+                  </button>
                   <p className="text-sm text-muted-foreground">Sincronizá el inventario con las ventas reales.</p>
                 </div>
               </div>
+              {stockActionsExpanded ? (
+                <>
               <div className="rd-actions-grid">
                 <AlertDialog
                   onOpenChange={(open) => {
@@ -7039,6 +7144,8 @@ async function exportOrderAsXlsx() {
                   Agregá productos al pedido para habilitar estas acciones.
                 </p>
               )}
+                </>
+              ) : null}
             </div>
           </div>
 
@@ -7046,12 +7153,26 @@ async function exportOrderAsXlsx() {
             <div className="rd-card-content space-y-4">
               <div className="rd-card-header">
                 <div>
-                  <div className="rd-card-title">Organización de productos</div>
+                  <button
+                    type="button"
+                    onClick={() => setProductOrgExpanded((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-2 rounded-2xl bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    aria-label={productOrgExpanded ? "Ocultar organización de productos" : "Mostrar organización de productos"}
+                    aria-expanded={productOrgExpanded}
+                  >
+                    <span className="rd-card-title flex-1 text-left">Organización de productos</span>
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent text-muted-foreground hover:bg-muted/60">
+                      <ChevronDown
+                        className={clsx("h-4 w-4 transition-transform", productOrgExpanded ? "rotate-180" : "rotate-0")}
+                      />
+                    </span>
+                  </button>
                   <p className="text-sm text-muted-foreground">Definí el orden y margen estimado de cada ítem.</p>
                 </div>
               </div>
-              <div className="rd-sort-card">
-                <div className="flex flex-1 flex-col gap-3">
+              {productOrgExpanded ? (
+                <div className="rd-sort-card">
+                  <div className="flex flex-1 flex-col gap-3">
                   <Label htmlFor="sort-mode" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                     Ordenar items
                   </Label>
@@ -7081,7 +7202,7 @@ async function exportOrderAsXlsx() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex flex-col gap-3 md:w-[260px]">
+                    <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-3">
                       <Label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                         Precio x U
                       </Label>
@@ -7090,7 +7211,7 @@ async function exportOrderAsXlsx() {
                           <Button
                             type="button"
                             variant="outline"
-                            className="h-11 rounded-full border border-[var(--border)] bg-[var(--background)] text-sm font-semibold uppercase tracking-[0.16em]"
+                            className="inline-flex h-auto rounded-full border border-[var(--border)] bg-[var(--background)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em]"
                           >
                             Precio x U
                           </Button>
@@ -7273,7 +7394,8 @@ async function exportOrderAsXlsx() {
                     </span>
                   </Label>
                 </div>
-              </div>
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -7535,80 +7657,32 @@ async function exportOrderAsXlsx() {
           bottom: footerBottomOffset,
         }}
       >
-        <div className="mx-auto w-full max-w-4xl rd-sticky-card text-[var(--foreground)]">
-          <div className="rd-sticky-metrics">
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                Total unidades
+        <div className="rd-shell-constrain rd-sticky-card text-[var(--foreground)]">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls,.csv,.json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.currentTarget.files?.[0];
+              if (f) void handleImportFile(f);
+            }}
+          />
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:flex-nowrap sm:gap-4">
+            <div className="rd-sticky-metrics">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  <span>Total unidades</span>
+                  <span className="text-right text-base font-semibold tabular-nums text-[color:var(--foreground)] md:text-lg">{grandQty}</span>
+                </div>
               </div>
-              <div className="mt-1 text-base font-semibold tabular-nums md:text-lg">{grandQty}</div>
-            </div>
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                Total a pagar
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  <span>Total a pagar</span>
+                  <span className="text-right text-base font-semibold tabular-nums text-[var(--primary)] md:text-lg">{fmtMoney(grandTotal)}</span>
+                </div>
               </div>
-              <div className="mt-1 text-base font-semibold tabular-nums text-[var(--primary)] md:text-lg">{fmtMoney(grandTotal)}</div>
             </div>
-          </div>
-
-          <div className="rd-sticky-actions">
-            <div className="relative">
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx,.xls,.csv,.json"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.currentTarget.files?.[0];
-                  if (f) void handleImportFile(f);
-                }}
-              />
-              <Button
-                variant="outline"
-                onClick={() => fileRef.current?.click()}
-                disabled={importing}
-                aria-label="Importar pedido"
-                className="h-10 w-12 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted md:w-full"
-              >
-                {importing
-                  ? <Loader2 className="h-4 w-4 animate-spin md:mr-2" />
-                  : <Upload className="h-4 w-4 md:mr-2" />}
-                <span className="hidden md:inline">Importar</span>
-              </Button>
-            </div>
-
-            <Button
-              variant="outline"
-              onClick={() => void handleCopySimpleList()}
-              aria-label="Copiar pedido"
-              className="h-10 w-12 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted md:w-full"
-            >
-              <Copy className="h-4 w-4 md:mr-2" />
-              <span className="hidden md:inline">Copiar</span>
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={() => {
-                setExportFormat("xlsx");
-                setExportDialogOpen(true);
-              }}
-              aria-label="Exportar pedido"
-              className="h-10 w-12 rounded-xl border border-[var(--border)] bg-muted/50 text-[var(--foreground)] transition hover:bg-muted md:w-full"
-            >
-              <Download className="h-4 w-4 md:mr-2" />
-              <span className="hidden md:inline">Exportar</span>
-            </Button>
-
-            <Button
-              onClick={() => void handleSaveDraft()}
-              disabled={savingSnapshot}
-              aria-label="Guardar pedido"
-              className="h-10 w-12 rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] shadow-[0_16px_36px_-24px_rgba(34,60,48,0.55)] transition hover:bg-[var(--primary)]/90 disabled:opacity-70 md:w-full"
-            >
-              {savingSnapshot ? <Loader2 className="h-4 w-4 animate-spin md:mr-2" /> : <Save className="h-4 w-4 md:mr-2" />}
-              <span className="hidden md:inline">Guardar</span>
-            </Button>
           </div>
         </div>
       </div>
@@ -7824,9 +7898,9 @@ function PriceEditor({
           Precio u.
         </span>
 
-        <div className="inline-flex h-10 w-full max-w-[140px] items-center justify-between rounded-2xl border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+        <div className="inline-flex h-9 w-full max-w-[130px] items-center justify-between rounded-2xl border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] sm:h-10 sm:max-w-[140px] sm:px-3">
           <Input
-            className="h-7 w-14 border-none bg-transparent pl-1 pr-0 text-right text-base font-semibold text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
+            className="h-6 w-12 border-none bg-transparent pl-1 pr-0 text-right text-sm font-semibold text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0 sm:h-7 sm:w-14 sm:text-base"
             inputMode="decimal"
             placeholder="0"
             value={val}
@@ -7844,7 +7918,7 @@ function PriceEditor({
             size="icon"
             variant="ghost"
             className={clsx(
-              "h-7 w-7 rounded-full border border-[color:var(--order-card-pill-border)] bg-white text-[color:var(--order-card-accent)] shadow-none transition-colors",
+              "h-6 w-6 rounded-full border border-[color:var(--order-card-pill-border)] bg-white text-[color:var(--order-card-accent)] shadow-none transition-colors sm:h-7 sm:w-7",
               dirty ? "hover:border-[color:var(--order-card-accent)]" : "opacity-60"
             )}
             disabled={!dirty}
@@ -7857,7 +7931,7 @@ function PriceEditor({
         </div>
       </div>
 
-      <div className="mt-1 text-[10px] text-right text-[color:var(--order-card-accent)] opacity-60" title={since.title}>
+      <div className="mt-1 text-[9px] text-right text-[color:var(--order-card-accent)] opacity-60 sm:text-[10px]" title={since.title}>
         {updatedAt ? `act. ${since.text}` : "sin cambios"}
       </div>
     </div>
@@ -7954,16 +8028,32 @@ function StockEditor({
       };
     }
   }
+  const infoLines = React.useMemo(() => {
+    const lines: string[] = [];
+    lines.push(signatureLabel ? `Firma ${signatureLabel}` : "Sin firma");
+    lines.push(updatedAt ? `Aplicado ${since.text}` : "Sin aplicación");
+    if (hasSalesSinceSignature) {
+      const salesLine =
+        typeof salesSince === "number" && salesSince > 0
+          ? `Ventas descontadas: -${fmtInt(salesSince)}`
+          : "Sin ventas desde la firma";
+      lines.push(salesLine);
+    }
+    if (appliedFrom) {
+      lines.push(`Ventas descontadas desde ${appliedFrom.absolute} (${appliedFrom.relative})`);
+    }
+    return lines;
+  }, [signatureLabel, since, hasSalesSinceSignature, salesSince, appliedFrom, updatedAt]);
   return (
-    <div className="w-full text-[color:var(--order-card-accent)]">
+    <div className="w-full max-w-[220px] text-[color:var(--order-card-accent)] sm:max-w-none">
       <div className="flex flex-col gap-1">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--order-card-accent)]/70">
+        <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-[color:var(--order-card-accent)]/70 sm:text-[10px]">
           Stock actual
         </span>
-        <div className="inline-flex h-10 w-full max-w-[140px] items-center justify-end gap-0 rounded-2xl border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]">
+        <div className="inline-flex h-9 w-full max-w-[130px] items-center justify-end gap-1 rounded-2xl border border-[color:var(--order-card-pill-border)] bg-[color:var(--order-card-pill-background)] px-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] sm:h-10 sm:max-w-[140px] sm:px-3">
           <Input
             ref={handleInputRef}
-            className="h-7 w-12 border-none bg-transparent pl-1 pr-0 text-right text-base font-semibold text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0"
+            className="h-6 w-11 border-none bg-transparent pl-1 pr-0 text-right text-sm font-semibold text-[color:var(--order-card-accent)] tabular-nums focus-visible:ring-0 sm:h-7 sm:w-12 sm:text-base"
             inputMode="numeric"
             placeholder="000"
             value={val}
@@ -7988,7 +8078,7 @@ function StockEditor({
             size="icon"
             variant="ghost"
             className={clsx(
-              "h-7 w-7 rounded-full border border-[color:var(--order-card-pill-border)] bg-white text-[color:var(--order-card-accent)] shadow-none transition-colors",
+              "h-6 w-6 rounded-full border border-[color:var(--order-card-pill-border)] bg-white text-[color:var(--order-card-accent)] shadow-none transition-colors sm:h-7 sm:w-7",
               dirty ? "hover:border-[color:var(--order-card-accent)]" : "opacity-60"
             )}
             disabled={!dirty}
@@ -7998,28 +8088,27 @@ function StockEditor({
           >
             <Check className="h-4 w-4" />
           </Button>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-full border border-[color:var(--order-card-pill-border)] bg-white text-[color:var(--order-card-accent)] shadow-none transition-colors hover:border-[color:var(--order-card-accent)] sm:h-7 sm:w-7"
+                aria-label="Detalles del stock"
+              >
+                <Info className="h-4 w-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-56 max-w-[80vw] rounded-2xl border border-[color:var(--border)] bg-card/90 p-3 text-[11px] leading-snug shadow-lg" align="end">
+              {infoLines.map((line, idx) => (
+                <p key={`${line}-${idx}`} className="m-0 text-[color:var(--foreground)]">
+                  {line}
+                </p>
+              ))}
+            </PopoverContent>
+          </Popover>
         </div>
-      </div>
-
-      <div className="mt-1 flex flex-col items-end gap-1 text-[10px] text-[color:var(--order-card-accent)] opacity-60">
-        <div className="text-right" title={signatureLabel || since.title}>
-          {signatureLabel ? `Firma ${signatureLabel}` : "sin firma"}
-        </div>
-        <div className="text-right" title={since.title}>
-          {updatedAt ? `Aplicado ${since.text}` : "sin aplicación"}
-        </div>
-        {hasSalesSinceSignature ? (
-          <div className="text-right" title="Ventas detectadas desde la firma">
-            {salesSince && salesSince > 0
-              ? `Ventas descontadas: -${fmtInt(salesSince)}`
-              : "Sin ventas desde la firma"}
-          </div>
-        ) : null}
-        {appliedFrom && (
-          <div className="text-right" title={appliedFrom.title}>
-            Ventas descontadas desde {appliedFrom.absolute} ({appliedFrom.relative})
-          </div>
-        )}
       </div>
     </div>
   );
@@ -8278,9 +8367,10 @@ function GroupSection(props: GroupSectionProps) {
           subtotal: acc.subtotal + subtotal,
           units: acc.units + qty,
           stockBalance: acc.stockBalance + projected,
+          currentStock: acc.currentStock + currentStock,
         };
       },
-      { subtotal: 0, units: 0, stockBalance: 0 }
+      { subtotal: 0, units: 0, stockBalance: 0, currentStock: 0 }
     );
   }, [arrVisible, computeSalesSinceStock]);
 
@@ -8288,6 +8378,13 @@ function GroupSection(props: GroupSectionProps) {
   const groupUnits = groupStats.units;
   const groupAvgPrice = groupUnits > 0 ? groupSubtotal / groupUnits : 0;
   const groupStockBalance = groupStats.stockBalance;
+  const groupCurrentStock = groupStats.currentStock;
+  const groupOrderDisplaySuffix =
+    groupUnits === 0
+      ? ""
+      : groupUnits > 0
+        ? ` + ${fmtInt(groupUnits)}`
+        : ` - ${fmtInt(Math.abs(groupUnits))}`;
   const trimmedQuery = q.trim();
   const meetsSearchThreshold = trimmedQuery.length >= MIN_GROUP_SEARCH_CHARS;
   const suggestions = React.useMemo(() => {
@@ -8569,82 +8666,103 @@ type DragHandleProps = {
       onDrop={dragHandleProps.onDrop}
       onDragEnd={dragHandleProps.onDragEnd}
       className={clsx(
-        "group cursor-pointer select-none rounded-t-[28px] bg-[color:var(--order-group-header,var(--muted)/30)] px-6 py-5 text-left text-base font-semibold text-[var(--foreground)] transition-colors data-[state=open]:rounded-b-none",
+        "group cursor-pointer select-none rounded-t-[28px] bg-[color:var(--order-group-header,var(--muted)/30)] px-4 py-4 text-left text-base font-semibold text-[var(--foreground)] transition-colors data-[state=open]:rounded-b-none sm:px-6 sm:py-5",
         groupChecked && "bg-[color:var(--order-card-highlight)]/10",
       )}
     >
-      <div className="flex w-full flex-wrap gap-4">
-        <div className="flex min-w-0 flex-1 items-start gap-4">
-          <div className="flex flex-col items-center gap-2">
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={(e) => {
-                e.stopPropagation();
-                setGroupChecked(groupName || "Sin grupo", !groupChecked);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setGroupChecked(groupName || "Sin grupo", !groupChecked);
-                }
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              className={clsx(
-                "flex h-11 w-11 items-center justify-center rounded-2xl border-2 border-[color:var(--border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-inner transition-all duration-200 hover:border-[color:var(--order-card-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--order-card-highlight)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                groupChecked &&
-                  "scale-105 border-transparent bg-[color:var(--order-card-highlight)] text-[var(--primary-foreground)] shadow-[0_14px_30px_rgba(15,23,42,0.35)] ring-4 ring-[color:var(--order-card-highlight)]/40"
-              )}
-              aria-label={groupChecked ? "Marcar grupo como pendiente" : "Marcar grupo como gestionado"}
-              aria-pressed={groupChecked}
-              title={groupChecked ? "Marcar grupo como pendiente" : "Marcar grupo como gestionado"}
-            >
-              {groupChecked ? (
-                <Check className="h-5 w-5 text-[#0f172a]" />
-              ) : (
-                <Circle className="h-5 w-5" />
-              )}
-            </div>
-            <div className="flex flex-col items-center gap-1 text-[10px] text-muted-foreground">
-              <span className="text-[9px] font-semibold uppercase tracking-[0.2em]">Orden</span>
-              <div className="flex items-center gap-1">
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={Math.max(totalGroups, 1)}
-                  value={positionInput}
-                  className="h-8 w-14 rounded-xl text-center text-sm"
-                  aria-label="Posición del grupo"
-                  title="Editar posición del grupo"
-                  onClick={(e) => e.stopPropagation()}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onChange={(e) => setPositionInput(e.target.value.replace(/[^0-9]/g, ""))}
-                  onBlur={() => { void commitPositionChange(); }}
-                  onKeyDown={(e) => {
+      <div className="flex w-full flex-col gap-3 sm:gap-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:gap-4">
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2.5 sm:gap-3">
+              <div className="flex flex-col items-start gap-1 text-[10px] text-muted-foreground">
+                <span className="text-[9px] font-semibold uppercase tracking-[0.2em]">Orden</span>
+                <div className="flex items-center gap-0.5 sm:gap-1">
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={Math.max(totalGroups, 1)}
+                    value={positionInput}
+                    className="h-8 w-12 rounded-xl text-center text-sm sm:w-14"
+                    aria-label="Posición del grupo"
+                    title="Editar posición del grupo"
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) => setPositionInput(e.target.value.replace(/[^0-9]/g, ""))}
+                    onBlur={() => { void commitPositionChange(); }}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void commitPositionChange();
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setPositionInput(String(position));
+                      }
+                    }}
+                  />
+                  <span className="text-[11px] text-muted-foreground">/ {Math.max(totalGroups, 1)}</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:text-sm">
+                <Badge className="shrink-0 rounded-full bg-[color:var(--surface-accent-soft)] px-3 py-1 text-[11px] font-semibold text-[color:var(--surface-accent-strong)]">
+                  {arrVisible.length} {arrVisible.length === 1 ? "producto" : "productos"}
+                </Badge>
+                <Badge
+                  className={clsx(
+                    "shrink-0 rounded-full px-3 py-1 text-[11px]",
+                    confirmedCount > 0
+                      ? "border border-[var(--surface-success-strong)] bg-[var(--surface-success-soft)] text-[color:var(--success)]"
+                      : "border border-[var(--border)] bg-muted/60 text-muted-foreground"
+                  )}
+                  title="Productos confirmados"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    <Check className="h-3.5 w-3.5" />
+                    {confirmedCount}
+                  </span>
+                </Badge>
+              </div>
+              <div className="ml-auto flex flex-shrink-0 items-center">
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
                     e.stopPropagation();
-                    if (e.key === "Enter") {
+                    setGroupChecked(groupName || "Sin grupo", !groupChecked);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      void commitPositionChange();
-                    }
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      setPositionInput(String(position));
+                      e.stopPropagation();
+                      setGroupChecked(groupName || "Sin grupo", !groupChecked);
                     }
                   }}
-                />
-                <span className="text-[11px] text-muted-foreground">/ {Math.max(totalGroups, 1)}</span>
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className={clsx(
+                    "flex h-11 w-11 items-center justify-center rounded-2xl border-2 border-[color:var(--border)] bg-[color:var(--order-card-pill-background)] text-[color:var(--order-card-accent)] shadow-inner transition-all duration-200 hover:border-[color:var(--order-card-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--order-card-highlight)] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                    groupChecked &&
+                      "scale-105 border-transparent bg-[color:var(--order-card-highlight)] text-[var(--primary-foreground)] shadow-[0_14px_30px_rgba(15,23,42,0.35)] ring-4 ring-[color:var(--order-card-highlight)]/40"
+                  )}
+                  aria-label={groupChecked ? "Marcar grupo como pendiente" : "Marcar grupo como gestionado"}
+                  aria-pressed={groupChecked}
+                  title={groupChecked ? "Marcar grupo como pendiente" : "Marcar grupo como gestionado"}
+                >
+                  {groupChecked ? (
+                    <Check className="h-5 w-5 text-[#0f172a]" />
+                  ) : (
+                    <Circle className="h-5 w-5" />
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-          <div className="min-w-0 flex-1 space-y-2">
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="min-w-0">
               {!editing ? (
                 <span
                   role="button"
                   tabIndex={0}
-                  className="inline-flex items-center gap-2 truncate text-lg font-semibold hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+                  className="inline-flex w-full min-w-0 items-center gap-2 truncate text-left text-lg font-semibold hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 md:w-auto"
                   title="Renombrar grupo"
                   onClick={(e) => { e.stopPropagation(); setEditing(true); }}
                   onKeyDown={(e) => {
@@ -8654,12 +8772,12 @@ type DragHandleProps = {
                   }}
                 >
                   <span className="truncate">{groupName || "Sin grupo"}</span>
-                  <Pencil className="h-4 w-4 opacity-70" />
+                  <Pencil className="h-4 w-4 opacity-70 flex-shrink-0" />
                 </span>
               ) : (
                 <Input
                   ref={groupNameInputRef}
-                  className="h-9 w-[11rem] rounded-2xl"
+                  className="h-9 w-full rounded-2xl md:w-[11rem]"
                   value={editValue}
                   onClick={(e) => e.stopPropagation()}
                   onChange={(e) => setEditValue(e.target.value)}
@@ -8672,58 +8790,37 @@ type DragHandleProps = {
                   onBlur={() => void commitRename()}
                 />
               )}
-              <Badge className="shrink-0 rounded-full bg-[color:var(--surface-accent-soft)] px-3 py-1 text-[11px] font-semibold text-[color:var(--surface-accent-strong)]">
-                {arrVisible.length} {arrVisible.length === 1 ? "producto" : "productos"}
-              </Badge>
-              <Badge
-                className={clsx(
-                  "shrink-0 rounded-full px-3 py-1 text-[11px]",
-                  confirmedCount > 0
-                    ? "border border-[var(--surface-success-strong)] bg-[var(--surface-success-soft)] text-[color:var(--success)]"
-                    : "border border-[var(--border)] bg-muted/60 text-muted-foreground"
-                )}
-                title="Productos confirmados"
-              >
-                <span className="inline-flex items-center gap-1">
-                  <Check className="h-3.5 w-3.5" />
-                  {confirmedCount}
-                </span>
-              </Badge>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-              <div className="inline-flex items-center gap-1 font-medium text-[color:var(--foreground)]">
-                {fmtInt(groupUnits)} unidades
-              </div>
-              <span className="hidden text-muted-foreground sm:inline">•</span>
-              <div
-                className={clsx(
-                  "inline-flex items-center gap-1 font-semibold",
-                  groupStockBalance > 0
-                    ? "text-[var(--success)]"
-                    : groupStockBalance < 0
-                      ? "text-[var(--destructive)]"
-                      : "text-muted-foreground"
-                )}
-              >
-                {groupStockBalance > 0 ? <TrendingUp className="h-3.5 w-3.5" /> : null}
-                {groupStockBalance < 0 ? <TrendingDown className="h-3.5 w-3.5" /> : null}
-                <span>Stock: {groupStockBalance === 0 ? "0" : `${groupStockBalance > 0 ? "+" : "-"}${fmtInt(Math.abs(groupStockBalance))}`}</span>
-              </div>
             </div>
           </div>
         </div>
-        <div className="flex flex-col justify-between text-right md:items-end">
-          <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Subtotal</span>
-          <span className="text-2xl font-semibold tabular-nums text-[var(--foreground)]">{fmtMoney(groupSubtotal)}</span>
-          <span
-            className="mt-2 inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--border)] px-3 py-1 text-[11px] font-medium text-muted-foreground"
-            title="Arrastrar para reordenar"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <GripVertical className="h-3.5 w-3.5" />
-            mover
-          </span>
+        <div className="flex flex-wrap items-center gap-y-2 gap-x-4 text-sm text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+            <div className="inline-flex items-center gap-1 font-medium text-[color:var(--foreground)]">
+              {fmtInt(groupUnits)} unidades
+            </div>
+            <span className="hidden text-muted-foreground sm:inline">•</span>
+            <div
+              className={clsx(
+                "inline-flex items-center gap-1 font-semibold",
+                groupStockBalance > 0
+                  ? "text-[var(--success)]"
+                  : groupStockBalance < 0
+                    ? "text-[var(--destructive)]"
+                    : "text-muted-foreground"
+              )}
+            >
+              {groupStockBalance > 0 ? <TrendingUp className="h-3.5 w-3.5" /> : null}
+              {groupStockBalance < 0 ? <TrendingDown className="h-3.5 w-3.5" /> : null}
+              <span>
+                Stock: {fmtInt(groupCurrentStock)}
+                {groupOrderDisplaySuffix}
+              </span>
+            </div>
+          </div>
+          <div className="ml-auto flex flex-col items-end gap-1 text-right">
+            <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Subtotal</span>
+            <span className="text-2xl font-semibold tabular-nums text-[var(--foreground)]">{fmtMoney(groupSubtotal)}</span>
+          </div>
         </div>
       </div>
     </AccordionTrigger>
@@ -8731,7 +8828,7 @@ type DragHandleProps = {
 
       {/* TOOLBAR */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[color:var(--order-group-toolbar,var(--background))] px-6 py-3 text-sm text-muted-foreground">
-        <div className="flex flex-1 items-center justify-between gap-2">
+        <div className="flex flex-1 items-center gap-2">
           <Button
             variant="ghost"
             size="icon"
@@ -8742,7 +8839,7 @@ type DragHandleProps = {
           >
             <Trash2 className="h-4 w-4" />
           </Button>
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2">
             <Button
               type="button"
               size="icon"
@@ -8798,7 +8895,7 @@ type DragHandleProps = {
           groupChecked && "ring-1 ring-[color:var(--order-card-highlight)]/20",
         )}
       >
-          <div className="space-y-5">
+          <div className="space-y-4 sm:space-y-5">
           {/* Buscador */}
           {!showFullscreenSearch && renderSearchInput()}
 
@@ -8927,7 +9024,7 @@ type DragHandleProps = {
               <Card
                 key={it.id}
                 className={clsx(
-                  "group relative mb-4 overflow-hidden rounded-[26px] border border-[color:var(--border)] bg-white px-0 py-0 shadow-[0_8px_24px_rgba(15,23,42,0.08)] transition-all duration-200",
+                  "group relative mb-3 overflow-hidden rounded-[26px] border border-[color:var(--border)] bg-white px-0 py-0 shadow-[0_8px_24px_rgba(15,23,42,0.08)] transition-all duration-200 sm:mb-4",
                   isChecked && "border-[color:var(--order-card-highlight)] ring-1 ring-[color:var(--order-card-highlight)]/40"
                 )}
                 style={
@@ -8940,109 +9037,108 @@ type DragHandleProps = {
               >
                 <CardContent
                   className={clsx(
-                    "relative m-2 rounded-[22px] border border-[color:var(--border)] bg-white px-5 py-5 transition-all duration-200",
+                    "relative m-1.5 rounded-[22px] border border-[color:var(--border)] bg-white px-3 py-3 transition-all duration-200 sm:m-2 sm:px-4 sm:py-4",
                     isChecked &&
                       "border-[color:var(--order-card-highlight)] ring-1 ring-inset ring-[color:var(--order-card-highlight)]/40"
                   )}
                 >
-                  <div className="space-y-4">
-                    <div className="flex flex-wrap items-start gap-4">
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-start gap-3">
-                          <div className="order-2 min-w-0 flex-1 md:order-1">
-                            <div className="flex items-start gap-3">
-                              <div className="flex flex-col items-center gap-1 text-[10px] text-muted-foreground">
-                                <span className="text-[9px] font-semibold uppercase tracking-[0.2em]">Orden</span>
-                                <div className="flex items-center gap-1">
-                                  <Input
-                                    type="number"
-                                    inputMode="numeric"
-                                    min={1}
-                                    max={Math.max(totalItemsInGroup, 1)}
-                                    value={
-                                      positionEditing.id === it.id
-                                        ? positionEditing.value
-                                        : String(idx + 1)
-                                    }
-                                    className="h-8 w-14 rounded-xl text-center text-sm"
-                                    aria-label="Posición del producto dentro del grupo"
-                                    title="Editar posición del producto"
-                                    onClick={(e) => e.stopPropagation()}
-                                    onPointerDown={(e) => e.stopPropagation()}
-                                    onFocus={(e) => {
-                                      e.stopPropagation();
-                                      setPositionEditing((prev) =>
-                                        prev.id === it.id ? prev : { id: it.id, value: String(idx + 1) },
-                                      );
-                                    }}
-                                    onChange={(e) => {
-                                      const digits = e.target.value.replace(/[^0-9]/g, "");
-                                      setPositionEditing({ id: it.id, value: digits });
-                                    }}
-                                    onKeyDown={(e) => {
-                                      e.stopPropagation();
-                                      if (e.key === "Enter") {
-                                        e.preventDefault();
-                                        if (positionEditing.id === it.id) {
-                                          commitItemPosition(
-                                            it.id,
-                                            positionEditing.value,
-                                            idx + 1,
-                                            totalItemsInGroup,
-                                            visibleOrderIds,
-                                          );
-                                        }
-                                      }
-                                      if (e.key === "Escape") {
-                                        e.preventDefault();
-                                        resetPositionEditing();
-                                      }
-                                    }}
-                                    onBlur={() => {
-                                      if (positionEditing.id === it.id) {
-                                        commitItemPosition(
-                                          it.id,
-                                          positionEditing.value,
-                                          idx + 1,
-                                          totalItemsInGroup,
-                                          visibleOrderIds,
-                                        );
-                                      }
-                                    }}
-                                  />
-                                  <span className="text-[11px] text-muted-foreground">
-                                    / {Math.max(totalItemsInGroup, 1)}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <ItemTitle
-                                  name={it.display_name || it.product_name}
-                                  canonical={it.product_name}
-                                  onCommit={(label) => onRenameItemLabel(it.id, label)}
-                                />
-                              </div>
-                            </div>
+                  <div className="space-y-3 sm:space-y-4">
+                    <div className="flex flex-wrap items-start gap-3 sm:gap-4">
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="flex w-full flex-wrap items-center gap-2 sm:gap-2.5">
+                          <div className="flex flex-none items-center gap-1 text-[10px] text-muted-foreground">
+                            <Input
+                              type="number"
+                              inputMode="numeric"
+                              min={1}
+                              max={Math.max(totalItemsInGroup, 1)}
+                              value={
+                                positionEditing.id === it.id
+                                  ? positionEditing.value
+                                  : String(idx + 1)
+                              }
+                              className="h-8 w-12 rounded-lg px-0 text-center text-sm"
+                              aria-label="Posición del producto dentro del grupo"
+                              title="Editar posición del producto"
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onFocus={(e) => {
+                                e.stopPropagation();
+                                setPositionEditing((prev) =>
+                                  prev.id === it.id ? prev : { id: it.id, value: String(idx + 1) },
+                                );
+                              }}
+                              onChange={(e) => {
+                                const digits = e.target.value.replace(/[^0-9]/g, "");
+                                setPositionEditing({ id: it.id, value: digits });
+                              }}
+                              onKeyDown={(e) => {
+                                e.stopPropagation();
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (positionEditing.id === it.id) {
+                                    commitItemPosition(
+                                      it.id,
+                                      positionEditing.value,
+                                      idx + 1,
+                                      totalItemsInGroup,
+                                      visibleOrderIds,
+                                    );
+                                  }
+                                }
+                                if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  resetPositionEditing();
+                                }
+                              }}
+                              onBlur={() => {
+                                if (positionEditing.id === it.id) {
+                                  commitItemPosition(
+                                    it.id,
+                                    positionEditing.value,
+                                    idx + 1,
+                                    totalItemsInGroup,
+                                    visibleOrderIds,
+                                  );
+                                }
+                              }}
+                            />
+                            <span className="text-[11px] text-muted-foreground">
+                              / {Math.max(totalItemsInGroup, 1)}
+                            </span>
                           </div>
-                          <div className="order-1 flex w-full flex-wrap items-center gap-3 md:order-2 md:w-auto md:flex-nowrap">
+                          <div className="flex-none">
                             <PackSizeEditor value={it.pack_size} onCommit={(n) => onUpdatePackSize(it.id, n)} />
-                            <div className="flex items-center gap-2 md:ml-auto">
-                              <Badge className={clsx("rounded-full px-4 py-1 text-[11px] font-semibold", statusBadgeClass)}>
-                                {isChecked ? "Completo" : "Pendiente"}
-                              </Badge>
+                          </div>
+                          <div className="ml-auto flex items-center">
+                            <label
+                              htmlFor={`item-check-${it.id}`}
+                              className={clsx(
+                                "inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold",
+                                statusBadgeClass,
+                              )}
+                            >
+                              <span>{isChecked ? "Completo" : "Pendiente"}</span>
                               <Checkbox
                                 id={`item-check-${it.id}`}
                                 checked={isChecked}
                                 onCheckedChange={(v) => setItemChecked(it.id, v === true)}
                                 className={clsx(
-                                  "size-6 rounded-full border-2 border-[color:var(--border)] bg-white shadow-none transition-colors",
+                                  "size-5 shrink-0 rounded-full border-2 border-[color:var(--border)] bg-white shadow-none transition-colors",
                                   isChecked &&
                                     "data-[state=checked]:border-[color:var(--order-card-highlight)] data-[state=checked]:bg-[color:var(--order-card-highlight)]"
                                 )}
                                 aria-label="Marcar como cargado"
                               />
-                            </div>
+                            </label>
                           </div>
+                        </div>
+                        <div className="min-w-0">
+                          <ItemTitle
+                            name={it.display_name || it.product_name}
+                            canonical={it.product_name}
+                            onCommit={(label) => onRenameItemLabel(it.id, label)}
+                          />
                         </div>
                         {it.display_name && it.display_name.trim() !== it.product_name ? (
                           <p className="text-[11px] text-muted-foreground">{it.product_name}</p>
@@ -9050,33 +9146,35 @@ type DragHandleProps = {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-4">
-                      <div className="flex flex-1 flex-wrap items-center gap-4">
-                        <div className="min-w-[140px]">
+                    <div className="flex flex-wrap items-center gap-2.5 sm:gap-4">
+                      <div className="flex flex-1 flex-wrap items-center gap-2.5 sm:gap-4">
+                        <div className="flex-1 min-w-[95px] max-w-[160px] sm:min-w-[120px]">
                           <StockEditor
                             value={liveStock}
                             updatedAt={it.stock_updated_at}
-                            previousUpdatedAt={it.previous_qty_updated_at}
+              previousUpdatedAt={it.previous_qty_updated_at}
                             signatureAt={it.stock_signature_at}
                             onCommit={(n) => onUpdateStock(it.id, n)}
                             salesSince={pendingSales}
                             onInputMount={(node) => setStockInputRef(it.id, node)}
                           />
                         </div>
-                        <div className="inline-flex min-w-[170px] items-center gap-3 rounded-2xl border border-[color:var(--surface-success-strong)] bg-[color:var(--surface-success-soft)] px-4 py-3 text-[color:var(--success)]">
+                        <div className="inline-flex flex-none min-w-[110px] max-w-[180px] items-center gap-1.5 rounded-2xl border border-[color:var(--surface-success-strong)] bg-[color:var(--surface-success-soft)] px-2 py-1.5 text-[color:var(--success)] sm:min-w-[150px] sm:gap-3 sm:px-4 sm:py-3">
                           <div className="flex flex-col">
-                            <div className="text-[10px] font-semibold uppercase tracking-[0.2em] opacity-70">Stock proyectado</div>
-                            <div className="flex items-baseline gap-2">
-                              <div className="text-2xl font-semibold tabular-nums">{fmtInt(projectedStock)}</div>
-                              <div className="text-xs font-semibold text-[color:var(--order-card-highlight)]">
+                            <div className="text-[9px] font-semibold uppercase tracking-[0.15em] opacity-70 leading-tight">
+                              Stock&nbsp;proj.
+                            </div>
+                            <div className="flex items-baseline gap-1">
+                              <div className="text-lg font-semibold tabular-nums">{fmtInt(projectedStock)}</div>
+                              <div className="text-[10px] font-semibold text-[color:var(--order-card-highlight)]">
                                 {orderDelta === 0 ? "—" : orderDelta > 0 ? `+${fmtInt(orderDelta)}` : `-${fmtInt(Math.abs(orderDelta))}`}
                               </div>
                             </div>
                           </div>
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <div className="flex flex-wrap items-center gap-2">
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1.5 sm:gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                           <div className={autoControlClasses}>
                             <Checkbox
                               checked={autoEnabled}
@@ -9139,15 +9237,16 @@ type DragHandleProps = {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[color:var(--border)] pt-3 text-sm text-muted-foreground">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-[color:var(--foreground)]">Stats:</span>
-                        <span>Prom/sem (4s): {fmtInt(st.avg4w)}</span>
-                        <span>| 7d: {fmtInt(st.sum7d)}</span>
+                    <div className="flex items-center justify-between gap-2 border-t border-[color:var(--border)] pt-3 text-[10px] sm:text-[11px]">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="font-semibold text-[color:var(--foreground)] whitespace-nowrap">Stats:</span>
+                        <span className="truncate text-muted-foreground">
+                          Prom/sem (4s) {fmtInt(st.avg4w)} · 7d {fmtInt(st.sum7d)}
+                        </span>
                       </div>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 text-[color:var(--primary)] hover:underline"
+                        className="flex-shrink-0 inline-flex items-center gap-1 text-[color:var(--primary)] text-[10px] sm:text-[11px] hover:underline whitespace-nowrap"
                         onClick={() => onToggleStats(it.id)}
                       >
                         <BarChart3 className="h-4 w-4" />
@@ -9174,7 +9273,7 @@ type DragHandleProps = {
                           </div>
                           <div className="flex items-center gap-2">
                             <Input
-                              className="h-9 w-24 rounded-2xl text-right text-sm font-semibold tabular-nums"
+                              className="h-8 w-20 rounded-2xl text-right text-sm font-semibold tabular-nums sm:h-9 sm:w-24"
                               inputMode="numeric"
                               placeholder="Ej: 120"
                               value={minQtyDefined > 0 ? String(minQtyDefined) : ""}
@@ -9219,12 +9318,12 @@ type DragHandleProps = {
                       </div>
                     )}
 
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--border)] pt-3">
-                      <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex w-full flex-nowrap items-center justify-between gap-2 border-t border-[color:var(--border)] pt-3 text-[10px] sm:text-[11px] pr-3 sm:pr-4">
+                      <div className="flex items-center gap-1.5">
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-9 w-9 rounded-full text-destructive hover:bg-destructive/10"
+                          className="h-8 w-8 rounded-full text-destructive hover:bg-destructive/10 sm:h-9 sm:w-9"
                           onClick={() => void onRemoveItem(it.id)}
                           aria-label="Quitar producto"
                         >
@@ -9240,7 +9339,7 @@ type DragHandleProps = {
                           <Button
                             size="icon"
                             variant="ghost"
-                            className="h-7 w-7 rounded-full border border-transparent text-[color:var(--order-card-accent)] hover:border-[color:var(--order-card-accent)]"
+                            className="h-6 w-6 rounded-full border border-transparent text-[color:var(--order-card-accent)] hover:border-[color:var(--order-card-accent)] sm:h-7 sm:w-7"
                             onClick={() => onMoveItem(it.id, "up", visibleOrderIds)}
                             aria-label={`Mover ${productLabel} hacia arriba`}
                             disabled={!canMoveUp}
@@ -9250,7 +9349,7 @@ type DragHandleProps = {
                           <Button
                             size="icon"
                             variant="ghost"
-                            className="h-7 w-7 rounded-full border border-transparent text-[color:var(--order-card-accent)] hover:border-[color:var(--order-card-accent)]"
+                            className="h-6 w-6 rounded-full border border-transparent text-[color:var(--order-card-accent)] hover:border-[color:var(--order-card-accent)] sm:h-7 sm:w-7"
                             onClick={() => onMoveItem(it.id, "down", visibleOrderIds)}
                             aria-label={`Mover ${productLabel} hacia abajo`}
                             disabled={!canMoveDown}
@@ -9259,17 +9358,17 @@ type DragHandleProps = {
                           </Button>
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-end gap-4">
-                        <div className="min-w-[140px]">
+                      <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+                        <div className="min-w-[110px] sm:min-w-[130px]">
                           <PriceEditor
                             price={it.unit_price}
                             updatedAt={it.price_updated_at}
                             onCommit={(n) => onUpdateUnitPrice(it.id, n)}
                           />
                         </div>
-                        <div className="text-right">
-                          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Subtotal</div>
-                          <div className="text-xl font-semibold tabular-nums text-[color:var(--foreground)]">
+                        <div className="text-right min-w-[70px] pr-2">
+                          <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Subtotal</div>
+                          <div className="text-lg font-semibold tabular-nums text-[color:var(--foreground)]">
                             {fmtMoney(subtotal)}
                           </div>
                         </div>
@@ -9290,7 +9389,7 @@ type DragHandleProps = {
                 transform: floatingActionTransform,
               }}
             >
-              <div className="mx-auto w-full max-w-md md:max-w-3xl lg:max-w-4xl flex justify-end">
+              <div className="rd-shell-constrain flex justify-end">
                 <Button
                   size="icon"
                   variant="default"
