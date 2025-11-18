@@ -399,6 +399,13 @@ function formatIsoWeekday(iso: string | null): string | null {
   }
 }
 
+function formatWeekRange(start?: Date | null, end?: Date | null): string {
+  if (!start || !end) return "";
+  const startLabel = start.toLocaleDateString("es-AR", { day: "2-digit", month: "short" });
+  const endLabel = end.toLocaleDateString("es-AR", { day: "2-digit", month: "short" });
+  return `${startLabel} – ${endLabel}`;
+}
+
 function buildWhatsappLink(rawNumber: string | null | undefined): string | null {
   if (!rawNumber) return null;
   const digits = rawNumber.replace(/\D+/g, "");
@@ -490,6 +497,7 @@ export default function PaymentsPageClient({ slug, branch, branchName, tenantId,
   const [monthReferenceIso, setMonthReferenceIso] = React.useState(todayIso);
   const [pendingStatScope, setPendingStatScope] = React.useState<"all" | "week">("all");
   const [paidStatScope, setPaidStatScope] = React.useState<"week" | "all">("week");
+  const [cashStatScope, setCashStatScope] = React.useState<"current" | "previous">("current");
 
   const isTodaySelected = markDate === todayIso;
   const isFormDateToday = paymentForm.date === todayIso;
@@ -522,12 +530,20 @@ export default function PaymentsPageClient({ slug, branch, branchName, tenantId,
   }, [weekReferenceIso, todayIso]);
   const startOfWeek = computedStart;
   const endOfWeek = computedEnd;
-  const weekRangeLabel = React.useMemo(() => {
-    if (!startOfWeek || !endOfWeek) return "";
-    const startLabel = startOfWeek.toLocaleDateString("es-AR", { day: "2-digit", month: "short" });
-    const endLabel = endOfWeek.toLocaleDateString("es-AR", { day: "2-digit", month: "short" });
-    return `${startLabel} – ${endLabel}`;
-  }, [startOfWeek, endOfWeek]);
+  const weekRangeLabel = React.useMemo(
+    () => formatWeekRange(startOfWeek, endOfWeek),
+    [startOfWeek, endOfWeek]
+  );
+  const previousWeekRange = React.useMemo(() => {
+    if (!startOfWeek) return null;
+    const anchor = new Date(startOfWeek);
+    anchor.setDate(anchor.getDate() - 7);
+    return getWeekRangeFromDate(anchor);
+  }, [startOfWeek]);
+  const previousWeekRangeLabel = React.useMemo(
+    () => formatWeekRange(previousWeekRange?.start ?? null, previousWeekRange?.end ?? null),
+    [previousWeekRange]
+  );
 
   const { monthStart, monthEnd, monthLabel } = React.useMemo(() => {
     const referenceIso = monthReferenceIso || todayIso;
@@ -887,6 +903,42 @@ export default function PaymentsPageClient({ slug, branch, branchName, tenantId,
     );
   }, [paidPayments]);
 
+  const cashWeekStats = React.useMemo(() => {
+    const computeStats = (range: { start: Date; end: Date } | null) => {
+      if (!range) return { count: 0, total: 0 };
+      const startMs = range.start.getTime();
+      const endMs = range.end.getTime();
+      return paidPayments.reduce(
+        (acc, payment) => {
+          if (payment.payment_method !== "EFECTIVO") return acc;
+          const ts = toTimestamp(payment.meta.paidAt ?? payment.payment_date);
+          if (ts == null || ts < startMs || ts > endMs) return acc;
+          acc.count += 1;
+          if (Number.isFinite(payment.amount)) {
+            acc.total += payment.amount;
+          }
+          return acc;
+        },
+        { count: 0, total: 0 }
+      );
+    };
+    const currentRange = startOfWeek && endOfWeek ? { start: startOfWeek, end: endOfWeek } : null;
+    return {
+      current: computeStats(currentRange),
+      previous: computeStats(previousWeekRange),
+    };
+  }, [paidPayments, startOfWeek, endOfWeek, previousWeekRange]);
+  const selectedCashStats = cashStatScope === "current" ? cashWeekStats.current : cashWeekStats.previous;
+  const cashRangeLabel = cashStatScope === "current" ? weekRangeLabel : previousWeekRangeLabel;
+  const cashHelperText = React.useMemo(() => {
+    if (selectedCashStats.count === 0) {
+      return cashRangeLabel ? `Sin pagos en efectivo · ${cashRangeLabel}` : "Sin pagos en efectivo";
+    }
+    const countLabel =
+      selectedCashStats.count === 1 ? "1 pago en efectivo" : `${selectedCashStats.count} pagos en efectivo`;
+    return cashRangeLabel ? `${countLabel} · ${cashRangeLabel}` : countLabel;
+  }, [selectedCashStats, cashRangeLabel]);
+
   const monthlyCalendarDays = React.useMemo(() => {
     const days: {
       key: string;
@@ -923,15 +975,6 @@ export default function PaymentsPageClient({ slug, branch, branchName, tenantId,
     }
     return days;
   }, [monthStart, monthEnd, pendingPayments, todayIso]);
-
-  const providersStat = React.useMemo(
-    () => ({
-      label: "Proveedores activos",
-      value: providers.length.toString(),
-      helper: urgentPendingCount > 0 ? `${urgentPendingCount} urgentes` : "Sin urgentes",
-    }),
-    [providers.length, urgentPendingCount]
-  );
 
   const handleOpenMarkDialog = React.useCallback((payment: PaymentRecord, initialDate?: string | null) => {
     const fallbackDate = payment.meta.paidAt ?? payment.payment_date ?? todayIso;
@@ -1907,11 +1950,24 @@ export default function PaymentsPageClient({ slug, branch, branchName, tenantId,
               </p>
             </article>
             <article className="rounded-2xl border border-border/70 bg-white/70 p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                {providersStat.label}
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  {cashStatScope === "current" ? "Efectivo (semana actual)" : "Efectivo (semana anterior)"}
+                </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCashStatScope((prev) => (prev === "current" ? "previous" : "current"))
+                  }
+                  className="rounded-full border border-border/60 px-3 py-1 text-[11px] font-semibold text-foreground transition hover:bg-muted/60"
+                >
+                  {cashStatScope === "current" ? "Ver semana anterior" : "Ver semana actual"}
+                </button>
+              </div>
+              <p className="mt-1 text-2xl font-semibold text-foreground">
+                {formatCurrency(selectedCashStats.total)}
               </p>
-              <p className="mt-1 text-2xl font-semibold text-foreground">{providersStat.value}</p>
-              <p className="text-sm text-muted-foreground">{providersStat.helper}</p>
+              <p className="text-sm text-muted-foreground">{cashHelperText}</p>
             </article>
           </div>
         </div>
@@ -2912,32 +2968,44 @@ export default function PaymentsPageClient({ slug, branch, branchName, tenantId,
                     )}
                     <div className="mt-auto flex flex-wrap items-center justify-end gap-2 pt-2">
                       {canSendWhatsapp && (
-                        <div className="group relative inline-flex">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            type="button"
-                            className={cn(
-                              "rounded-xl border-white/80 bg-white text-sm font-medium text-neutral-700 shadow-sm transition hover:-translate-y-0.5",
-                              isReceiptSent && "border-emerald-500 bg-emerald-50 text-emerald-700"
-                            )}
-                            onClick={() => handleSendWhatsapp(payment.provider?.whatsapp ?? null)}
-                          >
-                            {isReceiptSent ? "Comprobante enviado" : "Enviar comprobante"}
-                          </Button>
-                          <button
-                            type="button"
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          type="button"
+                          className={cn(
+                            "inline-flex items-center justify-center gap-2 rounded-xl border-white/80 bg-white text-sm font-medium text-neutral-700 shadow-sm transition hover:-translate-y-0.5",
+                            isReceiptSent && "border-emerald-500 bg-emerald-50 text-emerald-700"
+                          )}
+                          onClick={() => handleSendWhatsapp(payment.provider?.whatsapp ?? null)}
+                        >
+                          <span>{isReceiptSent ? "Comprobante enviado" : "Enviar comprobante"}</span>
+                          <span
+                            role="switch"
+                            tabIndex={0}
                             aria-label={isReceiptSent ? "Marcar como no enviado" : "Marcar como enviado"}
+                            aria-checked={isReceiptSent}
                             onClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
                               toggleReceiptSent(payment.id);
                             }}
-                            className="pointer-events-none absolute -right-3 -top-3 flex h-6 w-6 items-center justify-center rounded-full border border-white/70 bg-white text-emerald-600 opacity-0 shadow-sm transition group-hover:pointer-events-auto group-hover:opacity-100"
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                toggleReceiptSent(payment.id);
+                              }
+                            }}
+                            className={cn(
+                              "inline-flex h-6 w-6 items-center justify-center rounded-full border text-xs",
+                              isReceiptSent
+                                ? "border-emerald-500 bg-white/90 text-emerald-600"
+                                : "border-white/70 bg-white/70 text-neutral-400"
+                            )}
                           >
-                            <Check className={cn("h-3.5 w-3.5", isReceiptSent ? "opacity-100" : "opacity-50")} />
-                          </button>
-                        </div>
+                            <Check className="h-3.5 w-3.5" />
+                          </span>
+                        </Button>
                       )}
                       <Button
                         size="sm"
@@ -2946,22 +3014,6 @@ export default function PaymentsPageClient({ slug, branch, branchName, tenantId,
                         onClick={() => handleEditPayment(payment)}
                       >
                         Editar
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className={cn(
-                          "rounded-xl border-white/80 bg-white text-sm font-medium text-neutral-700 shadow-sm transition hover:-translate-y-0.5",
-                          payment.isUrgent && "border-amber-500 bg-amber-50 text-amber-700"
-                        )}
-                        onClick={() => handleToggleUrgent(payment)}
-                        disabled={togglingUrgentId === payment.id}
-                      >
-                        {togglingUrgentId === payment.id
-                          ? "Actualizando..."
-                          : payment.isUrgent
-                          ? "Quitar urgente"
-                          : "Marcar urgente"}
                       </Button>
                       <Button
                         size="sm"

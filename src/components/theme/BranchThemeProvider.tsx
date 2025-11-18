@@ -13,6 +13,12 @@ import {
   BRANCH_THEME_FIELDS,
 } from "@/lib/theme/branchTheme";
 
+declare global {
+  interface Window {
+    __gestockPrefetchedTheme?: BranchThemeFormValues;
+  }
+}
+
 type BranchThemeContextValue = {
   theme: BranchThemeFormValues;
   source: "default" | "custom";
@@ -35,6 +41,16 @@ export function BranchThemeProvider({ children }: { children: React.ReactNode })
   const { currentBranch, tenantId, loading: branchLoading } = useBranch();
   const branchId = currentBranch?.id ?? null;
   const supabase = React.useMemo(() => getSupabaseBrowserClient(), []);
+  const [prefetchedTheme] = React.useState<BranchThemeFormValues | null>(() => {
+    if (typeof window === "undefined") return null;
+    const rawTheme = window.__gestockPrefetchedTheme;
+    if (!rawTheme) return null;
+    try {
+      return sanitizeStoredTheme(rawTheme);
+    } catch {
+      return null;
+    }
+  });
 
   const enabled = Boolean(tenantId && branchId);
 
@@ -78,33 +94,40 @@ export function BranchThemeProvider({ children }: { children: React.ReactNode })
   const overrides = themeQuery.data?.overrides ?? DEFAULT_BRANCH_THEME;
   const source = themeQuery.data?.source ?? "default";
   const uploadedAt = themeQuery.data?.uploadedAt ?? null;
+  const resolvedOverrides = branchId ? overrides : prefetchedTheme ?? overrides;
+  const prefetchedSource = React.useMemo<"default" | "custom">(() => {
+    if (!prefetchedTheme) return "default";
+    const isDefault = BRANCH_THEME_FIELDS.every((field) => prefetchedTheme[field] === DEFAULT_BRANCH_THEME[field]);
+    return isDefault ? "default" : "custom";
+  }, [prefetchedTheme]);
 
   React.useEffect(() => {
     if (branchLoading) {
-      applyTheme(DEFAULT_BRANCH_THEME);
+      applyTheme(prefetchedTheme ?? DEFAULT_BRANCH_THEME);
       return;
     }
     if (!branchId) {
-      applyTheme(DEFAULT_BRANCH_THEME);
+      applyTheme(prefetchedTheme ?? DEFAULT_BRANCH_THEME);
       return;
     }
     applyTheme(overrides);
-  }, [branchId, branchLoading, overrides]);
+  }, [branchId, branchLoading, overrides, prefetchedTheme]);
 
   const { refetch: refetchTheme, isLoading } = themeQuery;
   const refetch = React.useCallback(() => refetchTheme(), [refetchTheme]);
+  const resolvedSource = branchId ? source : prefetchedTheme ? prefetchedSource : source;
 
   const contextValue = React.useMemo<BranchThemeContextValue>(
     () => ({
-      theme: overrides,
-      source,
+      theme: resolvedOverrides,
+      source: resolvedSource,
       loading: branchLoading || isLoading,
       branchId,
       tenantId: tenantId ?? null,
       uploadedAt,
       refetch,
     }),
-    [overrides, source, branchLoading, isLoading, branchId, tenantId, uploadedAt, refetch]
+    [resolvedOverrides, resolvedSource, branchLoading, isLoading, branchId, tenantId, uploadedAt, refetch]
   );
 
   return <BranchThemeContext.Provider value={contextValue}>{children}</BranchThemeContext.Provider>;

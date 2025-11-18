@@ -41,6 +41,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogClose,
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
@@ -54,6 +55,7 @@ import {
   History, X, Pencil, Check, ChevronUp, ChevronDown, Copy, Package, Loader2, Save,
   CalendarDays, FileText, BookOpen, TrendingUp, TrendingDown, BarChart3,
   Sparkles, CheckCircle2, Circle, Info, MoreHorizontal,
+  AlertTriangle,
 } from "lucide-react";
 import { useVisualViewportBottomOffset, isStandaloneDisplayMode } from "@/lib/useVisualViewportBottomOffset";
 
@@ -61,12 +63,8 @@ import { useVisualViewportBottomOffset, isStandaloneDisplayMode } from "@/lib/us
 const VENTAS_URL = "/ventas.xlsx";
 const TABLE_SNAPSHOTS = "order_snapshots";
 const TABLE_ORDER_SUMMARIES = "order_summaries";
-const TABLE_ORDER_SUMMARIES_WEEK = "order_summaries_week";
 const TABLE_STOCK_LOGS = "stock_logs";
-const TABLE_PROVIDER_WEEKS = "provider_weeks";
-const WEEK_STORAGE_PREFIX = "gestock:provider-order-week";
 const AUTO_BUFFER_EXTRA_DAYS = 3;
-const LEGACY_WEEK_VALUE = "__legacy__";
 
 const ORDERS_TABLE_ENV = process.env.NEXT_PUBLIC_PROVIDER_ORDERS_TABLE?.trim();
 const ITEMS_TABLE_ENV = process.env.NEXT_PUBLIC_PROVIDER_ORDER_ITEMS_TABLE?.trim();
@@ -497,12 +495,10 @@ type PendingTotals = {
   orderId: string;
   providerId: string;
   orderTable: string;
-  weekId: string | null;
   total: number;
   qty: number;
   updatedAt: string;
 };
-type FinalizeContext = "new-week" | "close-only";
 type XlsxModule = typeof import("xlsx");
 type StyledCell = CellObject & { s?: NonNullable<CellObject["s"]> };
 type CssVars = React.CSSProperties & Record<`--${string}`, string>;
@@ -586,56 +582,7 @@ type ComputeSalesSinceHandler = (...args: [string, number | null]) => number;
 type SetItemCheckedHandler = (...args: [string, boolean]) => void;
 type SetGroupCheckedHandler = (...args: [string, boolean]) => void;
 type ToggleStatsHandler = (...args: [string]) => void;
-type ProviderWeekRow = { id: string; week_start: string; label?: string | null };
 
-const addDaysUTC = (iso: string, days: number): string => {
-  if (!iso) return iso;
-  const base = new Date(`${iso}T00:00:00Z`);
-  base.setUTCDate(base.getUTCDate() + days);
-  return base.toISOString().slice(0, 10);
-};
-
-const formatARShort = (iso: string) => {
-  if (!iso) return "";
-  return new Intl.DateTimeFormat("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    timeZone: "UTC",
-  }).format(new Date(`${iso}T00:00:00Z`));
-};
-
-const getISOWeekFromISO = (iso: string): number => {
-  if (!iso) return 0;
-  const d = new Date(`${iso}T00:00:00Z`);
-  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const day = (target.getUTCDay() + 6) % 7;
-  target.setUTCDate(target.getUTCDate() - day + 3);
-  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
-  const firstDay = (firstThursday.getUTCDay() + 6) % 7;
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDay + 3);
-  return 1 + Math.round((target.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
-};
-
-const formatWeekDisplay = (weekStart: string, custom?: string | null) => {
-  if (custom?.trim()) return custom.trim();
-  const start = weekStart;
-  const end = addDaysUTC(start, 6);
-  const weekNo = getISOWeekFromISO(start);
-  return `Semana ${weekNo} · ${formatARShort(start)}–${formatARShort(end)}`;
-};
-
-const weekLabel = (row: ProviderWeekRow) => formatWeekDisplay(row.week_start, row.label);
-
-const startOfWeekISO = (date = new Date()): string => {
-  const utc = new Date(Date.UTC(
-    date.getUTCFullYear(),
-    date.getUTCMonth(),
-    date.getUTCDate(),
-  ));
-  const day = (utc.getUTCDay() + 6) % 7;
-  utc.setUTCDate(utc.getUTCDate() - day);
-  return utc.toISOString().slice(0, 10);
-};
 type UpdateUnitPriceHandler = (id: string, price: number) => Promise<void>;
 
 const createNoteId = () => {
@@ -864,12 +811,89 @@ type SnapshotItem = {
   branch_id?: string | null;
 };
 
+type SnapshotMeta = {
+  version?: number;
+  savedAt?: string | null;
+};
+
 type SnapshotPayload = {
   items: SnapshotItem[];
+  meta?: SnapshotMeta;
 };
 
 type SnapshotRow = {
   id: string; order_id: string; title: string; snapshot: SnapshotPayload; created_at: string;
+};
+
+type VersionInfo = {
+  version: number;
+  savedAt: string | null;
+};
+
+type ActiveVersionInfo = {
+  version: number | null;
+  savedAt: string | null;
+};
+
+const VERSION_TITLE_REGEX = /versi[oó]n\s*(\d+)/i;
+const VERSION_DATE_FORMAT: Intl.DateTimeFormatOptions = {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+};
+
+const formatVersionTimestamp = (iso: string | null | undefined) => {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("es-AR", VERSION_DATE_FORMAT);
+};
+
+const buildVersionTitle = (version: number, iso: string) => `Versión ${version} · ${formatVersionTimestamp(iso)}`;
+
+const readVersionFromSnapshot = (snap?: SnapshotRow | null): number | null => {
+  if (!snap) return null;
+  const payloadVersion = snap.snapshot?.meta?.version;
+  if (typeof payloadVersion === "number" && Number.isFinite(payloadVersion) && payloadVersion > 0) {
+    return payloadVersion;
+  }
+  const title = snap.title ?? "";
+  const match = title.match(VERSION_TITLE_REGEX);
+  if (match) {
+    const parsed = Number(match[1]);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+};
+
+const readSnapshotSavedAt = (snap?: SnapshotRow | null): string | null => {
+  if (!snap) return null;
+  const metaSavedAt = snap.snapshot?.meta?.savedAt;
+  if (typeof metaSavedAt === "string" && metaSavedAt.trim()) return metaSavedAt;
+  if (typeof snap.created_at === "string" && snap.created_at.trim()) return snap.created_at;
+  return null;
+};
+
+const inferSnapshotVersionNumber = (
+  snap: SnapshotRow,
+  fallbackList?: SnapshotRow[],
+  latestVersion?: number | null,
+): number | null => {
+  const direct = readVersionFromSnapshot(snap);
+  if (direct && direct > 0) return direct;
+  if (fallbackList && fallbackList.length) {
+    const idx = fallbackList.findIndex((row) => row.id === snap.id);
+    if (idx >= 0) {
+      const base =
+        typeof latestVersion === "number" && latestVersion > 0 ? latestVersion : fallbackList.length;
+      const computed = base - idx;
+      return computed > 0 ? computed : null;
+    }
+  }
+  if (typeof latestVersion === "number" && latestVersion > 0) return latestVersion;
+  return null;
 };
 
 type OrderExportFormat = "xlsx" | "json" | "json_xlsx";
@@ -1718,7 +1742,6 @@ export default function ProviderOrderPage() {
   const provId = String(params?.provId || "");
   const tenantSlug = String(params?.slug || "");
   const search = useSearchParams();
-  const selectedWeekId = search.get("week");
   const tenantIdFromQuery = normalizeSearchParam(search.get("tenantId"));
   const branchIdFromQuery = normalizeSearchParam(search.get("branchId"));
   const providerNameFromQuery = normalizeSearchParam(search.get("name"));
@@ -1757,8 +1780,8 @@ const [noteInput, setNoteInput] = React.useState("");
 const [editingNoteId, setEditingNoteId] = React.useState<string | null>(null);
 const [editingContent, setEditingContent] = React.useState("");
 const [notesExpanded, setNotesExpanded] = React.useState(false);
-const [stockActionsExpanded, setStockActionsExpanded] = React.useState(false);
-const [productOrgExpanded, setProductOrgExpanded] = React.useState(false);
+const [stockActionsExpanded, setStockActionsExpanded] = React.useState(true);
+const [productOrgExpanded, setProductOrgExpanded] = React.useState(true);
 const [notesSubmitting, setNotesSubmitting] = React.useState(false);
   const [noteActionState, setNoteActionState] = React.useState<{ id: string; type: "delete" | "toggle" | "edit" } | null>(null);
   const [currentUserName, setCurrentUserName] = React.useState("Equipo");
@@ -1772,10 +1795,6 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
 
   const tenantId = contextIds.tenantId || undefined;
   const branchId = contextIds.branchId || undefined;
-  const weekStorageKey = React.useMemo(
-    () => `${WEEK_STORAGE_PREFIX}:${tenantId ?? "-"}:${branchId ?? "-"}`,
-    [tenantId, branchId],
-  );
 
   const [ordersTable, setOrdersTable] = React.useState<string>(ORDER_TABLE_CANDIDATES[0]);
   const [itemsTable, setItemsTable] = React.useState<string>(ITEM_TABLE_CANDIDATES[0]);
@@ -1783,6 +1802,35 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
   const [order, setOrder]   = React.useState<OrderRow | null>(null);
   const [items, setItems]   = React.useState<ItemRow[]>([]);
   const [sales, setSales]   = React.useState<SalesRow[]>([]);
+  const [versionInfo, setVersionInfo] = React.useState<VersionInfo | null>(null);
+  const [currentVersionInfo, setCurrentVersionInfo] = React.useState<ActiveVersionInfo | null>(null);
+  const [openingLatestVersion, setOpeningLatestVersion] = React.useState(false);
+  const [initialDataReady, setInitialDataReady] = React.useState(false);
+  const refreshVersionInfo = React.useCallback(async (orderId: string) => {
+    try {
+      const { data, error, count } = await supabase
+        .from(TABLE_SNAPSHOTS)
+        .select("id, title, created_at, snapshot", { count: "exact" })
+        .eq("order_id", orderId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (error) {
+        console.warn("load version info error", error);
+        return;
+      }
+      const latest = (data?.[0] as SnapshotRow | undefined) ?? null;
+      if (!latest) {
+        setVersionInfo(null);
+        return;
+      }
+      const inferred = readVersionFromSnapshot(latest);
+      const fallback = typeof count === "number" && count > 0 ? count : 1;
+      const number = inferred ?? fallback;
+      setVersionInfo({ version: number, savedAt: latest.created_at ?? null });
+    } catch (err) {
+      console.warn("version info error", err);
+    }
+  }, [supabase]);
   const [priceCatalog, setPriceCatalog] = React.useState<PriceCatalogItem[]>([]);
   const [marginPct, setMarginPct] = React.useState(45);
   const [filter, setFilter] = React.useState("");
@@ -1803,8 +1851,9 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
   const [savingSnapshot, setSavingSnapshot] = React.useState(false);
   const [finalizeDialogOpen, setFinalizeDialogOpen] = React.useState(false);
   const [finalizeReceived, setFinalizeReceived] = React.useState<Record<string, number>>({});
+  const [finalizeSnapshotItems, setFinalizeSnapshotItems] = React.useState<ItemRow[] | null>(null);
+  const [finalizeSavingSnapshot, setFinalizeSavingSnapshot] = React.useState(false);
   const [finalizingOrder, setFinalizingOrder] = React.useState(false);
-  const [finalizeContext, setFinalizeContext] = React.useState<FinalizeContext | null>(null);
   const [statsOpenMap, setStatsOpenMap] = React.useState<Record<string, boolean>>({});
   const [minStockMap, setMinStockMap] = React.useState<Record<string, MinStockState>>({});
   const [autoQtyMap, setAutoQtyMap] = React.useState<Record<string, boolean>>({});
@@ -1815,7 +1864,7 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
   const [autoBufferDialogMode, setAutoBufferDialogMode] = React.useState<"apply" | "edit">("apply");
   const [suggestedMarginInput, setSuggestedMarginInput] = React.useState("0");
   const [suggestedMarginError, setSuggestedMarginError] = React.useState<string | null>(null);
-  const autoBufferIndicatorText = `Margen: ${Math.max(0, autoBufferDays)}D`;
+  const autoBufferIndicatorText = `${Math.max(0, autoBufferDays)} días`;
   const handleStepAutoBufferInput = React.useCallback((delta: number) => {
     setAutoBufferInput((prev) => {
       const normalized = prev.replace(",", ".").trim();
@@ -1910,22 +1959,21 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
   }, [order?.notes]);
 
   React.useEffect(() => {
-    setFinalizeDialogOpen(false);
-    setFinalizeReceived({});
-    setFinalizeContext(null);
+    if (!order?.id) {
+      setVersionInfo(null);
+      return;
+    }
+    void refreshVersionInfo(order.id);
+  }, [order?.id, refreshVersionInfo]);
+
+  React.useEffect(() => {
+    setCurrentVersionInfo(null);
   }, [order?.id]);
 
   React.useEffect(() => {
     setFinalizeDialogOpen(false);
     setFinalizeReceived({});
-    setFinalizeContext(null);
-  }, [selectedWeekId]);
-
-  React.useEffect(() => {
-    setOrder(null);
-    setItems([]);
-    setSnapshots([]);
-  }, [selectedWeekId]);
+  }, [order?.id]);
 
   React.useEffect(() => {
     orderNotesRef.current = orderNotes;
@@ -2222,17 +2270,7 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
     () => items.filter((item) => item.product_name !== GROUP_PLACEHOLDER),
     [items]
   );
-  const finalizeConfirmDisabled = finalizingOrder || (actionableItems.length === 0 && finalizeContext !== "new-week");
-  const openFinalizeDialog = React.useCallback((context: FinalizeContext) => {
-    const defaults = actionableItems.reduce<Record<string, number>>((acc, item) => {
-      const planned = Math.max(0, Math.round(Number(item.qty ?? 0)));
-      acc[item.id] = planned;
-      return acc;
-    }, {});
-    setFinalizeContext(context);
-    setFinalizeReceived(defaults);
-    setFinalizeDialogOpen(true);
-  }, [actionableItems]);
+  const finalizeConfirmDisabled = finalizingOrder || actionableItems.length === 0;
   React.useEffect(() => {
     const map = manualPriceRef.current;
     const ids = new Set(actionableItems.map((item) => item.id));
@@ -2329,24 +2367,53 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
       })();
     }
   }, [actionableItems, restoreMarginPePrices, runMarginPeApply, waitForPeApply]);
-  const peSimBase = React.useMemo(() => parseNumberInput(peSimInput), [peSimInput]);
-  const peSimRetail = Number.isFinite(peSimBase) ? Math.max(0, peSimBase) : 0;
-  const peSimEstimate = React.useMemo(
-    () => Math.max(0, Math.round(peSimRetail * (1 - marginPct / 100))),
-    [peSimRetail, marginPct]
-  );
-  const peSimDiff = Math.max(0, Math.round(peSimRetail - peSimEstimate));
-  const peSimProviderBase = React.useMemo(
-    () => parseNumberInput(peSimProviderInput),
-    [peSimProviderInput]
-  );
-  const peSimProvider = Number.isFinite(peSimProviderBase) ? Math.max(0, peSimProviderBase) : 0;
-  const peSimMarginFromInputs = React.useMemo(() => {
-    if (peSimRetail <= 0 || peSimProvider <= 0) return null;
-    const ratio = 1 - peSimProvider / peSimRetail;
-    if (!Number.isFinite(ratio)) return null;
-    return Math.round(ratio * 10000) / 100; // 2 decimales
-  }, [peSimRetail, peSimProvider]);
+  const syncProviderEstimate = React.useCallback((saleValue: number, nextMargin: number) => {
+    if (!Number.isFinite(saleValue) || saleValue <= 0) {
+      setPeSimProviderInput("");
+      return;
+    }
+    const ratio = Math.max(0, 1 - nextMargin / 100);
+    const estimate = Math.max(0, Math.round(saleValue * ratio));
+    setPeSimProviderInput(String(estimate));
+  }, []);
+
+  const handleMarginInputChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = event.target.value;
+    if (raw === "") {
+      setMarginPct(0);
+      const saleValue = parseNumberInput(peSimInput);
+      syncProviderEstimate(Number.isFinite(saleValue) ? Math.max(0, saleValue) : 0, 0);
+      return;
+    }
+    const parsed = Number(raw);
+    if (Number.isNaN(parsed)) return;
+    const clamped = Math.max(0, Math.min(100, parsed));
+    setMarginPct(clamped);
+    const saleValue = parseNumberInput(peSimInput);
+    syncProviderEstimate(Number.isFinite(saleValue) ? Math.max(0, saleValue) : 0, clamped);
+  }, [peSimInput, syncProviderEstimate]);
+
+  const handleSaleInputChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = event.target.value;
+    setPeSimInput(raw);
+    const saleValue = parseNumberInput(raw);
+    syncProviderEstimate(Number.isFinite(saleValue) ? Math.max(0, saleValue) : 0, marginPct);
+  }, [marginPct, syncProviderEstimate]);
+
+  const handleProviderInputChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = event.target.value;
+    setPeSimProviderInput(raw);
+    if (!raw.trim()) return;
+    const saleValue = parseNumberInput(peSimInput);
+    const providerValue = parseNumberInput(raw);
+    if (!Number.isFinite(saleValue) || saleValue <= 0 || !Number.isFinite(providerValue) || providerValue < 0) {
+      return;
+    }
+    const ratio = 1 - providerValue / saleValue;
+    if (!Number.isFinite(ratio)) return;
+    const pct = Math.max(0, Math.min(100, Math.round(ratio * 10000) / 100));
+    setMarginPct(pct);
+  }, [peSimInput]);
 
   const stockOrderedItems = React.useMemo(() => {
     if (!actionableItems.length) return [] as ItemRow[];
@@ -2504,10 +2571,10 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
     if (!pending) return;
     pendingTotalsRef.current = null;
 
-    const { orderId, providerId, orderTable, weekId, total, qty, updatedAt } = pending;
+    const { orderId, providerId, orderTable, total, qty, updatedAt } = pending;
 
     try {
-      const mutations: Array<Promise<unknown>> = [
+      await Promise.all([
         supabase.from(orderTable).update({ total }).eq("id", orderId),
         supabase
           .from(TABLE_ORDER_SUMMARIES)
@@ -2515,18 +2582,7 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
             { provider_id: providerId, total, items: qty, updated_at: updatedAt },
             { onConflict: "provider_id" },
           ),
-      ];
-      if (weekId) {
-        mutations.push(
-          supabase
-            .from(TABLE_ORDER_SUMMARIES_WEEK)
-            .upsert(
-              { week_id: weekId, provider_id: providerId, total, items: qty, updated_at: updatedAt },
-              { onConflict: "week_id,provider_id" },
-            ),
-        );
-      }
-      await Promise.all(mutations);
+      ]);
     } catch (err) {
       console.error("flushOrderTotals error", err);
     }
@@ -2544,7 +2600,6 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
       orderId: order.id,
       providerId: order.provider_id,
       orderTable: ordersTable,
-      weekId: selectedWeekId ?? null,
       total,
       qty,
       updatedAt,
@@ -2555,7 +2610,7 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
       totalsDebounceRef.current = null;
       void flushPendingTotals();
     }, 500);
-  }, [order, items, ordersTable, selectedWeekId, flushPendingTotals]);
+  }, [order, items, ordersTable, flushPendingTotals]);
 
   React.useEffect(() => {
     return () => {
@@ -2972,6 +3027,10 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
     return () => { cancelled = true; };
   }, [supabase, provId, contextIds.tenantId, contextIds.branchId, providerNameOverride]);
 
+  React.useEffect(() => {
+    autoLoadLatestSnapshotRef.current = false;
+  }, [provId, order?.id]);
+
 
 
   // Historial
@@ -2987,18 +3046,7 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
   const [exportDialogOpen, setExportDialogOpen] = React.useState(false);
   const [exportFormat, setExportFormat] = React.useState<OrderExportFormat>("xlsx");
   const [exportingOrder, setExportingOrder] = React.useState(false);
-  const [weekOptions, setWeekOptions] = React.useState<ProviderWeekRow[]>([]);
-  const [weeksLoading, setWeeksLoading] = React.useState(false);
-  const [creatingWeek, setCreatingWeek] = React.useState(false);
-  const currentWeekLabel = React.useMemo(() => {
-    if (selectedWeekId) {
-      const found = weekOptions.find((w) => w.id === selectedWeekId);
-      if (found) return weekLabel(found);
-      return "Semana seleccionada";
-    }
-    if (weeksLoading) return "Cargando semanas…";
-    return "Pedido actual (histórico)";
-  }, [selectedWeekId, weekOptions, weeksLoading]);
+  const autoLoadLatestSnapshotRef = React.useRef(false);
 
   React.useEffect(() => {
     if (!editingSnapshotId) return;
@@ -3009,337 +3057,6 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
     return () => window.clearTimeout(timer);
   }, [editingSnapshotId]);
 
-  const updateWeekParam = React.useCallback((nextWeekId: string | null) => {
-    const params = new URLSearchParams(search.toString());
-    if (nextWeekId) params.set("week", nextWeekId);
-    else params.delete("week");
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname);
-  }, [router, pathname, search]);
-
-  const ensureWeekForDate = React.useCallback(async (date: Date) => {
-    if (!tenantId || !branchId) throw new Error("Falta la sucursal actual");
-    const weekStart = startOfWeekISO(date);
-    const { data, error } = await supabase
-      .from(TABLE_PROVIDER_WEEKS)
-      .select("id, week_start, label")
-      .eq("tenant_id", tenantId)
-      .eq("branch_id", branchId)
-      .eq("week_start", weekStart)
-      .maybeSingle();
-    if (error && error.code !== "PGRST116") throw error;
-    if (data) return data as ProviderWeekRow;
-    const label = formatWeekDisplay(weekStart, null);
-    const { data: inserted, error: insertError } = await supabase
-      .from(TABLE_PROVIDER_WEEKS)
-      .insert([{ tenant_id: tenantId, branch_id: branchId, week_start: weekStart, label }])
-      .select("id, week_start, label")
-      .single();
-    if (insertError) throw insertError;
-    return inserted as ProviderWeekRow;
-  }, [supabase, tenantId, branchId]);
-
-  const fetchWeekOptions = React.useCallback(async () => {
-    if (!tenantId || !branchId) {
-      setWeekOptions([]);
-      return;
-    }
-    const { data, error } = await supabase
-      .from(TABLE_PROVIDER_WEEKS)
-      .select("id, week_start, label")
-      .eq("tenant_id", tenantId)
-      .eq("branch_id", branchId)
-      .order("week_start", { ascending: false })
-      .limit(32);
-    if (error) {
-      console.warn("provider_weeks load error", error.message);
-      setWeekOptions([]);
-      return;
-    }
-    setWeekOptions((data as ProviderWeekRow[] | null) ?? []);
-  }, [supabase, tenantId, branchId]);
-
-  React.useEffect(() => {
-    let alive = true;
-    setWeeksLoading(true);
-    (async () => {
-      await fetchWeekOptions();
-      if (alive) setWeeksLoading(false);
-    })();
-    return () => { alive = false; };
-  }, [fetchWeekOptions]);
-
-  React.useEffect(() => {
-    if (!selectedWeekId) {
-      if (typeof window !== "undefined") window.localStorage.removeItem(weekStorageKey);
-      return;
-    }
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(weekStorageKey, selectedWeekId);
-  }, [selectedWeekId, weekStorageKey]);
-
-  React.useEffect(() => {
-    if (selectedWeekId) return;
-    if (weeksLoading) return;
-    if (!weekOptions.length) return;
-    if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem(weekStorageKey);
-    if (stored && weekOptions.some((week) => week.id === stored)) {
-      updateWeekParam(stored);
-    }
-  }, [selectedWeekId, weeksLoading, weekOptions, weekStorageKey, updateWeekParam]);
-
-  const handleWeekChange = React.useCallback((nextWeekId: string) => {
-    if (nextWeekId === LEGACY_WEEK_VALUE) {
-      updateWeekParam(null);
-      return;
-    }
-    updateWeekParam(nextWeekId);
-  }, [updateWeekParam]);
-
-  const cloneOrderToNewWeek = React.useCallback(async (options?: { itemsSnapshot?: ItemRow[] }) => {
-    if (!tenantId || !branchId) {
-      alert("Necesitás seleccionar una sucursal antes de crear el pedido.");
-      return;
-    }
-    if (!provId) {
-      alert("No se encontró el proveedor actual. Refrescá la página e intentá nuevamente.");
-      return;
-    }
-
-    const sourceItems = options?.itemsSnapshot ?? items;
-    const itemsSnapshot = sourceItems.map((item) => ({ ...item }));
-    const groupOrderSnapshot = [...groupOrder];
-    const checkedSnapshot = { ...checkedMap };
-    const groupCheckedSnapshot = { ...groupCheckedMap };
-    const statsOpenSnapshot = { ...statsOpenMap };
-    const itemOrderSnapshot = cloneItemOrderMap(itemOrderMap);
-    const minStockSnapshot = Object.entries(minStockMap).reduce<Record<string, MinStockState>>((acc, [key, value]) => {
-      acc[key] = { ...value };
-      return acc;
-    }, {});
-    const autoQtySnapshot = { ...autoQtyMap };
-    const sortSnapshot = sortMode;
-    const openGroupSnapshot = openGroup || null;
-
-    setCreatingWeek(true);
-    try {
-      const week = await ensureWeekForDate(new Date());
-
-      let targetOrder: OrderRow | null = null;
-      const { data: existingWeekOrder, error: existingWeekError } = await supabase
-        .from(ordersTable)
-        .select("*")
-        .eq("provider_id", provId)
-        .eq("week_id", week.id)
-        .maybeSingle();
-      if (existingWeekError && existingWeekError.code !== "PGRST116") throw existingWeekError;
-      if (existingWeekOrder) targetOrder = existingWeekOrder as OrderRow;
-
-      if (!targetOrder) {
-        type OrderInsertPayload = {
-          provider_id: string;
-          status: Status;
-          notes: string;
-          total: number;
-          week_id?: string;
-          tenant_id?: string;
-          branch_id?: string;
-        };
-        let insertPayload: OrderInsertPayload = {
-          provider_id: provId,
-          status: "PENDIENTE",
-          notes: `${providerName} - ${isoToday()}`,
-          total: 0,
-          week_id: week.id,
-        };
-        if (tenantId) insertPayload.tenant_id = tenantId;
-        if (branchId) insertPayload.branch_id = branchId;
-
-        let lastInsertError: PostgrestError | Error | null = null;
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          const { data, error } = await supabase
-            .from(ordersTable)
-            .insert([insertPayload])
-            .select("*")
-            .single();
-          if (error?.code === "42703" && (insertPayload.tenant_id || insertPayload.branch_id)) {
-            insertPayload = { ...insertPayload };
-            delete insertPayload.tenant_id;
-            delete insertPayload.branch_id;
-            continue;
-          }
-          if (error) {
-            lastInsertError = error;
-          } else {
-            targetOrder = data as OrderRow;
-          }
-          break;
-        }
-        if (!targetOrder) {
-          throw lastInsertError ?? new Error("No se pudo crear el pedido de la semana.");
-        }
-      }
-
-      if (targetOrder && itemsSnapshot.length) {
-        const { data: existingItems, error: itemsCheckError } = await supabase
-          .from(itemsTable)
-          .select("id")
-          .eq("order_id", targetOrder.id)
-          .limit(1);
-        if (itemsCheckError) throw itemsCheckError;
-        const hasItems = Array.isArray(existingItems) && existingItems.length > 0;
-        if (!hasItems) {
-          const idMap = new Map<string, string>();
-          const tenantForInsert = targetOrder.tenant_id ?? tenantId ?? null;
-          const branchForInsert = targetOrder.branch_id ?? branchId ?? null;
-          const insertRows: Array<ItemUpsertPayload & { id?: string }> = itemsSnapshot.map((item) => {
-            const newId =
-              typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID
-                ? globalThis.crypto.randomUUID()
-                : `item_${Math.random().toString(36).slice(2, 12)}`;
-            idMap.set(item.id, newId);
-            const payload: ItemUpsertPayload & { id?: string } = {
-              id: newId,
-              order_id: targetOrder!.id,
-              product_name: item.product_name,
-              qty: item.qty ?? 0,
-              unit_price: item.unit_price ?? 0,
-              group_name: item.group_name ?? null,
-            };
-            if (item.display_name != null) payload.display_name = item.display_name;
-            if (item.pack_size != null) payload.pack_size = item.pack_size;
-            if (item.stock_qty != null) payload.stock_qty = item.stock_qty;
-            if (item.stock_updated_at) payload.stock_updated_at = item.stock_updated_at;
-            if (item.stock_signature_at) payload.stock_signature_at = item.stock_signature_at;
-            if (item.previous_qty != null) payload.previous_qty = item.previous_qty;
-            if (item.previous_qty_updated_at) payload.previous_qty_updated_at = item.previous_qty_updated_at;
-            if (item.price_updated_at) payload.price_updated_at = item.price_updated_at;
-            const tenantValue = item.tenant_id ?? tenantForInsert;
-            if (tenantValue) payload.tenant_id = tenantValue;
-            const branchValue = item.branch_id ?? branchForInsert;
-            if (branchValue) payload.branch_id = branchValue;
-            return payload;
-          });
-
-          if (insertRows.length) {
-            const chunkSize = 80;
-            for (let start = 0; start < insertRows.length; start += chunkSize) {
-              const slice = insertRows.slice(start, start + chunkSize);
-              let { error } = await supabase.from(itemsTable).insert(slice);
-              if (error?.code === "42703") {
-                const fallbackSlice = slice.map(({ tenant_id, branch_id, ...rest }) => rest);
-                const fallback = await supabase.from(itemsTable).insert(fallbackSlice);
-                error = fallback.error;
-              }
-              if (error) throw error;
-            }
-          }
-
-          if (idMap.size) {
-            const nextChecked = Object.entries(checkedSnapshot).reduce<Record<string, boolean>>((acc, [oldId, value]) => {
-              const mapped = idMap.get(oldId);
-              if (mapped) acc[mapped] = value;
-              return acc;
-            }, {});
-            const nextStatsMap = Object.entries(statsOpenSnapshot).reduce<Record<string, boolean>>((acc, [oldId, value]) => {
-              const mapped = idMap.get(oldId);
-              if (mapped && value) acc[mapped] = true;
-              return acc;
-            }, {});
-            const nextMinStock = Object.entries(minStockSnapshot).reduce<Record<string, MinStockState>>(
-              (acc, [oldId, value]) => {
-                const mapped = idMap.get(oldId);
-                if (mapped) acc[mapped] = { ...value };
-                return acc;
-              },
-              {},
-            );
-            const nextAutoQty = Object.entries(autoQtySnapshot).reduce<Record<string, boolean>>((acc, [oldId, value]) => {
-              const mapped = idMap.get(oldId);
-              if (mapped) acc[mapped] = value;
-              return acc;
-            }, {});
-            const nextItemOrder = Object.entries(itemOrderSnapshot).reduce<Record<string, string[]>>((acc, [groupKey, ids]) => {
-              const mapped = ids.map((oldId) => idMap.get(oldId)).filter((id): id is string => Boolean(id));
-              if (mapped.length) acc[groupKey] = mapped;
-              return acc;
-            }, {});
-            const sanitizedGroupOrder = groupOrderSnapshot
-              .map((name) => name?.trim())
-              .filter((name): name is string => Boolean(name && name.length > 0));
-
-            const uiPayload = buildStoredUiStatePayload({
-              checked: nextChecked,
-              groupCheckedMap: groupCheckedSnapshot,
-              sortMode: sortSnapshot,
-              openGroup: openGroupSnapshot,
-              statsOpenIds: mapStatsOpenIds(nextStatsMap),
-              itemOrderMap: nextItemOrder,
-              minStockMap: nextMinStock,
-              autoQtyMap: nextAutoQty,
-            });
-
-            const uiRow: {
-              order_id: string;
-              updated_at: string;
-              group_order?: string[];
-              checked_map: StoredUiStatePayload;
-            } = {
-              order_id: targetOrder.id,
-              updated_at: new Date().toISOString(),
-              checked_map: uiPayload,
-            };
-            if (sanitizedGroupOrder.length) uiRow.group_order = sanitizedGroupOrder;
-            const { error: uiCloneError } = await supabase
-              .from(TABLE_UI_STATE)
-              .upsert(uiRow, { onConflict: "order_id" });
-            if (uiCloneError) console.error("week order ui clone error", uiCloneError);
-          }
-        }
-      }
-
-      await fetchWeekOptions();
-      updateWeekParam(week.id);
-    } catch (err) {
-      console.error("create week error", err);
-      alert("No se pudo crear el pedido de esta semana. Probá de nuevo.");
-    } finally {
-      setCreatingWeek(false);
-    }
-  }, [
-    tenantId,
-    branchId,
-    provId,
-    items,
-    groupOrder,
-    checkedMap,
-    statsOpenMap,
-    itemOrderMap,
-    minStockMap,
-    autoQtyMap,
-    sortMode,
-    openGroup,
-    ensureWeekForDate,
-    supabase,
-    ordersTable,
-    itemsTable,
-    providerName,
-    fetchWeekOptions,
-    updateWeekParam,
-  ]);
-
-  const handleCreateWeekOrder = React.useCallback(() => {
-    if (!tenantId || !branchId) {
-      alert("Necesitás seleccionar una sucursal antes de crear el pedido.");
-      return;
-    }
-    if (!provId) {
-      alert("No se encontró el proveedor actual. Refrescá la página e intentá nuevamente.");
-      return;
-    }
-    openFinalizeDialog("new-week");
-  }, [tenantId, branchId, provId, openFinalizeDialog]);
 
   /** NUEVO: cargar ventas desde la fuente activa en DB (o por defecto) */
   React.useEffect(() => {
@@ -3397,15 +3114,20 @@ const [notesSubmitting, setNotesSubmitting] = React.useState(false);
 
   // crear/obtener pedido PENDIENTE + cargar ítems
 
-React.useEffect(() => {
-  if (!provId) return;
-  let mounted = true;
-  (async () => {
-    let base: OrderRow | null = null;
-    let ordersError: PostgrestError | Error | null = null;
-    const orderCandidates = [ordersTable, ...ORDER_TABLE_CANDIDATES.filter((t) => t !== ordersTable)];
+  React.useEffect(() => {
+    if (!provId) {
+      setInitialDataReady(false);
+      return;
+    }
+    let mounted = true;
+    setInitialDataReady(false);
+    (async () => {
+      try {
+        let base: OrderRow | null = null;
+        let ordersError: PostgrestError | Error | null = null;
+        const orderCandidates = [ordersTable, ...ORDER_TABLE_CANDIDATES.filter((t) => t !== ordersTable)];
 
-    const variantKeys = new Set<string>();
+        const variantKeys = new Set<string>();
     const orderVariants: Array<{ useTenant: boolean; useBranch: boolean }> = [];
     const addVariant = (useTenant: boolean, useBranch: boolean) => {
       const key = `${useTenant ? 't' : 'no'}:${useBranch ? 'b' : 'no'}`;
@@ -3423,45 +3145,52 @@ React.useEffect(() => {
     for (const table of orderCandidates) {
       let skipTable = false;
       for (const variant of orderVariants) {
-        let query = supabase
-          .from(table)
-          .select('*')
-          .eq('provider_id', provId)
-          .order('created_at', { ascending: false })
-          .limit(1);
-        if (selectedWeekId) query = query.eq('week_id', selectedWeekId);
-        else query = query.is('week_id', null);
-        if (variant.useTenant && tenantId) query = query.eq('tenant_id', tenantId);
-        if (variant.useBranch && branchId) query = query.eq('branch_id', branchId);
-
-        let { data, error } = await query;
-        if (error?.code === '42703') {
-          const fallback = await supabase
+        const runOrderQuery = async (filterWeekNull: boolean) => {
+          let q = supabase
             .from(table)
             .select('*')
             .eq('provider_id', provId)
             .order('created_at', { ascending: false })
             .limit(1);
-          data = fallback.data;
-          error = fallback.error;
-        }
-        if (error && (error.code === '42P01' || error.message?.includes('Could not find the table'))) {
-          skipTable = true;
-          break;
-        }
-        if (error) {
-          if (isMissingProviderError(error)) {
+          if (filterWeekNull) q = q.is('week_id', null);
+          if (variant.useTenant && tenantId) q = q.eq('tenant_id', tenantId);
+          if (variant.useBranch && branchId) q = q.eq('branch_id', branchId);
+          let { data, error } = await q;
+          if (error?.code === '42703') {
+            let fallback = supabase
+              .from(table)
+              .select('*')
+              .eq('provider_id', provId)
+              .order('created_at', { ascending: false })
+              .limit(1);
+            if (filterWeekNull) fallback = fallback.is('week_id', null);
+            const fallbackRes = await fallback;
+            data = fallbackRes.data;
+            error = fallbackRes.error;
+          }
+          return { data, error };
+        };
+
+        for (const filterNullWeek of [true, false]) {
+          const { data, error } = await runOrderQuery(filterNullWeek);
+          if (error && (error.code === '42P01' || error.message?.includes('Could not find the table'))) {
             skipTable = true;
             break;
           }
-          ordersError = error;
-          break;
-        }
-        if (data && data.length) {
-          base = data[0] as OrderRow;
-          if (table !== ordersTable) setOrdersTable(table);
-          resolvedOrderTable = table;
-          break;
+          if (error) {
+            if (isMissingProviderError(error)) {
+              skipTable = true;
+            } else {
+              ordersError = error;
+            }
+            break;
+          }
+          if (data && data.length) {
+            base = data[0] as OrderRow;
+            if (table !== ordersTable) setOrdersTable(table);
+            resolvedOrderTable = table;
+            break;
+          }
         }
       }
       if (skipTable) {
@@ -3479,7 +3208,6 @@ React.useEffect(() => {
         total: number;
         tenant_id?: string;
         branch_id?: string;
-        week_id?: string;
       };
 
       const creationPayloadBase: OrderInsertPayload = {
@@ -3487,7 +3215,6 @@ React.useEffect(() => {
         status: 'PENDIENTE' as Status,
         notes: `${providerName} - ${isoToday()}`,
         total: 0,
-        week_id: selectedWeekId ?? undefined,
       };
 
       for (const table of orderCandidates) {
@@ -3696,12 +3423,15 @@ React.useEffect(() => {
           });
       }
     }
-    if (base.id) {
-      void loadUIState(base.id);
-    }
-  })();
-  return () => { mounted = false; };
-}, [supabase, provId, providerName, tenantId, branchId, ordersTable, itemsTable, loadUIState, selectedWeekId]);
+        if (base.id) {
+          void loadUIState(base.id);
+        }
+      } finally {
+        if (mounted) setInitialDataReady(true);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [supabase, provId, providerName, tenantId, branchId, ordersTable, itemsTable, loadUIState]);
 
 
   // Realtime (escucha cambios en items)
@@ -3821,6 +3551,23 @@ React.useEffect(() => {
   }, []);
   const orderStatusLabel = order?.status ?? "PENDIENTE";
   const orderUpdatedAtLabel = formatDateTime(order?.updated_at);
+  const latestVersionSavedLabel = versionInfo?.savedAt ? formatVersionTimestamp(versionInfo.savedAt) : "";
+  const currentVersionSavedLabel = currentVersionInfo?.savedAt
+    ? formatVersionTimestamp(currentVersionInfo.savedAt)
+    : "";
+  const latestVersionNumber = versionInfo?.version ?? null;
+  const currentVersionNumber = currentVersionInfo?.version ?? null;
+  const hasCurrentVersion = currentVersionNumber != null;
+  const isCurrentLatest =
+    latestVersionNumber != null && currentVersionNumber != null && latestVersionNumber === currentVersionNumber;
+  const currentVersionStatus = (() => {
+    if (!hasCurrentVersion) return "Aún no abriste una versión del historial.";
+    if (!latestVersionNumber || isCurrentLatest) return "Estás en la última versión.";
+    if (currentVersionNumber != null && currentVersionNumber < latestVersionNumber) {
+      return "Estás viendo una versión anterior del historial.";
+    }
+    return "Versión seleccionada desde el historial.";
+  })();
   // Estado de selección global (para la casilla maestra)
 const selectableItems = React.useMemo(
   () => items.filter((it) => it.product_name !== GROUP_PLACEHOLDER),
@@ -3858,15 +3605,6 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
       { provider_id: provId, total, items: itemsCount, updated_at },
       { onConflict: 'provider_id' }
     );
-
-  if (selectedWeekId) {
-    await supabase
-      .from(TABLE_ORDER_SUMMARIES_WEEK)
-      .upsert(
-        { week_id: selectedWeekId, provider_id: provId, total, items: itemsCount, updated_at },
-        { onConflict: 'week_id,provider_id' }
-      );
-  }
 }
 
 
@@ -4204,9 +3942,8 @@ async function saveOrderSummary(totalArg?: number, itemsArg?: number) {
   const toggleStats = React.useCallback(
     (id: string) => {
       setStatsOpenMap((prev) => {
-        const next = { ...prev };
-        if (next[id]) delete next[id];
-        else next[id] = true;
+        const isCurrentlyOpen = !!prev[id];
+        const next = isCurrentlyOpen ? {} : { [id]: true };
         persistUiState({ statsOpenMap: next });
         return next;
       });
@@ -5716,17 +5453,48 @@ async function exportOrderAsXlsx() {
     setSnapshotTitleDraft("");
   }, []);
 
+  React.useEffect(() => {
+    if (!order?.id || !initialDataReady || autoLoadLatestSnapshotRef.current) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await loadSnapshots({ silent: true });
+        if (cancelled) return;
+        const latest = rows[0];
+        if (!latest || cancelled) return;
+        const versionOverride = inferSnapshotVersionNumber(latest, rows, versionInfo?.version ?? null);
+        const savedAtOverride = readSnapshotSavedAt(latest);
+        await openSnapshot(latest, { versionOverride, savedAtOverride });
+      } catch (err) {
+        console.error("auto load snapshot error", err);
+      } finally {
+        if (!cancelled) {
+          autoLoadLatestSnapshotRef.current = true;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [order?.id, initialDataReady, versionInfo?.version]);
+
   /* ===== Historial ===== */
-  async function loadSnapshots() {
-    if (!order) return;
+  async function loadSnapshots(options?: { silent?: boolean }): Promise<SnapshotRow[]> {
+    if (!order) return [];
     const { data, error } = await supabase
       .from(TABLE_SNAPSHOTS)
       .select("*")
       .eq("order_id", order.id)
       .order("created_at", { ascending: false })
       .limit(200);
-    if (error) { console.error(error); alert(`No se pudo cargar el historial: ${error.message}`); return; }
-    setSnapshots((data ?? []) as SnapshotRow[]);
+    if (error) {
+      console.error(error);
+      if (!options?.silent) alert(`No se pudo cargar el historial: ${error.message}`);
+      return [];
+    }
+    const rows = (data ?? []) as SnapshotRow[];
+    setSnapshots(rows);
+    return rows;
   }
 
   async function commitSnapshotTitle() {
@@ -5772,10 +5540,11 @@ async function exportOrderAsXlsx() {
     }
   }
 
-  async function saveSnapshot(): Promise<boolean> {
+  async function saveSnapshot(options?: { items?: ItemRow[] }): Promise<boolean> {
     if (!order) return false;
     try {
-      const snapshotItems: SnapshotItem[] = items
+      const sourceItems = options?.items ?? items;
+      const snapshotItems: SnapshotItem[] = sourceItems
         .filter((it) => it.product_name !== GROUP_PLACEHOLDER)
         .map((it) => ({
           product_name: it.product_name,
@@ -5795,15 +5564,20 @@ async function exportOrderAsXlsx() {
           branch_id: it.branch_id ?? null,
         }));
 
-      const payload: SnapshotPayload = { items: snapshotItems };
-      const title = `${providerName} - ${isoToday()}`;
+      const nextVersion = (versionInfo?.version ?? 0) + 1;
+      const nowIso = new Date().toISOString();
+      const payload: SnapshotPayload = {
+        items: snapshotItems,
+        meta: { version: nextVersion, savedAt: nowIso },
+      };
+      const title = buildVersionTitle(nextVersion, nowIso);
 
       // Aseguramos que los totales estén al día
-      const totalNow = items.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
-      const qtyNow = items.reduce((a, it) => a + (it.qty || 0), 0);
+      const totalNow = sourceItems.reduce((a, it) => a + (it.unit_price || 0) * (it.qty || 0), 0);
+      const qtyNow = sourceItems.reduce((a, it) => a + (it.qty || 0), 0);
 
       // 1) Guardar snapshot
-      const { error } = await supabase
+      const { data: inserted, error } = await supabase
         .from(TABLE_SNAPSHOTS)
         .insert([{ order_id: order.id, title, snapshot: payload }])
         .select("*")
@@ -5814,6 +5588,9 @@ async function exportOrderAsXlsx() {
       await saveOrderSummary(totalNow, qtyNow);
 
       await loadSnapshots();
+      const savedAt = inserted?.created_at ?? nowIso;
+      setVersionInfo({ version: nextVersion, savedAt });
+      setCurrentVersionInfo({ version: nextVersion, savedAt });
       setHistoryOpen(true);
       return true;
     } catch (error: unknown) {
@@ -5835,16 +5612,13 @@ async function exportOrderAsXlsx() {
   }, [saveSnapshot, savingSnapshot]);
 
   const handleFinalizeOrder = React.useCallback(async () => {
-    if (!actionableItems.length && finalizeContext !== "new-week") {
+    if (!actionableItems.length) {
       alert("No hay productos para confirmar.");
       return;
     }
     setFinalizingOrder(true);
-    let nextAction: FinalizeContext | null = null;
-    let updatedItemsSnapshot: ItemRow[] | null = null;
+    setFinalizeSnapshotItems(null);
     try {
-      const ok = await saveSnapshot();
-      if (!ok) return;
       const relevantItems = actionableItems.length ? actionableItems : [];
       const nowIso = new Date().toISOString();
       const updates = relevantItems.map((item) => {
@@ -5890,29 +5664,25 @@ async function exportOrderAsXlsx() {
         }
       }
 
+      let snapshotItemsSource = items;
       if (updates.length) {
-        setItems((prev) => {
-          const next = prev.map((item) => {
-            const entry = updates.find((u) => u.item.id === item.id);
-            if (!entry) return item;
-            return {
-              ...item,
-              stock_qty: entry.stockResult,
-              stock_updated_at: nowIso,
-              previous_qty: entry.receivedQty,
-              previous_qty_updated_at: nowIso,
-            };
-          });
-          updatedItemsSnapshot = next;
-          return next;
+        const nextItems = items.map((item) => {
+          const entry = updates.find((u) => u.item.id === item.id);
+          if (!entry) return item;
+          return {
+            ...item,
+            stock_qty: entry.stockResult,
+            stock_updated_at: nowIso,
+            previous_qty: entry.receivedQty,
+            previous_qty_updated_at: nowIso,
+          };
         });
+        snapshotItemsSource = nextItems;
+        setItems(nextItems);
         setLastStockAppliedAt(nowIso);
       }
 
-      nextAction = finalizeContext;
-      setFinalizeDialogOpen(false);
-      setFinalizeReceived({});
-      setFinalizeContext(null);
+      setFinalizeSnapshotItems(snapshotItemsSource);
     } catch (error) {
       console.error("finalize order error", error);
       const message = readErrorMessage(error) || (error instanceof Error ? error.message : "");
@@ -5920,14 +5690,8 @@ async function exportOrderAsXlsx() {
     } finally {
       setFinalizingOrder(false);
     }
-    if (nextAction === "new-week") {
-      await cloneOrderToNewWeek({
-        itemsSnapshot: updatedItemsSnapshot ?? undefined,
-      });
-    }
   }, [
     actionableItems,
-    finalizeContext,
     finalizeReceived,
     saveSnapshot,
     computeLiveStock,
@@ -5936,10 +5700,63 @@ async function exportOrderAsXlsx() {
     tenantId,
     branchId,
     setItems,
-    cloneOrderToNewWeek,
+    items,
+    setFinalizeSnapshotItems,
   ]);
 
-  async function openSnapshot(snap: SnapshotRow) {
+  const handleFinalizeSaveSnapshot = React.useCallback(async () => {
+    if (!finalizeSnapshotItems || finalizeSavingSnapshot) return;
+    setFinalizeSavingSnapshot(true);
+    try {
+      const ok = await saveSnapshot({ items: finalizeSnapshotItems });
+      if (!ok) return;
+      setFinalizeSnapshotItems(null);
+      setFinalizeReceived({});
+      setFinalizeDialogOpen(false);
+    } finally {
+      setFinalizeSavingSnapshot(false);
+    }
+  }, [finalizeSnapshotItems, finalizeSavingSnapshot, saveSnapshot]);
+
+  const handleOpenLatestVersion = React.useCallback(async () => {
+    if (!versionInfo || openingLatestVersion) return;
+    setOpeningLatestVersion(true);
+    try {
+      let rows = snapshots;
+      if (!rows.length) {
+        rows = await loadSnapshots({ silent: true });
+      }
+      const latest = rows[0];
+      if (!latest) {
+        alert("Todavía no hay versiones guardadas.");
+        return;
+      }
+      const versionOverride = inferSnapshotVersionNumber(
+        latest,
+        rows,
+        versionInfo?.version ?? null,
+      );
+      const savedAtOverride = readSnapshotSavedAt(latest);
+      await openSnapshot(latest, { versionOverride, savedAtOverride });
+    } catch (error) {
+      console.error("open latest version error", error);
+      const message = readErrorMessage(error) || (error instanceof Error ? error.message : "");
+      alert(`No se pudo abrir la última versión.\n${message}`);
+    } finally {
+      setOpeningLatestVersion(false);
+    }
+  }, [
+    versionInfo,
+    openingLatestVersion,
+    snapshots,
+    loadSnapshots,
+    openSnapshot,
+  ]);
+
+  async function openSnapshot(
+    snap: SnapshotRow,
+    options?: { versionOverride?: number | null; savedAtOverride?: string | null },
+  ) {
     if (!order) return;
     const itemsPayload = (snap.snapshot?.items ?? []) as SnapshotPayload["items"];
     const { error: delErr } = await supabase.from(itemsTable).delete().eq("order_id", order.id);
@@ -6027,6 +5844,12 @@ async function exportOrderAsXlsx() {
     persistUiState({ autoQtyMap: manualAutoMap });
 
     setItems(newItems);
+    const versionNumber = options?.versionOverride ?? readVersionFromSnapshot(snap);
+    const savedAt =
+      options?.savedAtOverride ??
+      readSnapshotSavedAt(snap) ??
+      (typeof snap.created_at === "string" ? snap.created_at : null);
+    setCurrentVersionInfo({ version: versionNumber ?? null, savedAt: savedAt ?? null });
     recomputeOrderTotal(newItems);
     setHistoryOpen(false);
   }
@@ -6035,6 +5858,7 @@ async function exportOrderAsXlsx() {
     const { error } = await supabase.from(TABLE_SNAPSHOTS).delete().eq("id", snapId);
     if (error) { console.error(error); alert("No se pudo borrar."); return; }
     await loadSnapshots();
+    if (order?.id) await refreshVersionInfo(order.id);
   }
 
   async function confirmExport() {
@@ -6112,27 +5936,35 @@ async function exportOrderAsXlsx() {
           if (finalizingOrder) return;
           setFinalizeDialogOpen(open);
           if (!open) {
-            setFinalizeContext(null);
             setFinalizeReceived({});
+            setFinalizeSnapshotItems(null);
+            setFinalizeSavingSnapshot(false);
           }
         }}
       >
-        <DialogContent className="max-w-3xl max-h-[calc(100vh-3rem)] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="flex max-w-3xl max-h-[calc(100vh-3rem)] flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Cerrar pedido</DialogTitle>
             <DialogDescription>
-              {finalizeContext === "new-week"
-                ? "Vamos a cerrar el pedido anterior y crear uno nuevo. Confirmá las cantidades recibidas para continuar."
-                : "Confirmá las cantidades que realmente esperás recibir. Ajustá la columna “Recibido” si algún producto llega incompleto o no lo envían."}
+              Confirmá las cantidades que realmente esperás recibir. Ajustá la columna “Recibido” si algún producto llega incompleto o no lo envían.
             </DialogDescription>
+            <div className="mt-3 flex items-start gap-3 rounded-2xl border border-amber-300/80 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <AlertTriangle className="h-5 w-5 flex-shrink-0 text-amber-600" />
+              <div>
+                <p className="font-semibold">Advertencia</p>
+                <p>
+                  Al confirmar se sumarán las cantidades ingresadas al stock actual y se guardará un historial. Podés cancelar para revisar o corregir antes de cerrar.
+                </p>
+              </div>
+            </div>
           </DialogHeader>
-          <div className="mt-4 rounded-3xl border border-[var(--border)] bg-muted/40">
+          <div className="mt-4 flex-1 min-h-0 overflow-hidden rounded-3xl border border-[var(--border)] bg-muted/40">
             {actionableItems.length === 0 ? (
               <p className="px-4 py-8 text-sm text-muted-foreground">
                 No hay productos en el pedido actual.
               </p>
             ) : (
-              <ScrollArea className="max-h-[60vh]">
+              <ScrollArea className="h-full max-h-[60vh]">
                 <div className="divide-y divide-border/50">
                   {actionableItems.map((item) => {
                     const planned = Math.max(0, Math.round(Number(item.qty ?? 0)));
@@ -6154,6 +5986,7 @@ async function exportOrderAsXlsx() {
                           suffixLabel="Recibido"
                           onChange={(n) => {
                             setFinalizeReceived((prev) => ({ ...prev, [item.id]: Math.max(0, n) }));
+                            setFinalizeSnapshotItems(null);
                           }}
                         />
                       </div>
@@ -6163,25 +5996,42 @@ async function exportOrderAsXlsx() {
               </ScrollArea>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end shrink-0">
+            <DialogClose asChild>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={(event) => {
+                  if (finalizingOrder) {
+                    event.preventDefault();
+                    return;
+                  }
+                  setFinalizeDialogOpen(false);
+                }}
+                disabled={finalizingOrder}
+                className="w-full justify-center sm:w-auto"
+              >
+                Cancelar
+              </Button>
+            </DialogClose>
             <Button
-              variant="outline"
-              onClick={() => {
-                if (finalizingOrder) return;
-                setFinalizeDialogOpen(false);
-                setFinalizeContext(null);
-                setFinalizeReceived({});
-              }}
-              disabled={finalizingOrder}
-            >
-              Cancelar
-            </Button>
-            <Button
+              type="button"
               onClick={() => void handleFinalizeOrder()}
-              disabled={finalizeConfirmDisabled}
+              disabled={finalizeConfirmDisabled || Boolean(finalizeSnapshotItems)}
+              className="w-full justify-center sm:w-auto"
             >
               {finalizingOrder ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {finalizeContext === "new-week" ? "Confirmar y crear pedido" : "Cerrar pedido"}
+              Cerrar pedido
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void handleFinalizeSaveSnapshot()}
+              disabled={!finalizeSnapshotItems || finalizeSavingSnapshot}
+              className="w-full justify-center sm:w-auto"
+            >
+              {finalizeSavingSnapshot ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Guardar
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -6368,6 +6218,24 @@ async function exportOrderAsXlsx() {
                       {savingSnapshot ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                       <span>Guardar</span>
                     </Button>
+
+                    <Button
+                      onClick={() => {
+                        setFooterActionsOpen(false);
+                        setFinalizeReceived({});
+                        setFinalizeDialogOpen(true);
+                      }}
+                      disabled={actionableItems.length === 0 || finalizingOrder}
+                      aria-label="Cerrar y guardar pedido"
+                      className="h-11 w-full justify-start gap-3 rounded-xl bg-emerald-600 text-white shadow-[0_16px_36px_-24px_rgba(16,94,60,0.65)] transition hover:bg-emerald-600/90 disabled:opacity-60"
+                    >
+                      {finalizingOrder ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-4 w-4" />
+                      )}
+                      <span>Cerrar y guardar</span>
+                    </Button>
                   </div>
                 </PopoverContent>
               </Popover>
@@ -6527,7 +6395,19 @@ async function exportOrderAsXlsx() {
                                         <Pencil className="h-4 w-4" />
                                       </Button>
                                     )}
-                                    <Button size="sm" onClick={() => void openSnapshot(s)} disabled={isRenaming}>
+                                    <Button
+                                      size="sm"
+                                      onClick={() => {
+                                        const versionOverride = inferSnapshotVersionNumber(
+                                          s,
+                                          snapshots,
+                                          versionInfo?.version ?? null,
+                                        );
+                                        const savedAtOverride = readSnapshotSavedAt(s);
+                                        void openSnapshot(s, { versionOverride, savedAtOverride });
+                                      }}
+                                      disabled={isRenaming}
+                                    >
                                       Abrir
                                     </Button>
                                     <AlertDialog>
@@ -6595,38 +6475,63 @@ async function exportOrderAsXlsx() {
                   </button>
                 </div>
               </div>
-              <div className="mt-4 flex w-full flex-wrap items-center gap-2 sm:gap-3">
-                <Select
-                  value={selectedWeekId ?? LEGACY_WEEK_VALUE}
-                  onValueChange={handleWeekChange}
-                  disabled={weeksLoading}
-                >
-                  <SelectTrigger className="h-11 w-auto max-w-full rounded-2xl border border-[var(--border)] bg-white/80 px-3 text-left text-sm font-medium text-[color:var(--foreground)]">
-                    <SelectValue placeholder={weeksLoading ? "Cargando..." : "Seleccioná semana"}>
-                      {currentWeekLabel}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent className="max-h-[260px]">
-                    <SelectItem value={LEGACY_WEEK_VALUE}>
-                      Pedido actual (histórico)
-                    </SelectItem>
-                    {weekOptions.map((week) => (
-                      <SelectItem key={week.id} value={week.id}>
-                        {weekLabel(week)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => void handleCreateWeekOrder()}
-                  disabled={creatingWeek}
-                  className="h-11 min-w-[130px] whitespace-nowrap rounded-2xl border border-[var(--border)] bg-white/80 px-4 text-sm font-semibold text-[color:var(--foreground)] shadow-none hover:bg-white"
-                >
-                  {creatingWeek ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
-                  Nuevo pedido
-                </Button>
+              <div className="mt-4 w-full">
+                <div className="flex w-full flex-col gap-3 rounded-2xl border border-[var(--border)] bg-white/80 px-4 py-3 text-left text-sm text-[color:var(--foreground)]">
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                      Última versión
+                    </span>
+                    <div className="text-lg font-semibold">
+                      {versionInfo ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleOpenLatestVersion()}
+                          disabled={openingLatestVersion}
+                          className="inline-flex items-center gap-2 rounded-md bg-transparent p-0 text-left text-[inherit] transition-colors hover:text-[var(--primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+                          aria-label="Abrir última versión"
+                          title="Abrir última versión"
+                        >
+                          {openingLatestVersion ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Abriendo…
+                            </>
+                          ) : (
+                            <>Versión {versionInfo.version}</>
+                          )}
+                        </button>
+                      ) : (
+                        "Sin versiones"
+                      )}
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {latestVersionSavedLabel
+                        ? `Guardado ${latestVersionSavedLabel}`
+                        : "Guardá el pedido para crear la versión 1"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                      Versión actual
+                    </span>
+                    <span className="text-base font-semibold">
+                      {hasCurrentVersion
+                        ? `Versión ${currentVersionNumber}`
+                        : versionInfo
+                          ? "Sin versión abierta"
+                          : "Aún sin historial"}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {currentVersionStatus}
+                      {hasCurrentVersion && currentVersionSavedLabel
+                        ? ` · Guardado ${currentVersionSavedLabel}`
+                        : null}
+                      {!hasCurrentVersion && latestVersionNumber
+                        ? ` (Última: ${latestVersionNumber})`
+                        : null}
+                    </span>
+                  </div>
+                </div>
               </div>
               <div className="rd-header-total ml-auto w-full text-right sm:w-auto">
                 <span>Total del pedido:</span>
@@ -6856,38 +6761,55 @@ async function exportOrderAsXlsx() {
 
           <div className="rd-card mt-6">
             <div className="rd-card-content space-y-4">
-              <div className="rd-card-header">
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setStockActionsExpanded((prev) => !prev)}
-                    className="flex w-full items-center justify-between gap-2 rounded-2xl bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    aria-label={stockActionsExpanded ? "Ocultar acciones de stock" : "Mostrar acciones de stock"}
-                    aria-expanded={stockActionsExpanded}
-                  >
-                    <span className="rd-card-title flex-1 text-left">Acciones de stock</span>
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent text-muted-foreground hover:bg-muted/60">
-                      <ChevronDown
-                        className={clsx("h-4 w-4 transition-transform", stockActionsExpanded ? "rotate-180" : "rotate-0")}
-                      />
-                    </span>
-                  </button>
-                  <p className="text-sm text-muted-foreground">Sincronizá el inventario con las ventas reales.</p>
-                </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-pressed={stockActionsExpanded}
+                  aria-expanded={stockActionsExpanded}
+                  aria-controls="stock-actions-panel"
+                  onClick={() => setStockActionsExpanded((prev) => !prev)}
+                  className={clsx(
+                    "h-9 rounded-full border border-[var(--border)] px-4 text-xs font-semibold uppercase tracking-[0.16em]",
+                    stockActionsExpanded
+                      ? "bg-[var(--foreground)] text-[var(--background)] border-[var(--foreground)]"
+                      : "bg-[var(--background)] text-muted-foreground"
+                  )}
+                >
+                  Acciones de stock
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-pressed={productOrgExpanded}
+                  aria-expanded={productOrgExpanded}
+                  aria-controls="product-organization-panel"
+                  onClick={() => setProductOrgExpanded((prev) => !prev)}
+                  className={clsx(
+                    "h-9 rounded-full border border-[var(--border)] px-4 text-xs font-semibold uppercase tracking-[0.16em]",
+                    productOrgExpanded
+                      ? "bg-[var(--foreground)] text-[var(--background)] border-[var(--foreground)]"
+                      : "bg-[var(--background)] text-muted-foreground"
+                  )}
+                >
+                  Organización de productos
+                </Button>
               </div>
               {stockActionsExpanded ? (
-                <>
-              <div className="rd-actions-grid">
-                <AlertDialog
-                  onOpenChange={(open) => {
+                <div id="stock-actions-panel" className="space-y-3">
+                <div className="rd-actions-grid">
+                  <AlertDialog
+                    onOpenChange={(open) => {
                     if (!open) setSuggestedMarginError(null);
                   }}
                 >
                   <AlertDialogTrigger asChild>
                     <Button
                       variant="outline"
-                      size="lg"
-                      className="h-11 flex-1 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] hover:bg-muted disabled:opacity-60"
+                      size="sm"
+                      className="h-10 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--foreground)] hover:bg-muted disabled:opacity-60"
                       title={
                         autoAllEnabled
                           ? "Desactivá Pedido auto para usar las sugerencias manuales"
@@ -6980,21 +6902,12 @@ async function exportOrderAsXlsx() {
                     </div>
                   </AlertDialogContent>
                 </AlertDialog>
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="h-11 flex-1 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] transition hover:bg-muted disabled:opacity-60"
-                  onClick={() => void handleUndoStock()}
-                  disabled={stockProcessing || !stockUndoSnapshot || stockUndoSnapshot.rows.length === 0}
-                >
-                  Deshacer
-                </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button
                       variant="outline"
-                      size="lg"
-                      className="h-11 flex-1 rounded-full border border-[var(--border)] bg-muted/60 px-6 text-sm font-medium text-[var(--foreground)] transition hover:bg-muted disabled:opacity-60"
+                      size="sm"
+                      className="h-10 rounded-full border border-[var(--border)] bg-muted/60 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--foreground)] transition hover:bg-muted disabled:opacity-60"
                       disabled={zeroing}
                     >
                       Cant.0
@@ -7016,11 +6929,11 @@ async function exportOrderAsXlsx() {
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
-                <div className="flex min-w-[240px] flex-1 flex-col gap-2">
+                <div className="flex flex-col gap-2">
                   <Button
                     type="button"
                     variant="secondary"
-                    size="lg"
+                    size="sm"
                     onClick={handleBulkAutoToggle}
                     disabled={!hasItems}
                     aria-pressed={autoAllEnabled}
@@ -7030,7 +6943,7 @@ async function exportOrderAsXlsx() {
                         : "Aplicar sugerido automático a todos los productos"
                     }
                     className={clsx(
-                      "h-11 w-full rounded-full border px-6 text-left text-sm font-semibold shadow-none transition",
+                      "h-10 rounded-full border px-5 text-xs font-semibold uppercase tracking-[0.16em] shadow-none transition",
                       autoAllEnabled
                         ? "border-transparent bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/90"
                         : "border border-[var(--border)] bg-white/80 text-[color:var(--foreground)] hover:bg-white"
@@ -7052,16 +6965,47 @@ async function exportOrderAsXlsx() {
                       </div>
                     </div>
                   </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleEditAutoBuffer}
-                    disabled={!hasItems}
-                    className="h-8 w-full justify-center rounded-full border border-dashed border-[var(--border)] px-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground hover:text-[var(--foreground)]"
-                  >
-                    {autoBufferIndicatorText}
-                  </Button>
+                  <div className="flex flex-wrap items-start gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleEditAutoBuffer}
+                      disabled={!hasItems}
+                      className="inline-flex items-center justify-between rounded-full border border-dashed border-[var(--border)] px-4 py-2 text-left text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground hover:text-[var(--foreground)]"
+                      aria-label="Editar margen automático"
+                    >
+                      <div className="flex flex-col leading-tight text-[var(--primary)]">
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                          Margen
+                        </span>
+                        <span className="text-[11px] font-semibold">{autoBufferIndicatorText}</span>
+                      </div>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                    <Select
+                      value={providerFrequency}
+                      onValueChange={(value) => handleChangeAutoFrequency(value as ProviderFrequency)}
+                      disabled={!hasItems}
+                    >
+                      <SelectTrigger
+                        className="flex flex-col items-start rounded-full border border-dashed border-[var(--border)] bg-transparent px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground hover:text-[var(--foreground)] leading-tight"
+                        aria-label="Frecuencia de pedido automático"
+                      >
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                          Frecuencia
+                        </span>
+                        <span className="text-[11px] font-semibold text-[var(--primary)] -mt-1.5">
+                          <SelectValue placeholder="Elegí frecuencia" />
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="SEMANAL">Semanal</SelectItem>
+                        <SelectItem value="QUINCENAL">Quincenal</SelectItem>
+                        <SelectItem value="MENSUAL">Mensual</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <Dialog
                   open={autoBufferDialogOpen}
@@ -7144,34 +7088,10 @@ async function exportOrderAsXlsx() {
                   Agregá productos al pedido para habilitar estas acciones.
                 </p>
               )}
-                </>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="rd-card mt-6">
-            <div className="rd-card-content space-y-4">
-              <div className="rd-card-header">
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setProductOrgExpanded((prev) => !prev)}
-                    className="flex w-full items-center justify-between gap-2 rounded-2xl bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    aria-label={productOrgExpanded ? "Ocultar organización de productos" : "Mostrar organización de productos"}
-                    aria-expanded={productOrgExpanded}
-                  >
-                    <span className="rd-card-title flex-1 text-left">Organización de productos</span>
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-transparent text-muted-foreground hover:bg-muted/60">
-                      <ChevronDown
-                        className={clsx("h-4 w-4 transition-transform", productOrgExpanded ? "rotate-180" : "rotate-0")}
-                      />
-                    </span>
-                  </button>
-                  <p className="text-sm text-muted-foreground">Definí el orden y margen estimado de cada ítem.</p>
-                </div>
               </div>
+              ) : null}
               {productOrgExpanded ? (
-                <div className="rd-sort-card">
+                <div id="product-organization-panel" className="rd-sort-card">
                   <div className="flex flex-1 flex-col gap-3">
                   <Label htmlFor="sort-mode" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                     Ordenar items
@@ -7188,7 +7108,10 @@ async function exportOrderAsXlsx() {
                               persistUiState({ sortMode: next });
                             }}
                           >
-                            <SelectTrigger id="sort-mode" className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-5 text-sm">
+                            <SelectTrigger
+                              id="sort-mode"
+                              className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-5 text-sm [&>svg]:hidden"
+                            >
                               <SelectValue placeholder="Ordenar por..." />
                             </SelectTrigger>
                             <SelectContent>
@@ -7202,10 +7125,7 @@ async function exportOrderAsXlsx() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-3">
-                      <Label className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        Precio x U
-                      </Label>
+                    <div className="flex">
                       <Dialog open={peSettingsOpen} onOpenChange={setPeSettingsOpen}>
                         <DialogTrigger asChild>
                           <Button
@@ -7216,7 +7136,7 @@ async function exportOrderAsXlsx() {
                             Precio x U
                           </Button>
                         </DialogTrigger>
-                        <DialogContent className="sm:max-w-xl max-h-[80vh] overflow-y-auto z-[80]">
+                        <DialogContent className="sm:max-w-xl max-h-[80vh] overflow-y-auto">
                           <DialogHeader>
                             <DialogTitle>Precio por unidad (P.E.)</DialogTitle>
                             <DialogDescription>
@@ -7224,13 +7144,13 @@ async function exportOrderAsXlsx() {
                             </DialogDescription>
                           </DialogHeader>
                           <div className="space-y-6">
-                            <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-muted/30 p-4">
-                              <div className="flex flex-wrap items-end gap-3">
-                                <div className="flex-1">
+                            <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-muted/30 p-4">
+                              <div className="grid gap-3 sm:grid-cols-3">
+                                <div className="space-y-2">
                                   <Label htmlFor="pe-margin" className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                                     Margen estimado
                                   </Label>
-                                  <div className="relative mt-2 text-[var(--foreground)]">
+                                  <div className="relative text-[var(--foreground)]">
                                     <Input
                                       id="pe-margin"
                                       type="number"
@@ -7239,36 +7159,46 @@ async function exportOrderAsXlsx() {
                                       max={100}
                                       step={1}
                                       value={marginPct}
-                                      onChange={(e) => {
-                                        const raw = e.target.value;
-                                        if (raw === "") {
-                                          setMarginPct(0);
-                                          return;
-                                        }
-                                        const parsed = Number(raw);
-                                        if (Number.isNaN(parsed)) return;
-                                        const clamped = Math.max(0, Math.min(100, parsed));
-                                        setMarginPct(clamped);
-                                      }}
+                                      onChange={handleMarginInputChange}
                                       className="h-11 w-full rounded-full border border-[var(--border)] bg-[var(--input-background)] pr-10 text-right text-base font-semibold tabular-nums"
                                       aria-label="Margen para precio estimado"
                                     />
                                     <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
                                   </div>
                                 </div>
-                                <Button
-                                  type="button"
-                                  variant="secondary"
-                                  className="h-11 rounded-full px-6 text-xs font-semibold uppercase tracking-[0.16em]"
-                                  onClick={() => void runMarginPeApply()}
-                                  disabled={!peMarginEnabled || actionableItems.length === 0 || peApplying}
-                                >
-                                  {peApplying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                                  Aplicar margen
-                                </Button>
+                                <div className="space-y-2">
+                                  <Label htmlFor="pe-sale" className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                                    Precio de venta
+                                  </Label>
+                                  <Input
+                                    id="pe-sale"
+                                    inputMode="decimal"
+                                    type="number"
+                                    value={peSimInput}
+                                    onChange={handleSaleInputChange}
+                                    placeholder="Ej. 1500"
+                                    className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 text-base font-semibold tabular-nums"
+                                    aria-label="Precio de venta para estimar costo"
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label htmlFor="pe-provider" className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                                    Precio proveedor
+                                  </Label>
+                                  <Input
+                                    id="pe-provider"
+                                    inputMode="decimal"
+                                    type="number"
+                                    value={peSimProviderInput}
+                                    onChange={handleProviderInputChange}
+                                    placeholder="Ej. 900"
+                                    className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 text-base font-semibold tabular-nums"
+                                    aria-label="Precio proveedor estimado"
+                                  />
+                                </div>
                               </div>
                               <p className="text-xs text-muted-foreground">
-                                El margen se descuenta del precio promedio de ventas para estimar el costo del proveedor.
+                                Modificá cualquier campo: recalculamos el resto usando la fórmula margen = 1 - (Proveedor / Venta).
                               </p>
                             </div>
                             <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-muted/20 p-4">
@@ -7290,81 +7220,6 @@ async function exportOrderAsXlsx() {
                               <p className="text-xs text-muted-foreground">
                                 Cuando está activo, el margen se aplica sobre todos los productos utilizando los datos de ventas disponibles.
                               </p>
-                            </div>
-                            <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-muted/20 p-4">
-                              <Label htmlFor="pe-sim" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                                Simulá un ejemplo
-                              </Label>
-                              <div className="grid gap-4 sm:grid-cols-2">
-                                <div className="space-y-1.5">
-                                  <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-                                    Precio de venta / subtotal
-                                  </span>
-                                  <Input
-                                    id="pe-sim"
-                                    inputMode="decimal"
-                                    type="number"
-                                    value={peSimInput}
-                                    onChange={(e) => setPeSimInput(e.target.value)}
-                                    placeholder="Ej. 1500"
-                                    className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 text-base font-semibold tabular-nums"
-                                  />
-                                </div>
-                                <div className="space-y-1.5">
-                                  <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-                                    Precio proveedor real (opcional)
-                                  </span>
-                                  <Input
-                                    id="pe-sim-provider"
-                                    inputMode="decimal"
-                                    type="number"
-                                    value={peSimProviderInput}
-                                    onChange={(e) => setPeSimProviderInput(e.target.value)}
-                                    placeholder="Ej. 900"
-                                    className="h-11 rounded-full border border-[var(--border)] bg-[var(--input-background)] px-4 text-base font-semibold tabular-nums"
-                                  />
-                                </div>
-                              </div>
-                              <div className="grid gap-4 sm:grid-cols-2">
-                                <div className="rounded-2xl border border-[var(--border)] bg-background px-4 py-3 text-sm">
-                                  <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                                    Precio estimado proveedor
-                                  </div>
-                                  <div className="text-2xl font-semibold tabular-nums text-[var(--foreground)]">
-                                    {fmtMoney(peSimEstimate)}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    Ahorro estimado: {fmtMoney(peSimDiff)}
-                                  </div>
-                                </div>
-                                <div className="rounded-2xl border border-[var(--border)] bg-background px-4 py-3 text-sm flex flex-col gap-2">
-                                  <div>
-                                    <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                                      Margen según tus datos
-                                    </div>
-                                    <div className="text-2xl font-semibold tabular-nums text-[var(--foreground)]">
-                                      {peSimMarginFromInputs != null ? `${peSimMarginFromInputs}%` : "—"}
-                                    </div>
-                                  </div>
-                                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                                    <span>Fórmula: 1 - (Proveedor / Venta)</span>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="sm"
-                                      className="h-8 rounded-full px-3 text-[11px] font-semibold uppercase tracking-[0.16em]"
-                                      onClick={() => {
-                                        if (peSimMarginFromInputs == null) return;
-                                        const safe = Math.max(0, Math.min(100, peSimMarginFromInputs));
-                                        setMarginPct(safe);
-                                      }}
-                                      disabled={peSimMarginFromInputs == null}
-                                    >
-                                      Usar este
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
                             </div>
                           </div>
                           <DialogFooter className="gap-2">
@@ -8670,9 +8525,9 @@ type DragHandleProps = {
         groupChecked && "bg-[color:var(--order-card-highlight)]/10",
       )}
     >
-      <div className="flex w-full flex-col gap-3 sm:gap-4">
+      <div className="flex w-full flex-col gap-2.5 sm:gap-3.5">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:gap-4">
-          <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <div className="flex min-w-0 flex-1 flex-col gap-2.5">
             <div className="flex w-full flex-wrap items-center gap-2.5 sm:gap-3">
               <div className="flex flex-col items-start gap-1 text-[10px] text-muted-foreground">
                 <span className="text-[9px] font-semibold uppercase tracking-[0.2em]">Orden</span>
@@ -8757,69 +8612,71 @@ type DragHandleProps = {
                 </div>
               </div>
             </div>
-            <div className="min-w-0">
-              {!editing ? (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="inline-flex w-full min-w-0 items-center gap-2 truncate text-left text-lg font-semibold hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 md:w-auto"
-                  title="Renombrar grupo"
-                  onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault(); e.stopPropagation(); setEditing(true);
-                    }
-                  }}
-                >
-                  <span className="truncate">{groupName || "Sin grupo"}</span>
-                  <Pencil className="h-4 w-4 opacity-70 flex-shrink-0" />
-                </span>
-              ) : (
-                <Input
-                  ref={groupNameInputRef}
-                  className="h-9 w-full rounded-2xl md:w-[11rem]"
-                  value={editValue}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => setEditValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") { e.preventDefault(); void commitRename(); }
-                    if (e.key === "Escape") {
-                      e.preventDefault(); setEditing(false); setEditValue(groupName || "Sin grupo");
-                    }
-                  }}
-                  onBlur={() => void commitRename()}
-                />
-              )}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="min-w-0">
+                  {!editing ? (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      className="inline-flex w-full min-w-0 items-center gap-2 truncate text-left text-lg font-semibold hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 md:w-auto"
+                      title="Renombrar grupo"
+                      onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault(); e.stopPropagation(); setEditing(true);
+                        }
+                      }}
+                    >
+                      <span className="truncate">{groupName || "Sin grupo"}</span>
+                      <Pencil className="h-4 w-4 opacity-70 flex-shrink-0" />
+                    </span>
+                  ) : (
+                    <Input
+                      ref={groupNameInputRef}
+                      className="h-9 w-full rounded-2xl md:w-[11rem]"
+                      value={editValue}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); void commitRename(); }
+                        if (e.key === "Escape") {
+                          e.preventDefault(); setEditing(false); setEditValue(groupName || "Sin grupo");
+                        }
+                      }}
+                      onBlur={() => void commitRename()}
+                    />
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-y-1.5 gap-x-3 text-sm text-muted-foreground">
+                  <div className="inline-flex items-center gap-1 font-medium text-[color:var(--foreground)]">
+                    {fmtInt(groupUnits)} unidades
+                  </div>
+                  <span className="hidden text-muted-foreground sm:inline">•</span>
+                  <div
+                    className={clsx(
+                      "inline-flex items-center gap-1 font-semibold",
+                      groupStockBalance > 0
+                        ? "text-[var(--success)]"
+                        : groupStockBalance < 0
+                          ? "text-[var(--destructive)]"
+                          : "text-muted-foreground"
+                    )}
+                  >
+                    {groupStockBalance > 0 ? <TrendingUp className="h-3.5 w-3.5" /> : null}
+                    {groupStockBalance < 0 ? <TrendingDown className="h-3.5 w-3.5" /> : null}
+                    <span>
+                      Stock: {fmtInt(groupCurrentStock)}
+                      {groupOrderDisplaySuffix}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1 text-right">
+                <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Subtotal</span>
+                <span className="text-2xl font-semibold tabular-nums text-[var(--foreground)]">{fmtMoney(groupSubtotal)}</span>
+              </div>
             </div>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-y-2 gap-x-4 text-sm text-muted-foreground">
-          <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-            <div className="inline-flex items-center gap-1 font-medium text-[color:var(--foreground)]">
-              {fmtInt(groupUnits)} unidades
-            </div>
-            <span className="hidden text-muted-foreground sm:inline">•</span>
-            <div
-              className={clsx(
-                "inline-flex items-center gap-1 font-semibold",
-                groupStockBalance > 0
-                  ? "text-[var(--success)]"
-                  : groupStockBalance < 0
-                    ? "text-[var(--destructive)]"
-                    : "text-muted-foreground"
-              )}
-            >
-              {groupStockBalance > 0 ? <TrendingUp className="h-3.5 w-3.5" /> : null}
-              {groupStockBalance < 0 ? <TrendingDown className="h-3.5 w-3.5" /> : null}
-              <span>
-                Stock: {fmtInt(groupCurrentStock)}
-                {groupOrderDisplaySuffix}
-              </span>
-            </div>
-          </div>
-          <div className="ml-auto flex flex-col items-end gap-1 text-right">
-            <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">Subtotal</span>
-            <span className="text-2xl font-semibold tabular-nums text-[var(--foreground)]">{fmtMoney(groupSubtotal)}</span>
           </div>
         </div>
       </div>
@@ -9248,9 +9105,19 @@ type DragHandleProps = {
                         type="button"
                         className="flex-shrink-0 inline-flex items-center gap-1 text-[color:var(--primary)] text-[10px] sm:text-[11px] hover:underline whitespace-nowrap"
                         onClick={() => onToggleStats(it.id)}
+                        aria-expanded={statsOpen}
                       >
                         <BarChart3 className="h-4 w-4" />
-                        {statsOpen ? "Ocultar" : "Ver más"}
+                        <span className="inline-flex items-center gap-0.5">
+                          {statsOpen ? "Ocultar" : "Ver más"}
+                          <ChevronDown
+                            className={clsx(
+                              "h-3 w-3 transition-transform",
+                              statsOpen ? "rotate-180" : "rotate-0"
+                            )}
+                            aria-hidden="true"
+                          />
+                        </span>
                       </button>
                     </div>
                     {statsOpen && (

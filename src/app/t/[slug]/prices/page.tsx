@@ -5,6 +5,12 @@ import {
   getSupabaseServiceRoleClient,
 } from "@/lib/supabaseServer";
 import PriceSearch from "@/components/PriceSearch";
+import PrefetchedBranchTheme from "@/components/theme/PrefetchedBranchTheme";
+import {
+  THEME_SETTINGS_KEY,
+  sanitizeStoredTheme,
+  type BranchThemeFormValues,
+} from "@/lib/theme/branchTheme";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -20,6 +26,7 @@ type MembershipQueryRow = {
 };
 
 type TenantInfo = { id: string; slug: string };
+type BranchRow = { id: string; slug: string };
 
 const parseMembership = (row: MembershipQueryRow | null | undefined) => {
   if (!row) return null;
@@ -64,7 +71,14 @@ export default async function TenantPriceSearchPage({ params }: PageProps) {
       notFound();
     }
 
-    return <PriceSearch slug={slug} canManageCatalog={false} />;
+    const theme = await loadTenantTheme(admin, tenantRow.id, slug);
+
+    return (
+      <>
+        {theme ? <PrefetchedBranchTheme theme={theme} /> : null}
+        <PriceSearch slug={slug} canManageCatalog={false} />
+      </>
+    );
   }
 
   // 2) Intento A: membership + tenant por slug con cliente del usuario
@@ -153,4 +167,85 @@ export default async function TenantPriceSearchPage({ params }: PageProps) {
   // 5) Render
   const canManageCatalog = membership?.role === "owner" || membership?.role === "admin";
   return <PriceSearch slug={slug} canManageCatalog={canManageCatalog} />;
+}
+
+async function loadTenantTheme(
+  admin: ReturnType<typeof getSupabaseServiceRoleClient>,
+  tenantId: string,
+  tenantSlug: string
+): Promise<BranchThemeFormValues | null> {
+  try {
+    const { data: branches, error: branchesError } = await admin
+      .from("branches")
+      .select("id, slug")
+      .eq("tenant_id", tenantId)
+      .order("created_at", { ascending: true });
+
+    if (branchesError) {
+      console.error("[prices] branch lookup error", branchesError);
+      return null;
+    }
+
+    const branchList = (branches ?? []) as BranchRow[];
+    if (!branchList.length) {
+      return null;
+    }
+
+    const fallbackBranch = branchList[0];
+    const matchingBranch = branchList.find((branch) => branch.slug === tenantSlug) ?? fallbackBranch;
+
+    const theme = await fetchThemeForBranch(admin, tenantId, matchingBranch.id);
+    if (theme) return theme;
+
+    const globalTheme = await fetchGlobalTenantTheme(admin, tenantId);
+    return globalTheme;
+  } catch (error) {
+    console.error("[prices] tenant theme error", error);
+    return null;
+  }
+}
+
+async function fetchThemeForBranch(
+  admin: ReturnType<typeof getSupabaseServiceRoleClient>,
+  tenantId: string,
+  branchId: string
+): Promise<BranchThemeFormValues | null> {
+  const { data, error } = await admin
+    .from("app_settings")
+    .select("value")
+    .eq("tenant_id", tenantId)
+    .eq("branch_id", branchId)
+    .eq("key", THEME_SETTINGS_KEY)
+    .maybeSingle<{ value: Record<string, unknown> | null }>();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("[prices] branch theme lookup error", error);
+    return null;
+  }
+
+  const value = data?.value;
+  if (!value) return null;
+  return sanitizeStoredTheme(value);
+}
+
+async function fetchGlobalTenantTheme(
+  admin: ReturnType<typeof getSupabaseServiceRoleClient>,
+  tenantId: string
+): Promise<BranchThemeFormValues | null> {
+  const { data, error } = await admin
+    .from("app_settings")
+    .select("value")
+    .eq("tenant_id", tenantId)
+    .is("branch_id", null)
+    .eq("key", THEME_SETTINGS_KEY)
+    .maybeSingle<{ value: Record<string, unknown> | null }>();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("[prices] global theme lookup error", error);
+    return null;
+  }
+
+  const value = data?.value;
+  if (!value) return null;
+  return sanitizeStoredTheme(value);
 }
